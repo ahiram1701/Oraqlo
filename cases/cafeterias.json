@@ -1,0 +1,46 @@
+{
+  "question": "Una cadena regional de 12 cafeterías considera cómo responder a la llegada de una franquicia internacional a su ciudad. ¿Qué situación tendrá en 9 meses?",
+  "horizon_days": 270,
+  "actions": {
+    "diferenciarse": {
+      "description": "Reposicionarse en café de especialidad local, subir precios 10% y reforzar la comunidad",
+      "outcomes": {
+        "fideliza y crece": 0.45,
+        "nicho estable": 0.35,
+        "pierde clientes sensibles a precio": 0.20
+      }
+    },
+    "competir-precio": {
+      "description": "Bajar precios 15% y lanzar programa de puntos agresivo",
+      "outcomes": {
+        "defiende cuota": 0.30,
+        "guerra de precios erosiva": 0.50,
+        "quiebra de márgenes": 0.20
+      }
+    },
+    "no-hacer-nada": {
+      "description": "Mantener la operación actual y observar 2 trimestres",
+      "outcomes": {
+        "erosión lenta": 0.60,
+        "cliente fiel resiste": 0.30,
+        "colapso de tráfico": 0.10
+      }
+    }
+  },
+  "utilities": {
+    "fideliza y crece": 1.0,
+    "nicho estable": 0.5,
+    "pierde clientes sensibles a precio": -0.2,
+    "defiende cuota": 0.4,
+    "guerra de precios erosiva": -0.5,
+    "quiebra de márgenes": -1.0,
+    "erosión lenta": -0.3,
+    "cliente fiel resiste": 0.2,
+    "colapso de tráfico": -1.0
+  },
+  "risk": {
+    "risk_aversion": 0.3,
+    "ruin_threshold": -0.9,
+    "max_ruin_probability": 0.25
+  }
+}

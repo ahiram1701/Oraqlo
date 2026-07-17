@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oraqlo"
+version = "0.1.0"
+description = "Motor de estrategia bajo incertidumbre: forecasting probabilístico calibrado + planificación adversarial, con LLMs vía Ollama (local y cloud)."
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "Alberto H. Saucedo G." }]
+# Núcleo sin dependencias: solo librería estándar. Los extras habilitan
+# implementaciones cuantitativas cuando se pase de esqueleto a producción.
+dependencies = []
+
+[project.optional-dependencies]
+quant = ["numpy"]
+tui = ["textual>=1.0"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

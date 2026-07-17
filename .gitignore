@@ -1,0 +1,33 @@
+# Estado de runtime (datos personales del usuario) — NUNCA subir
+oraqlo_ledger.json
+oraqlo_goals.json
+oraqlo_settings.json
+informes/
+
+# Casos generados por el usuario (se conserva solo el ejemplo curado)
+cases/*.json
+!cases/cafeterias.json
+
+# Config real con posibles credenciales (se conserva el ejemplo)
+config/roles.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Editores / SO
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

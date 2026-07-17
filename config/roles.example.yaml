@@ -1,0 +1,32 @@
+# Mapeo rol → backend + modelo Ollama.
+# Copia a roles.yaml y ajusta a los modelos que tengas disponibles.
+#
+# Backends:
+#   local — Ollama corriendo en tu máquina, sin credenciales.
+#   cloud — Ollama Turbo (ollama.com); requiere OLLAMA_API_KEY en el entorno.
+#           La API key NUNCA va en este archivo.
+
+backends:
+  local:
+    host: "http://localhost:11434"
+  cloud:
+    host: "https://ollama.com"
+    api_key_env: "OLLAMA_API_KEY"
+
+roles:
+  estratega:
+    backend: cloud
+    model: "gpt-oss:120b-cloud"
+    temperature: 0.7          # creatividad para proponer planes
+  red_team:
+    backend: local
+    model: "qwen2.5"
+    temperature: 0.9          # agresivo buscando modos de fallo
+  oraculo:
+    backend: local
+    model: "llama3.1"
+    temperature: 0.2          # estimaciones de probabilidad estables
+  juez:
+    backend: cloud
+    model: "qwen3-coder:480b-cloud"
+    temperature: 0.1          # síntesis conservadora y determinista

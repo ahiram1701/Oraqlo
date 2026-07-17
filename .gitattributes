@@ -1,0 +1,4 @@
+# Normaliza saltos de línea: LF en el repo para todo el texto…
+* text=auto eol=lf
+# …salvo los scripts de Windows, que necesitan CRLF para ejecutarse bien.
+*.bat text eol=crlf
