@@ -32,3 +32,8 @@ env/
 .DS_Store
 Thumbs.db
 src/oraqlo/_version.py
+
+# Frontend
+web/node_modules/
+src/oraqlo/api/static/
+web/*.tsbuildinfo

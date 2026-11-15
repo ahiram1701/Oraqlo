@@ -16,6 +16,7 @@ dependencies = [
     "platformdirs>=4.14.5",
     "pydantic>=2.14.3",
     "python-dotenv>=1.2.4",
+    "pywebpush>=2.5.0",
     "uvicorn[standard]>=0.54.0",
 ]
 
@@ -47,6 +48,13 @@ version-file = "src/oraqlo/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/oraqlo"]
+# El frontend compilado está en .gitignore (es salida de build), pero debe ir en el wheel.
+artifacts = ["src/oraqlo/api/static/**"]
+
+[tool.hatch.build.targets.sdist]
+# uv build genera el wheel a partir del sdist: el frontend tiene que viajar también aquí.
+artifacts = ["src/oraqlo/api/static/**"]
+exclude = ["web/node_modules"]
 
 # --- tests ---
 [tool.pytest.ini_options]
