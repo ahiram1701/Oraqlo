@@ -1,0 +1,301 @@
+"""API web: auth Tailscale, jobs + SSE, ledger, objetivos, práctica, casos (offline)."""
+
+from __future__ import annotations
+
+import json
+import time
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from oraqlo.config import load_config
+from oraqlo.llm.base import LLMProvider, LLMResponse
+from oraqlo.services.core import OraqloService
+from oraqlo.store import Store
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+class RoleAwareFake(LLMProvider):
+    """Responde según el prompt de sistema: el orden de las llamadas no importa."""
+
+    def __init__(self, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls = 0
+
+    def chat(self, messages, model, temperature=0.7, json_mode=False, **kwargs):
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("proveedor caído a propósito")
+        system = messages[0].content
+        if "p_logro" in system:
+            out = {"p_logro": 0.55, "comment": "va bien", "replan_recommended": False}
+        elif '"outcomes"' in system:
+            out = {"outcomes": {"sube": 0.7, "baja": 0.3}, "assumptions": ["a1"], "rationale": "r"}
+        elif "Red Team" in system:
+            out = {"objections": ["riesgo de ejecución"]}
+        elif "p_exito" in system:
+            out = {"p_exito": 0.7, "p_objeciones": {"riesgo de ejecución": 0.2}}
+        elif '"decision"' in system:
+            out = {
+                "decision": "emitir",
+                "confidence": 0.7,
+                "rationale": "ok",
+                "review_triggers": [],
+            }
+        else:
+            return LLMResponse(content="Plan sólido con supuestos claros.", model=model)
+        return LLMResponse(content=json.dumps(out), model=model)
+
+
+@pytest.fixture
+def env(tmp_path, monkeypatch):
+    for var in ("ANTHROPIC_API_KEY", "OLLAMA_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    config = load_config(tmp_path / "none.toml", home=tmp_path)
+    service = OraqloService(config, Store(tmp_path / "o.db"))
+    fake = RoleAwareFake()
+    monkeypatch.setattr(service.registry, "get", lambda name, effort=None: fake)
+    from oraqlo.api.app import create_app
+
+    app = create_app(service, background=False)
+    with TestClient(app) as client:
+        yield client, service, app, fake
+
+
+def wait_job(client, job_id: str, timeout: float = 10.0) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        job = client.get(f"/api/jobs/{job_id}").json()
+        if job["status"] in ("done", "failed", "cancelled"):
+            return job
+        time.sleep(0.05)
+    raise AssertionError(f"El job {job_id} no terminó")
+
+
+def sse(text: str) -> list[tuple[str | None, str, dict]]:
+    events = []
+    for block in text.strip().split("\n\n"):
+        fields = dict(
+            line.split(": ", 1)
+            for line in block.splitlines()
+            if ": " in line and not line.startswith(":")
+        )
+        if "event" in fields:
+            events.append((fields.get("id"), fields["event"], json.loads(fields["data"])))
+    return events
+
+
+# ── sistema y auth ───────────────────────────────────────────────────────
+
+
+def test_health_y_me_local(env):
+    client, *_ = env
+    h = client.get("/api/health").json()
+    assert h["status"] == "ok" and h["db_version"] >= 1
+    assert client.get("/api/me").json() == {"login": None, "name": None, "via": "local"}
+
+
+def test_auth_tailscale(env, monkeypatch):
+    client, service, *_ = env
+    proxied = {"X-Forwarded-For": "100.64.0.7"}
+    assert client.get("/api/health", headers=proxied).status_code == 401
+    ok = client.get("/api/me", headers={**proxied, "Tailscale-User-Login": "yo@github"})
+    assert ok.status_code == 200 and ok.json()["via"] == "tailscale"
+    funnel = {"Tailscale-Funnel-Request": "?1", "Tailscale-User-Login": "x"}
+    assert client.get("/api/health", headers=funnel).status_code == 403
+    monkeypatch.setattr(service.config.server, "allowed_users", ["yo@github"])
+    other = client.get("/api/health", headers={**proxied, "Tailscale-User-Login": "otro@github"})
+    assert other.status_code == 403
+
+
+# ── jobs ─────────────────────────────────────────────────────────────────
+
+
+def test_pregunta_rapida_job_sse_e_informe(env):
+    client, service, *_ = env
+    r = client.post("/api/ask", json={"question": "¿Sube el mercado?", "research": False})
+    assert r.status_code == 202
+    job = wait_job(client, r.json()["job_id"])
+    assert job["status"] == "done", job
+    assert job["result"]["forecast"]["outcomes"] == {"sube": 0.7, "baja": 0.3}
+    assert len(service.store.ledger.open_forecasts) == 1
+
+    stream = client.get(f"/api/jobs/{job['id']}/events").text
+    events = sse(stream)
+    kinds = [k for _, k, _ in events]
+    assert "forecast" in kinds and kinds[-1] == "end"
+    assert events[-1][2]["status"] == "done"
+    # Reanudar desde el último id recibido: solo llega el cierre.
+    last_seq = [i for i, k, _ in events if i][-1]
+    resumed = sse(
+        client.get(f"/api/jobs/{job['id']}/events", headers={"Last-Event-ID": last_seq}).text
+    )
+    assert [k for _, k, _ in resumed] == ["end"]
+
+    run_id = job["run_id"]
+    assert client.get("/api/runs").json()[0]["id"] == run_id
+    report = client.get(f"/api/runs/{run_id}/report.md")
+    assert report.status_code == 200 and "Informe estratégico" in report.text
+    assert "attachment" in report.headers["content-disposition"]
+
+
+def test_ciclo_con_caso_emite_debate(env):
+    client, *_ = env
+    case = json.loads((ROOT / "cases" / "cafeterias.json").read_text(encoding="utf-8"))
+    job = wait_job(client, client.post("/api/cases/run", json={"case": case}).json()["job_id"])
+    assert job["status"] == "done", job
+    assert job["result"]["verdict"]["decision"] == "emitir"
+    turns = [
+        d["role"]
+        for _, k, d in sse(client.get(f"/api/jobs/{job['id']}/events").text)
+        if k == "turn"
+    ]
+    assert turns == ["estratega", "red_team", "oraculo", "juez"]
+
+
+def test_caso_invalido_422(env):
+    client, *_ = env
+    assert client.post("/api/cases/run", json={"case": {"question": ""}}).status_code == 422
+    v = client.post("/api/cases/validate", json={"case": {"question": "x"}}).json()
+    assert v["ok"] is False and v["error"]
+
+
+def test_job_fallido_reporta_error(env):
+    client, _, _, fake = env
+    fake.fail = True
+    job = wait_job(
+        client,
+        client.post("/api/ask", json={"question": "¿pasa algo?", "research": False}).json()[
+            "job_id"
+        ],
+    )
+    assert job["status"] == "failed" and "caído" in job["error"]
+    kinds = [k for _, k, _ in sse(client.get(f"/api/jobs/{job['id']}/events").text)]
+    assert kinds[-2:] == ["error", "end"]
+
+
+def test_recover_marca_interrumpidos(env):
+    client, service, app, _ = env
+    with service.store.db.tx() as conn:
+        conn.execute("INSERT INTO jobs (id, kind, status) VALUES ('j1', 'forecast', 'running')")
+    assert app.state.runner.recover() == 1
+    job = client.get("/api/jobs/j1").json()
+    assert job["status"] == "failed" and "reinició" in job["error"]
+
+
+# ── ledger y calibración ─────────────────────────────────────────────────
+
+
+def test_ledger_resolver_descartar_y_calibracion(env):
+    client, *_ = env
+    ids = []
+    for q in ("¿A?", "¿B?", "¿C?"):
+        job = wait_job(
+            client,
+            client.post("/api/ask", json={"question": q, "research": False}).json()["job_id"],
+        )
+        ids.append(job["result"]["forecast"]["id"])
+    r = client.post(f"/api/ledger/{ids[0]}/resolve", json={"outcome": "SUBE "})
+    assert r.status_code == 200 and r.json()["resolved"][0]["actual_outcome"] == "sube"
+    assert client.delete(f"/api/ledger/open/{ids[1]}").status_code == 204
+    assert client.post("/api/ledger/nope/resolve", json={"outcome": "x"}).status_code == 404
+    view = client.get("/api/ledger").json()
+    assert [f["id"] for f in view["open"]] == [ids[2]]
+    assert view["resolved"][0]["brier"] == pytest.approx(0.18)
+    cal = client.get("/api/calibration").json()
+    assert cal["n"] == 1 and cal["sources"][0]["brier"] == pytest.approx(0.18)
+    assert sum(b["n"] for b in cal["reliability"]) == 2
+    assert client.delete(f"/api/ledger/resolved/{ids[0]}").status_code == 204
+
+
+# ── objetivos ────────────────────────────────────────────────────────────
+
+
+def test_objetivos_checkin_hitos_y_cierre(env):
+    from oraqlo.goaltrack import GoalTracker
+    from test_goaltrack import _plan
+
+    client, service, *_ = env
+    tracked = GoalTracker(service.store.goals, service.store.ledger).track(_plan())
+    goals = client.get("/api/goals").json()
+    assert goals[0]["id"] == tracked.id and goals[0]["trajectory"] == [0.6]
+
+    job = wait_job(
+        client,
+        client.post(f"/api/goals/{tracked.id}/checkin", json={"note": "semana 1 ok"}).json()[
+            "job_id"
+        ],
+    )
+    assert job["status"] == "done", job
+    assert job["result"]["goal"]["trajectory"] == [0.6, 0.55]
+
+    m = client.put(f"/api/goals/{tracked.id}/milestones/0", json={"status": "cumplido"})
+    assert m.status_code == 200 and m.json()["milestones"][0]["status"] == "cumplido"
+    assert (
+        client.put(f"/api/goals/{tracked.id}/milestones/0", json={"status": "raro"}).status_code
+        == 422
+    )
+
+    closed = client.post(f"/api/goals/{tracked.id}/close", json={"achieved": True}).json()
+    assert closed["goal"]["status"] == "logrado"
+    assert client.delete(f"/api/goals/{tracked.id}").status_code == 204
+    assert client.get(f"/api/goals/{tracked.id}").status_code == 404
+
+
+# ── práctica y planificador ──────────────────────────────────────────────
+
+
+def test_practica_ajustes_persisten(env):
+    client, service, *_ = env
+    state = client.put("/api/practice", json={"auto": True, "interval_min": 30}).json()
+    assert state["auto"] is True and state["interval_min"] == 30
+    assert service.store.settings.get("practice_auto") is True
+
+
+def test_scheduler_arma_y_dispara_practica(env, monkeypatch):
+    client, _service, app, _ = env
+    submitted = []
+    monkeypatch.setattr(
+        app.state.runner, "submit", lambda kind, params=None: submitted.append(kind)
+    )
+    client.put("/api/practice", json={"auto": True, "interval_min": 30})
+    scheduler = app.state.scheduler
+    t0 = datetime(2026, 11, 15, 10, tzinfo=UTC)
+    assert scheduler.tick(t0) == []  # primera vez: arma el temporizador, no gasta llamadas
+    assert scheduler.tick(t0 + timedelta(minutes=10)) == []
+    assert scheduler.tick(t0 + timedelta(minutes=31)) == ["practice"]
+    assert submitted == ["practice"]
+    client.put("/api/practice", json={"auto": False})
+    assert scheduler.tick(t0 + timedelta(hours=5)) == []
+
+
+# ── casos y estáticos ────────────────────────────────────────────────────
+
+
+def test_casos_crud(env):
+    client, *_ = env
+    case = json.loads((ROOT / "cases" / "cafeterias.json").read_text(encoding="utf-8"))
+    assert client.put("/api/cases/c1", json={"name": "Cafeterías", "case": case}).status_code == 200
+    assert client.get("/api/cases").json()[0]["name"] == "Cafeterías"
+    assert client.get("/api/cases/c1").json()["data"]["question"] == case["question"]
+    assert client.delete("/api/cases/c1").status_code == 204
+    assert client.get("/api/cases/c1").status_code == 404
+    assert "question" in client.get("/api/cases/template").json()
+
+
+def test_spa_y_rutas_desconocidas(env):
+    client, *_ = env
+    assert client.get("/api/no-existe").status_code == 404
+    assert client.get("/objetivos").status_code == 200
+
+
+def test_proveedores_sin_exponer_claves(env, monkeypatch):
+    client, *_ = env
+    monkeypatch.setenv("GROQ_API_KEY", "secreto-que-no-debe-salir")
+    body = client.get("/api/providers").text
+    assert "secreto" not in body
+    groq = next(p for p in json.loads(body)["providers"] if p["name"] == "groq")
+    assert groq["key_present"] is True
