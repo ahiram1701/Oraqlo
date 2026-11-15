@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from oraqlo.forecaster.base import Forecast
 
@@ -49,7 +49,7 @@ class ResolvedForecast:
     forecast: Forecast
     actual_outcome: str
     brier: float
-    resolved_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    resolved_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 class CalibrationLedger:
@@ -74,8 +74,7 @@ class CalibrationLedger:
         forecast = self._open.pop(forecast_id, None)
         if forecast is None:
             raise KeyError(
-                f"No hay predicción abierta con id '{forecast_id}'. "
-                f"Abiertas: {sorted(self._open)}"
+                f"No hay predicción abierta con id '{forecast_id}'. Abiertas: {sorted(self._open)}"
             )
         if not forecast.distribution.outcomes:
             raise ValueError(
@@ -99,8 +98,7 @@ class CalibrationLedger:
         forecast = self._open.pop(forecast_id, None)
         if forecast is None:
             raise KeyError(
-                f"No hay predicción abierta con id '{forecast_id}'. "
-                f"Abiertas: {sorted(self._open)}"
+                f"No hay predicción abierta con id '{forecast_id}'. Abiertas: {sorted(self._open)}"
             )
         return forecast
 

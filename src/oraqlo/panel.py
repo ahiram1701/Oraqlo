@@ -195,7 +195,9 @@ class SequentialPanel(DecisionPanel):
         rt = self._speak_json("red_team", f"{base}\n\nPlan del Estratega:\n{plan}\n\nAtácalo.")
         objections = [str(o) for o in rt.get("objections", []) if str(o).strip()]
         if not objections:
-            raise PanelError("El Red Team no produjo objeciones: el debate no es válido sin ataque.")
+            raise PanelError(
+                "El Red Team no produjo objeciones: el debate no es válido sin ataque."
+            )
         turn("red_team", json.dumps({"objections": objections}, ensure_ascii=False))
 
         # 3. Oráculo: probabilidades de éxito y de cada objeción.

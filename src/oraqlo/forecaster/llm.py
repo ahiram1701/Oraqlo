@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 from oraqlo.forecaster.base import Distribution, Forecast, Forecaster
 from oraqlo.llm.base import ChatMessage, LLMProvider
@@ -118,7 +118,7 @@ class LLMForecaster(Forecaster):
         ]
 
         last_error: Exception | None = None
-        for attempt in range(self.max_retries + 1):
+        for _attempt in range(self.max_retries + 1):
             response = self.provider.chat(
                 messages=messages,
                 model=self.model,
@@ -157,5 +157,5 @@ class LLMForecaster(Forecaster):
             horizon=horizon,
             assumptions=assumptions,
             source=self.source,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )

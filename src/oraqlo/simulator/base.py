@@ -118,7 +118,7 @@ class MonteCarloEngine(ScenarioEngine):
                 bucket[0] += 1
                 bucket[1] += utility
 
-            for key, (count, usum, final_state) in buckets.items():
+            for count, usum, final_state in buckets.values():
                 trajectories.append(
                     Trajectory(
                         states=[state, final_state],
@@ -154,7 +154,9 @@ class TreeSearchEngine(ScenarioEngine):
     def _next(self, state: WorldState, action: Action, label: str) -> WorldState:
         return self.transition(state, action, label) if self.transition else state
 
-    def _value(self, state: WorldState, path: list[str], actions: list[Action], depth: int) -> float:
+    def _value(
+        self, state: WorldState, path: list[str], actions: list[Action], depth: int
+    ) -> float:
         if depth == 0:
             return self.utility_fn(state, tuple(path))
         best = -math.inf
@@ -163,7 +165,8 @@ class TreeSearchEngine(ScenarioEngine):
             if not dist.outcomes:
                 raise ValueError("El OutcomeModel debe devolver outcomes categóricos")
             ev = sum(
-                p * self._value(self._next(state, action, label), [*path, label], actions, depth - 1)
+                p
+                * self._value(self._next(state, action, label), [*path, label], actions, depth - 1)
                 for label, p in dist.outcomes.items()
             )
             best = max(best, ev)
@@ -231,4 +234,4 @@ class SoftmaxAdversary(AdversaryModel):
         top = max(scores)
         exps = [math.exp((s - top) / self.temperature) for s in scores]
         total = sum(exps)
-        return [(a, e / total) for a, e in zip(self.candidate_actions, exps)]
+        return [(a, e / total) for a, e in zip(self.candidate_actions, exps, strict=False)]

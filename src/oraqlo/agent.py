@@ -136,7 +136,9 @@ class OraqloAgent:
             "Previsión del oráculo:",
             *(
                 f"  - {label}: {p:.0%}"
-                for label, p in sorted(forecast.distribution.outcomes.items(), key=lambda kv: -kv[1])
+                for label, p in sorted(
+                    forecast.distribution.outcomes.items(), key=lambda kv: -kv[1]
+                )
             ),
         ]
         if forecast.assumptions:

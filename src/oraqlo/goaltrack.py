@@ -11,16 +11,15 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from oraqlo.goals import (
+    _PLAN_PROMPT,
     OUTCOME_ACHIEVED,
     OUTCOME_NOT_ACHIEVED,
     GoalPlan,
-    Milestone,
     PlanStep,
-    _PLAN_PROMPT,
 )
 from oraqlo.llm.base import LLMProvider
 from oraqlo.llm.jsonchat import JsonChatError, chat_json
@@ -115,8 +114,11 @@ def _goal_to_dict(g: TrackedGoal) -> dict:
 
 def _goal_from_dict(data: dict) -> TrackedGoal:
     return TrackedGoal(
-        id=data["id"], goal=data["goal"], created_at=data["created_at"],
-        deadline=data["deadline"], summary=data.get("summary", ""),
+        id=data["id"],
+        goal=data["goal"],
+        created_at=data["created_at"],
+        deadline=data["deadline"],
+        summary=data.get("summary", ""),
         steps=[PlanStep(**s) for s in data.get("steps", [])],
         milestones=[TrackedMilestone(**m) for m in data.get("milestones", [])],
         checkins=[CheckIn(**c) for c in data.get("checkins", [])],
@@ -199,7 +201,7 @@ class GoalTracker:
         goal = TrackedGoal(
             id=str(uuid.uuid4()),
             goal=plan.goal,
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
             deadline=deadline,
             summary=plan.summary,
             steps=list(plan.steps),
@@ -217,9 +219,10 @@ class GoalTracker:
 
     # ── Seguimiento ───────────────────────────────────────────────────────
 
-    def _require_llm(self) -> None:
+    def _require_llm(self) -> LLMProvider:
         if self.provider is None or not self.model:
             raise GoalTrackError("Esta operación necesita un proveedor LLM configurado.")
+        return self.provider
 
     @staticmethod
     def _status_block(g: TrackedGoal) -> str:
@@ -241,15 +244,18 @@ class GoalTracker:
 
     def check_in(self, goal_id: str, note: str) -> CheckIn:
         """Registra avance y re-estima P(objetivo). La trayectoria es la señal."""
-        self._require_llm()
+        provider = self._require_llm()
         g = self.store.get(goal_id)
         if g.status != "activo":
             raise GoalTrackError(f"El objetivo está '{g.status}': no admite check-ins.")
         try:
             data = chat_json(
-                self.provider, self.model, _REEVAL_PROMPT,
+                provider,
+                self.model,
+                _REEVAL_PROMPT,
                 self._status_block(g) + f"\n\nNota de avance del usuario (hoy): {note}",
-                temperature=0.2, max_retries=self.max_retries,
+                temperature=0.2,
+                max_retries=self.max_retries,
             )
         except JsonChatError as e:
             raise GoalTrackError(str(e)) from e
@@ -261,7 +267,7 @@ class GoalTracker:
             m.status == "fallado" or m.overdue for m in g.milestones
         )
         checkin = CheckIn(
-            date=datetime.now(timezone.utc).isoformat(),
+            date=datetime.now(UTC).isoformat(),
             note=note,
             p_estimate=p,
             comment=str(data.get("comment", "")),
@@ -283,32 +289,41 @@ class GoalTracker:
 
     def replan(self, goal_id: str) -> TrackedGoal:
         """Re-genera pasos e hitos pendientes con el estado actual; conserva los cumplidos."""
-        self._require_llm()
+        provider = self._require_llm()
         g = self.store.get(goal_id)
         if g.status != "activo":
             raise GoalTrackError(f"El objetivo está '{g.status}': no admite re-planificación.")
         try:
             data = chat_json(
-                self.provider, self.model, _PLAN_PROMPT,
+                provider,
+                self.model,
+                _PLAN_PROMPT,
                 self._status_block(g)
                 + "\n\nRe-planifica: el plan anterior no va bien. Conserva lo ganado, "
-                  "corrige lo fallado, y ajusta a los días restantes.",
-                temperature=0.5, max_retries=self.max_retries,
+                "corrige lo fallado, y ajusta a los días restantes.",
+                temperature=0.5,
+                max_retries=self.max_retries,
             )
         except JsonChatError as e:
             raise GoalTrackError(str(e)) from e
         steps = [
-            PlanStep(order=int(s.get("order", i + 1)), action=str(s.get("action", "")).strip(),
-                     when=str(s.get("when", "")).strip(), why=str(s.get("why", "")).strip())
+            PlanStep(
+                order=int(s.get("order", i + 1)),
+                action=str(s.get("action", "")).strip(),
+                when=str(s.get("when", "")).strip(),
+                why=str(s.get("why", "")).strip(),
+            )
             for i, s in enumerate(data.get("steps", []))
             if isinstance(s, dict) and str(s.get("action", "")).strip()
         ]
         if not steps:
             raise GoalTrackError("La re-planificación no produjo pasos.")
         new_milestones = [
-            TrackedMilestone(text=str(m.get("text", "")).strip(),
-                             target_date=str(m.get("target_date", "")).strip(),
-                             signal=str(m.get("signal", "")).strip())
+            TrackedMilestone(
+                text=str(m.get("text", "")).strip(),
+                target_date=str(m.get("target_date", "")).strip(),
+                signal=str(m.get("signal", "")).strip(),
+            )
             for m in data.get("milestones", [])
             if isinstance(m, dict) and str(m.get("text", "")).strip()
         ]
@@ -332,8 +347,7 @@ class GoalTracker:
         self.store.update(g)
         outcome = OUTCOME_ACHIEVED if achieved else OUTCOME_NOT_ACHIEVED
         warnings = []
-        for fid, label in ((g.baseline_forecast_id, "statu quo"),
-                           (g.plan_forecast_id, "con plan")):
+        for fid, label in ((g.baseline_forecast_id, "statu quo"), (g.plan_forecast_id, "con plan")):
             if not fid:
                 continue
             try:
@@ -352,8 +366,7 @@ class GoalTracker:
         """
         g = self.store.get(goal_id)
         warnings = []
-        for fid, label in ((g.baseline_forecast_id, "statu quo"),
-                           (g.plan_forecast_id, "con plan")):
+        for fid, label in ((g.baseline_forecast_id, "statu quo"), (g.plan_forecast_id, "con plan")):
             if not fid:
                 continue
             try:
@@ -365,9 +378,4 @@ class GoalTracker:
         return warnings
 
     def overdue_milestones(self) -> list[tuple[TrackedGoal, TrackedMilestone]]:
-        return [
-            (g, m)
-            for g in self.store.list_active()
-            for m in g.milestones
-            if m.overdue
-        ]
+        return [(g, m) for g in self.store.list_active() for m in g.milestones if m.overdue]

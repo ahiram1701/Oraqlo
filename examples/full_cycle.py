@@ -16,12 +16,10 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import timedelta
-from pathlib import Path
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from oraqlo.agent import OraqloAgent
 from oraqlo.connectors import StaticConnector
@@ -39,22 +37,45 @@ QUESTION = (
 )
 
 ACTIONS = [
-    Action(id="diferenciarse", description="Reposicionarse en café de especialidad local, subir precios 10% y reforzar la comunidad"),
-    Action(id="competir-precio", description="Bajar precios 15% y lanzar programa de puntos agresivo"),
+    Action(
+        id="diferenciarse",
+        description="Reposicionarse en café de especialidad local, subir precios 10% y reforzar la comunidad",
+    ),
+    Action(
+        id="competir-precio", description="Bajar precios 15% y lanzar programa de puntos agresivo"
+    ),
     Action(id="no-hacer-nada", description="Mantener la operación actual y observar 2 trimestres"),
 ]
 
 # Dominio toy: probabilidades y utilidades de negocio codificadas a mano.
 # En producción, el OutcomeModel vendría del propio Forecaster.
 OUTCOMES = {
-    "diferenciarse": {"fideliza y crece": 0.45, "nicho estable": 0.35, "pierde clientes sensibles a precio": 0.20},
-    "competir-precio": {"defiende cuota": 0.30, "guerra de precios erosiva": 0.50, "quiebra de márgenes": 0.20},
-    "no-hacer-nada": {"erosión lenta": 0.60, "cliente fiel resiste": 0.30, "colapso de tráfico": 0.10},
+    "diferenciarse": {
+        "fideliza y crece": 0.45,
+        "nicho estable": 0.35,
+        "pierde clientes sensibles a precio": 0.20,
+    },
+    "competir-precio": {
+        "defiende cuota": 0.30,
+        "guerra de precios erosiva": 0.50,
+        "quiebra de márgenes": 0.20,
+    },
+    "no-hacer-nada": {
+        "erosión lenta": 0.60,
+        "cliente fiel resiste": 0.30,
+        "colapso de tráfico": 0.10,
+    },
 }
 UTILITIES = {
-    "fideliza y crece": 1.0, "nicho estable": 0.5, "pierde clientes sensibles a precio": -0.2,
-    "defiende cuota": 0.4, "guerra de precios erosiva": -0.5, "quiebra de márgenes": -1.0,
-    "erosión lenta": -0.3, "cliente fiel resiste": 0.2, "colapso de tráfico": -1.0,
+    "fideliza y crece": 1.0,
+    "nicho estable": 0.5,
+    "pierde clientes sensibles a precio": -0.2,
+    "defiende cuota": 0.4,
+    "guerra de precios erosiva": -0.5,
+    "quiebra de márgenes": -1.0,
+    "erosión lenta": -0.3,
+    "cliente fiel resiste": 0.2,
+    "colapso de tráfico": -1.0,
 }
 
 ROLE_TEMPERATURES = {"estratega": 0.7, "red_team": 0.9, "oraculo": 0.2, "juez": 0.1}
@@ -77,11 +98,21 @@ def main() -> int:
         return 1
 
     agent = OraqloAgent(
-        connectors=[StaticConnector("caso", [
-            Observation(entity_id="cadena", variable="locales", value=12, source="caso"),
-            Observation(entity_id="cadena", variable="caja_meses", value=14, source="caso"),
-            Observation(entity_id="competidor", variable="aperturas_previstas", value=3, source="caso"),
-        ])],
+        connectors=[
+            StaticConnector(
+                "caso",
+                [
+                    Observation(entity_id="cadena", variable="locales", value=12, source="caso"),
+                    Observation(entity_id="cadena", variable="caja_meses", value=14, source="caso"),
+                    Observation(
+                        entity_id="competidor",
+                        variable="aperturas_previstas",
+                        value=3,
+                        source="caso",
+                    ),
+                ],
+            )
+        ],
         world_model=WorldModel(),
         forecaster=LLMForecaster(provider, model=model),
         simulator=TreeSearchEngine(
@@ -89,11 +120,14 @@ def main() -> int:
             utility_fn=lambda state, path: UTILITIES[path[-1]],
         ),
         planner=ExpectedUtilityPlanner(),
-        panel=SequentialPanel(roles={
-            name: RoleConfig(name=name, provider=provider, model=model,
-                             temperature=ROLE_TEMPERATURES[name])
-            for name in ROLE_PROMPTS
-        }),
+        panel=SequentialPanel(
+            roles={
+                name: RoleConfig(
+                    name=name, provider=provider, model=model, temperature=ROLE_TEMPERATURES[name]
+                )
+                for name in ROLE_PROMPTS
+            }
+        ),
         ledger=CalibrationLedger(),
         risk=RiskProfile(risk_aversion=0.3, ruin_threshold=-0.9, max_ruin_probability=0.25),
     )
@@ -113,20 +147,27 @@ def main() -> int:
     print("\n── Recomendación del planificador ──")
     rec = report.recommendation
     print(f"  Acción: {rec.action.description}")
-    print(f"  EU: {rec.expected_utility:+.3f} · ajustada a riesgo: {rec.risk_adjusted_utility:+.3f}")
+    print(
+        f"  EU: {rec.expected_utility:+.3f} · ajustada a riesgo: {rec.risk_adjusted_utility:+.3f}"
+    )
     for action, reason in rec.rejected_alternatives:
         print(f"  Descartada por el planner: {action.id} ({reason})")
 
     print("\n── Veredicto del panel ──")
     v = report.verdict
-    print(f"  {v.decision.upper()}  (confianza: {v.confidence:.0%}"
-          + (f", P(éxito) oráculo: {v.p_success:.0%}" if v.p_success is not None else "") + ")")
+    print(
+        f"  {v.decision.upper()}  (confianza: {v.confidence:.0%}"
+        + (f", P(éxito) oráculo: {v.p_success:.0%}" if v.p_success is not None else "")
+        + ")"
+    )
     print(f"  Síntesis: {v.rationale}")
     for t in v.review_triggers:
         print(f"  Disparador de revisión: {t}")
     print(f"\n  Candidatas debatidas: {report.candidates_tried} · revisiones: {report.revisions}")
-    print(f"  Predicciones abiertas en el ledger: {len(agent.ledger.open_forecasts)} "
-          f"(id: {report.forecast.id})")
+    print(
+        f"  Predicciones abiertas en el ledger: {len(agent.ledger.open_forecasts)} "
+        f"(id: {report.forecast.id})"
+    )
     return 0
 
 

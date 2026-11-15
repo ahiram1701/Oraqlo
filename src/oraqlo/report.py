@@ -7,8 +7,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
-
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from oraqlo.forecaster.base import Forecast
@@ -48,7 +47,7 @@ def render_report_markdown(
     research_facts: list[tuple[str, str]] | None = None,
 ) -> str:
     """`research_facts`: pares (hecho, url) del investigador web, si hubo investigación."""
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     lines: list[str] = [
         "# Informe estratégico de Oraqlo",
         "",
@@ -73,8 +72,13 @@ def render_report_markdown(
         lines += ["", "## Fuentes consultadas (investigación web)", ""]
         lines += [f"- {text} — <{url}>" for text, url in research_facts]
 
-    lines += ["", "## Ranking del planificador", "",
-              "| Acción | Utilidad esperada | Ajustada a riesgo |", "|---|---|---|"]
+    lines += [
+        "",
+        "## Ranking del planificador",
+        "",
+        "| Acción | Utilidad esperada | Ajustada a riesgo |",
+        "|---|---|---|",
+    ]
     for rec in ranking:
         lines.append(
             f"| {rec.action.id} | {rec.expected_utility:+.3f} | {rec.risk_adjusted_utility:+.3f} |"
@@ -89,8 +93,11 @@ def render_report_markdown(
             "## Veredicto del panel",
             "",
             f"**Decisión: {verdict.decision.upper()}** · confianza del Juez: {verdict.confidence:.0%}"
-            + (f" · P(éxito) según el Oráculo: {verdict.p_success:.0%}"
-               if verdict.p_success is not None else ""),
+            + (
+                f" · P(éxito) según el Oráculo: {verdict.p_success:.0%}"
+                if verdict.p_success is not None
+                else ""
+            ),
             "",
             verdict.rationale,
         ]
@@ -98,7 +105,11 @@ def render_report_markdown(
             lines += ["", "**Objeciones del Red Team:**", ""]
             lines += [f"- {o}" for o in verdict.objections]
         if verdict.review_triggers:
-            lines += ["", "**Disparadores de revisión** (si se observan, esta decisión caduca):", ""]
+            lines += [
+                "",
+                "**Disparadores de revisión** (si se observan, esta decisión caduca):",
+                "",
+            ]
             lines += [f"- {t}" for t in verdict.review_triggers]
         if verdict.transcript:
             lines += ["", "## Transcript del debate"]
@@ -117,14 +128,14 @@ def render_report_markdown(
 
 
 def render_goal_report_markdown(
-    plan: "GoalPlan",
+    plan: GoalPlan,
     model: str,
     backend: str,
     research_facts: list[tuple[str, str]] | None = None,
-    tracked: "TrackedGoal | None" = None,
+    tracked: TrackedGoal | None = None,
 ) -> str:
     """Informe del modo objetivo: línea base, palancas, plan, hitos, debate y uplift."""
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     sign = "+" if plan.uplift >= 0 else ""
     lines: list[str] = [
         "# Plan de objetivo de Oraqlo",
@@ -136,8 +147,8 @@ def render_goal_report_markdown(
         "",
         "## Probabilidades",
         "",
-        f"| | P(objetivo) |",
-        f"|---|---|",
+        "| | P(objetivo) |",
+        "|---|---|",
         f"| Sin cambiar nada (statu quo) | {plan.baseline_p:.0%} |",
         f"| Ejecutando el plan | {plan.with_plan_p:.0%} |",
         f"| **Uplift** | **{sign}{plan.uplift:.0%}** |",
@@ -145,16 +156,29 @@ def render_goal_report_markdown(
         f"Ids en el ledger: statu quo `{plan.baseline.id}` · con plan `{plan.with_plan.id}`",
     ]
     if plan.uplift <= 0:
-        lines += ["", "> ⚠️ El plan NO aumenta la probabilidad estimada del objetivo. "
-                      "Revísalo antes de invertir esfuerzo en él."]
+        lines += [
+            "",
+            "> ⚠️ El plan NO aumenta la probabilidad estimada del objetivo. "
+            "Revísalo antes de invertir esfuerzo en él.",
+        ]
 
-    lines += ["", "## Qué puedes hacer (palancas controlables)", "",
-              "| Palanca | Impacto | Esfuerzo |", "|---|---|---|"]
+    lines += [
+        "",
+        "## Qué puedes hacer (palancas controlables)",
+        "",
+        "| Palanca | Impacto | Esfuerzo |",
+        "|---|---|---|",
+    ]
     lines += [f"| {l.text} | {l.impact} | {l.effort} |" for l in plan.levers]
 
     if plan.external_conditions:
-        lines += ["", "## Qué tiene que pasar (condiciones externas)", "",
-                  "| Condición | Probabilidad |", "|---|---|"]
+        lines += [
+            "",
+            "## Qué tiene que pasar (condiciones externas)",
+            "",
+            "| Condición | Probabilidad |",
+            "|---|---|",
+        ]
         lines += [f"| {c.text} | {c.probability:.0%} |" for c in plan.external_conditions]
 
     lines += ["", "## Qué tienes que hacer (el plan)", "", plan.summary, ""]
@@ -164,16 +188,26 @@ def render_goal_report_markdown(
             lines.append(f"   - *Por qué:* {step.why}")
 
     if plan.milestones:
-        lines += ["", "## Hitos (sabrás si vas por buen camino)", "",
-                  "| Hito | Fecha objetivo | Señal |", "|---|---|---|"]
+        lines += [
+            "",
+            "## Hitos (sabrás si vas por buen camino)",
+            "",
+            "| Hito | Fecha objetivo | Señal |",
+            "|---|---|---|",
+        ]
         lines += [f"| {m.text} | {m.target_date} | {m.signal} |" for m in plan.milestones]
 
     if plan.verdict is not None:
         v = plan.verdict
-        lines += ["", "## Veredicto del panel", "",
-                  f"**{v.decision.upper()}** · confianza {v.confidence:.0%}"
-                  + (" · plan re-diseñado tras las objeciones" if plan.revised else ""),
-                  "", v.rationale]
+        lines += [
+            "",
+            "## Veredicto del panel",
+            "",
+            f"**{v.decision.upper()}** · confianza {v.confidence:.0%}"
+            + (" · plan re-diseñado tras las objeciones" if plan.revised else ""),
+            "",
+            v.rationale,
+        ]
         if v.objections:
             lines += ["", "**Objeciones del Red Team:**", ""]
             lines += [f"- {o}" for o in v.objections]
@@ -182,17 +216,21 @@ def render_goal_report_markdown(
             lines += [f"- {t}" for t in v.review_triggers]
 
     if tracked is not None:
-        lines += ["", "## Seguimiento", "",
-                  f"Estado: **{tracked.status}** · plan v{tracked.plan_version} · "
-                  f"fecha límite {tracked.deadline} ({tracked.days_left} días restantes)",
-                  "",
-                  "Trayectoria de P(objetivo): "
-                  + " → ".join(f"{p:.0%}" for p in tracked.trajectory)]
+        lines += [
+            "",
+            "## Seguimiento",
+            "",
+            f"Estado: **{tracked.status}** · plan v{tracked.plan_version} · "
+            f"fecha límite {tracked.deadline} ({tracked.days_left} días restantes)",
+            "",
+            "Trayectoria de P(objetivo): " + " → ".join(f"{p:.0%}" for p in tracked.trajectory),
+        ]
         if tracked.milestones:
             lines += ["", "| Hito | Fecha | Estado |", "|---|---|---|"]
             lines += [
                 f"| {m.text} | {m.target_date} | {m.status}"
-                + (" ⚠️ vencido" if m.overdue else "") + " |"
+                + (" ⚠️ vencido" if m.overdue else "")
+                + " |"
                 for m in tracked.milestones
             ]
         if tracked.checkins:
@@ -207,8 +245,13 @@ def render_goal_report_markdown(
         lines += ["", "## Fuentes consultadas (investigación web)", ""]
         lines += [f"- {text} — <{url}>" for text, url in research_facts]
 
-    lines += ["", "---", "",
-              "*Las dos predicciones quedan abiertas en el ledger; al vencer el horizonte, "
-              "resuélvelas con lo que realmente pasó para que Oraqlo aprenda si sus planes "
-              "mueven la probabilidad.*", ""]
+    lines += [
+        "",
+        "---",
+        "",
+        "*Las dos predicciones quedan abiertas en el ledger; al vencer el horizonte, "
+        "resuélvelas con lo que realmente pasó para que Oraqlo aprenda si sus planes "
+        "mueven la probabilidad.*",
+        "",
+    ]
     return "\n".join(lines)

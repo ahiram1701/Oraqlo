@@ -27,6 +27,12 @@ class Distribution:
     interval: tuple[float, float] | None = None
     interval_level: float = 0.9
 
+    def mode(self) -> str:
+        """Resultado más probable (la moda). Requiere `outcomes` no vacío."""
+        if not self.outcomes:
+            raise ValueError("La distribución no tiene resultados categóricos")
+        return max(self.outcomes, key=lambda k: self.outcomes[k])
+
     def validate(self) -> None:
         """Falla si la distribución no es coherente (probabilidades fuera de [0,1] o no suman 1)."""
         if self.outcomes:

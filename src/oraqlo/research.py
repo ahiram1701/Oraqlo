@@ -123,8 +123,14 @@ class Researcher:
 
     def _chat_json(self, system: str, user: str, temperature: float) -> dict:
         try:
-            return chat_json(self.provider, self.model, system, user,
-                             temperature=temperature, max_retries=self.max_retries)
+            return chat_json(
+                self.provider,
+                self.model,
+                system,
+                user,
+                temperature=temperature,
+                max_retries=self.max_retries,
+            )
         except JsonChatError as e:
             raise ResearchError(f"El investigador no produjo JSON válido: {e}") from e
 
@@ -143,9 +149,7 @@ class Researcher:
     @staticmethod
     def _corpus(sources: list[SearchResult], fetched: dict[str, str]) -> str:
         parts = [f"[{r.url}]\n{r.title}\n{r.snippet}" for r in sources[:12]]
-        parts += [
-            f"[LECTURA COMPLETA de {url}]\n{text[:3000]}" for url, text in fetched.items()
-        ]
+        parts += [f"[LECTURA COMPLETA de {url}]\n{text[:3000]}" for url, text in fetched.items()]
         return "\n\n".join(parts)
 
     def investigate(
@@ -196,8 +200,11 @@ class Researcher:
                 if not new:
                     break
                 rounds += 1
-                progress(f"ronda {rounds}: buscando " + " · ".join(f"'{q}'" for q in new)
-                         + (f" — {reason}" if reason else ""))
+                progress(
+                    f"ronda {rounds}: buscando "
+                    + " · ".join(f"'{q}'" for q in new)
+                    + (f" — {reason}" if reason else "")
+                )
                 if run_queries(new) == 0:
                     progress(f"ronda {rounds}: sin resultados nuevos")
                 all_queries += new
@@ -210,8 +217,10 @@ class Researcher:
                     break
                 rounds += 1
                 for url in urls:
-                    progress(f"ronda {rounds}: leyendo a fondo {url}"
-                             + (f" — {reason}" if reason else ""))
+                    progress(
+                        f"ronda {rounds}: leyendo a fondo {url}"
+                        + (f" — {reason}" if reason else "")
+                    )
                     fetched[url] = self.web.fetch(url)
             else:  # "synthesize" o acción desconocida: cerrar la recolección
                 progress("suficiente información: sintetizando")

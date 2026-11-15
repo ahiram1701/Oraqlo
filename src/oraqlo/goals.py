@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 
 from oraqlo.forecaster.base import Distribution, Forecast
 from oraqlo.llm.base import LLMProvider
@@ -110,15 +110,15 @@ class Milestone:
 class GoalPlan:
     goal: str
     horizon: timedelta
-    baseline: Forecast          # P(objetivo | statu quo), registrado en el ledger
-    with_plan: Forecast         # P(objetivo | plan), registrado en el ledger
+    baseline: Forecast  # P(objetivo | statu quo), registrado en el ledger
+    with_plan: Forecast  # P(objetivo | plan), registrado en el ledger
     levers: list[Lever]
     external_conditions: list[ExternalCondition]
     summary: str
     steps: list[PlanStep]
     milestones: list[Milestone]
     verdict: Verdict | None = None
-    revised: bool = False       # True si el plan se rehízo tras un "revisar" del Juez
+    revised: bool = False  # True si el plan se rehízo tras un "revisar" del Juez
     brief: ResearchBrief | None = None
 
     @property
@@ -147,8 +147,14 @@ class GoalStrategist:
 
     def _chat(self, system: str, user: str, temperature: float = 0.2) -> dict:
         try:
-            return chat_json(self.provider, self.model, system, user,
-                             temperature=temperature, max_retries=self.max_retries)
+            return chat_json(
+                self.provider,
+                self.model,
+                system,
+                user,
+                temperature=temperature,
+                max_retries=self.max_retries,
+            )
         except JsonChatError as e:
             raise GoalError(str(e)) from e
 
@@ -164,9 +170,7 @@ class GoalStrategist:
         rationale = str(data.get("rationale", ""))
         if rationale:
             assumptions.append(f"Razonamiento: {rationale}")
-        distribution = Distribution(
-            outcomes={OUTCOME_ACHIEVED: p, OUTCOME_NOT_ACHIEVED: 1.0 - p}
-        )
+        distribution = Distribution(outcomes={OUTCOME_ACHIEVED: p, OUTCOME_NOT_ACHIEVED: 1.0 - p})
         distribution.validate()
         return Forecast(
             id=str(uuid.uuid4()),
@@ -175,12 +179,13 @@ class GoalStrategist:
             horizon=horizon,
             assumptions=assumptions,
             source=f"llm:{self.model}",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
     @staticmethod
-    def _context_block(goal: str, horizon: timedelta, brief: ResearchBrief | None,
-                       state: WorldState | None) -> str:
+    def _context_block(
+        goal: str, horizon: timedelta, brief: ResearchBrief | None, state: WorldState | None
+    ) -> str:
         lines = [
             f"Fecha de hoy: {date.today().isoformat()}",
             f"Objetivo: {goal}",
@@ -210,21 +215,27 @@ class GoalStrategist:
         progress("1/5 Línea base: P(objetivo) si no cambias nada…")
         baseline = self._binary_forecast(_BASELINE_PROMPT, base_ctx, goal, horizon, "statu quo")
         ledger.record(baseline)
-        progress(f"  P(objetivo | statu quo) = {baseline.distribution.outcomes[OUTCOME_ACHIEVED]:.0%}")
+        progress(
+            f"  P(objetivo | statu quo) = {baseline.distribution.outcomes[OUTCOME_ACHIEVED]:.0%}"
+        )
 
         # 2. Palancas y condiciones externas.
         progress("2/5 Análisis: qué controlas y qué tiene que pasar…")
         data = self._chat(_LEVERS_PROMPT, base_ctx, temperature=0.4)
         levers = [
-            Lever(text=str(l.get("text", "")).strip(),
-                  impact=str(l.get("impact", "medio")).lower(),
-                  effort=str(l.get("effort", "medio")).lower())
+            Lever(
+                text=str(l.get("text", "")).strip(),
+                impact=str(l.get("impact", "medio")).lower(),
+                effort=str(l.get("effort", "medio")).lower(),
+            )
             for l in data.get("levers", [])
             if isinstance(l, dict) and str(l.get("text", "")).strip()
         ]
         conditions = [
-            ExternalCondition(text=str(c.get("text", "")).strip(),
-                              probability=min(max(float(c.get("probability", 0.5)), 0.0), 1.0))
+            ExternalCondition(
+                text=str(c.get("text", "")).strip(),
+                probability=min(max(float(c.get("probability", 0.5)), 0.0), 1.0),
+            )
             for c in data.get("external_conditions", [])
             if isinstance(c, dict) and str(c.get("text", "")).strip()
         ]
@@ -244,17 +255,21 @@ class GoalStrategist:
                 temperature=0.5,
             )
             steps = [
-                PlanStep(order=int(s.get("order", i + 1)),
-                         action=str(s.get("action", "")).strip(),
-                         when=str(s.get("when", "")).strip(),
-                         why=str(s.get("why", "")).strip())
+                PlanStep(
+                    order=int(s.get("order", i + 1)),
+                    action=str(s.get("action", "")).strip(),
+                    when=str(s.get("when", "")).strip(),
+                    why=str(s.get("why", "")).strip(),
+                )
                 for i, s in enumerate(plan_data.get("steps", []))
                 if isinstance(s, dict) and str(s.get("action", "")).strip()
             ]
             milestones = [
-                Milestone(text=str(m.get("text", "")).strip(),
-                          target_date=str(m.get("target_date", "")).strip(),
-                          signal=str(m.get("signal", "")).strip())
+                Milestone(
+                    text=str(m.get("text", "")).strip(),
+                    target_date=str(m.get("target_date", "")).strip(),
+                    signal=str(m.get("signal", "")).strip(),
+                )
                 for m in plan_data.get("milestones", [])
                 if isinstance(m, dict) and str(m.get("text", "")).strip()
             ]
@@ -268,10 +283,9 @@ class GoalStrategist:
 
         # 4. Debate del panel sobre el plan.
         progress("4/5 Panel deliberando sobre el plan…")
+
         def plan_text() -> str:
-            return summary + "\n" + "\n".join(
-                f"{s.order}. {s.action} ({s.when})" for s in steps
-            )
+            return summary + "\n" + "\n".join(f"{s.order}. {s.action} ({s.when})" for s in steps)
 
         candidate = Recommendation(
             action=Action(id="plan-objetivo", description=plan_text()),
@@ -289,7 +303,9 @@ class GoalStrategist:
             revised = True
             candidate = Recommendation(
                 action=Action(id="plan-objetivo-v2", description=plan_text()),
-                expected_utility=0.0, risk_adjusted_utility=0.0, confidence=0.5,
+                expected_utility=0.0,
+                risk_adjusted_utility=0.0,
+                confidence=0.5,
             )
             verdict = panel.deliberate(base_ctx + objections, candidate)
 
@@ -302,13 +318,23 @@ class GoalStrategist:
             f"Objeciones del debate (pondéralas):\n{objections_txt}\n\n"
             f"Referencia: P(objetivo | statu quo) se estimó en "
             f"{baseline.distribution.outcomes[OUTCOME_ACHIEVED]:.0%}.",
-            goal, horizon, "con plan",
+            goal,
+            horizon,
+            "con plan",
         )
         ledger.record(with_plan)
 
         return GoalPlan(
-            goal=goal, horizon=horizon, baseline=baseline, with_plan=with_plan,
-            levers=levers, external_conditions=conditions,
-            summary=summary, steps=steps, milestones=milestones,
-            verdict=verdict, revised=revised, brief=brief,
+            goal=goal,
+            horizon=horizon,
+            baseline=baseline,
+            with_plan=with_plan,
+            levers=levers,
+            external_conditions=conditions,
+            summary=summary,
+            steps=steps,
+            milestones=milestones,
+            verdict=verdict,
+            revised=revised,
+            brief=brief,
         )

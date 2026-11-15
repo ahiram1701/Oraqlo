@@ -7,7 +7,7 @@ permitir rebobinar y razonar contrafactualmente ("¿qué habría pasado si...?")
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -18,9 +18,9 @@ class Epistemic(Enum):
     Invariante del oráculo honesto: nada se marca KNOWN sin observación directa.
     """
 
-    KNOWN = "known"          # observado directamente, fuente confiable
+    KNOWN = "known"  # observado directamente, fuente confiable
     ESTIMATED = "estimated"  # inferido/predicho, lleva incertidumbre
-    UNKNOWN = "unknown"      # reconocidamente ignorado; el planner lo trata como riesgo
+    UNKNOWN = "unknown"  # reconocidamente ignorado; el planner lo trata como riesgo
 
 
 @dataclass
@@ -36,7 +36,7 @@ class Variable:
     epistemic: Epistemic = Epistemic.ESTIMATED
     uncertainty: float | None = None
     source: str | None = None
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass
@@ -66,7 +66,7 @@ class Observation:
     variable: str
     value: Any
     source: str
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass
@@ -89,9 +89,7 @@ class WorldModel:
     """
 
     def __init__(self) -> None:
-        self._history: list[WorldState] = [
-            WorldState(version=0, timestamp=datetime.now(timezone.utc))
-        ]
+        self._history: list[WorldState] = [WorldState(version=0, timestamp=datetime.now(UTC))]
 
     def current(self) -> WorldState:
         return self._history[-1]

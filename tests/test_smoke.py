@@ -5,20 +5,15 @@ Ejecutar con `python -m pytest tests/ -q` o directamente `python tests/test_smok
 
 from __future__ import annotations
 
-import sys
-from datetime import timedelta
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from datetime import UTC, timedelta
 
 import pytest
 
 from oraqlo.connectors.base import Connector
 from oraqlo.forecaster.base import Distribution, Forecast, Forecaster
-from oraqlo.llm import OllamaBackendConfig, OllamaProvider, OllamaUnavailableError
-from oraqlo.llm.base import ChatMessage
 from oraqlo.forecaster.llm import ForecastParseError, LLMForecaster
-from oraqlo.llm.base import LLMProvider, LLMResponse
+from oraqlo.llm import OllamaBackendConfig, OllamaProvider, OllamaUnavailableError
+from oraqlo.llm.base import ChatMessage, LLMProvider, LLMResponse
 from oraqlo.memory.calibration import CalibrationLedger, brier_score, log_loss, multiclass_brier
 from oraqlo.panel import ROLE_PROMPTS, DecisionPanel, PanelError, RoleConfig, SequentialPanel
 from oraqlo.simulator.base import (
@@ -59,23 +54,26 @@ def test_world_model_apply_versiona_sin_mutar():
 
 
 def test_world_model_at_rebobina():
-    from datetime import datetime, timedelta as td, timezone
+    from datetime import datetime
+    from datetime import timedelta as td
 
     wm = WorldModel()
-    t1 = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    t2 = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    t1 = datetime(2026, 1, 1, tzinfo=UTC)
+    t2 = datetime(2026, 6, 1, tzinfo=UTC)
     wm.apply(Observation(entity_id="e", variable="x", value="a", source="s", timestamp=t1))
     wm.apply(Observation(entity_id="e", variable="x", value="b", source="s", timestamp=t2))
 
     assert wm.at(t1 + td(days=30)).entities["e"].variables["x"].value == "a"
     assert wm.at(t2).entities["e"].variables["x"].value == "b"
-    assert wm.at(datetime(2020, 1, 1, tzinfo=timezone.utc)).version == 0
+    assert wm.at(datetime(2020, 1, 1, tzinfo=UTC)).version == 0
 
 
 def test_static_connector_entrega_una_vez():
     from oraqlo.connectors import StaticConnector
 
-    conn = StaticConnector("demo", [Observation(entity_id="e", variable="x", value=1, source="demo")])
+    conn = StaticConnector(
+        "demo", [Observation(entity_id="e", variable="x", value=1, source="demo")]
+    )
     assert len(list(conn.poll())) == 1
     assert list(conn.poll()) == []
 
@@ -172,8 +170,10 @@ class FakeProvider(LLMProvider):
 
 def test_llm_forecaster_parsea_y_normaliza():
     provider = FakeProvider(
-        ['{"outcomes": {"éxito": 0.59, "fracaso": 0.40}, '
-         '"assumptions": ["equipo estable"], "rationale": "histórico similar"}']
+        [
+            '{"outcomes": {"éxito": 0.59, "fracaso": 0.40}, '
+            '"assumptions": ["equipo estable"], "rationale": "histórico similar"}'
+        ]
     )
     fc = LLMForecaster(provider, model="fake")
     f = fc.forecast(WorldModel().current(), "¿migramos?", timedelta(days=90))
@@ -185,8 +185,10 @@ def test_llm_forecaster_parsea_y_normaliza():
 
 def test_llm_forecaster_reintenta_con_feedback():
     provider = FakeProvider(
-        ["esto no es JSON",
-         '{"outcomes": {"a": 0.5, "b": 0.5}, "assumptions": [], "rationale": ""}']
+        [
+            "esto no es JSON",
+            '{"outcomes": {"a": 0.5, "b": 0.5}, "assumptions": [], "rationale": ""}',
+        ]
     )
     fc = LLMForecaster(provider, model="fake", max_retries=1)
     f = fc.forecast(WorldModel().current(), "¿a o b?", timedelta(days=7))
@@ -231,7 +233,7 @@ def test_ollama_cloud_sin_api_key_da_error_claro(monkeypatch):
         provider.chat([ChatMessage(role="user", content="hola")], model="gpt-oss:120b-cloud")
 
 
-def _candidate() -> "Recommendation":
+def _candidate() -> Recommendation:
     from oraqlo.simulator.base import Action
     from oraqlo.strategy.planner import Recommendation
 
@@ -253,13 +255,15 @@ def _panel(provider) -> SequentialPanel:
 
 
 def test_panel_debate_completo():
-    provider = FakeProvider([
-        "Tesis: la beta cerrada valida demanda con riesgo acotado. Supuestos: hay early adopters.",
-        '{"objections": ["los early adopters no representan al mercado", "el feedback llegará tarde"]}',
-        '{"p_exito": 0.6, "p_objeciones": {"los early adopters no representan al mercado": 0.4, "el feedback llegará tarde": 0.3}}',
-        '{"decision": "emitir", "confidence": 0.55, "rationale": "riesgo acotado y reversible", '
-        '"review_triggers": ["menos de 20 usuarios activos en 2 semanas"]}',
-    ])
+    provider = FakeProvider(
+        [
+            "Tesis: la beta cerrada valida demanda con riesgo acotado. Supuestos: hay early adopters.",
+            '{"objections": ["los early adopters no representan al mercado", "el feedback llegará tarde"]}',
+            '{"p_exito": 0.6, "p_objeciones": {"los early adopters no representan al mercado": 0.4, "el feedback llegará tarde": 0.3}}',
+            '{"decision": "emitir", "confidence": 0.55, "rationale": "riesgo acotado y reversible", '
+            '"review_triggers": ["menos de 20 usuarios activos en 2 semanas"]}',
+        ]
+    )
     verdict = _panel(provider).deliberate("startup pre-lanzamiento", _candidate())
 
     assert verdict.decision == "emitir"
@@ -273,45 +277,53 @@ def test_panel_debate_completo():
 
 def test_panel_sin_objeciones_es_invalido():
     """Un Red Team que no ataca invalida el debate: la auto-crítica es obligatoria."""
-    provider = FakeProvider([
-        "Plan perfecto.",
-        '{"objections": []}',  # JSON válido pero sin ataque: se rechaza sin reintento
-    ])
+    provider = FakeProvider(
+        [
+            "Plan perfecto.",
+            '{"objections": []}',  # JSON válido pero sin ataque: se rechaza sin reintento
+        ]
+    )
     with pytest.raises(PanelError, match="objeciones"):
         _panel(provider).deliberate("ctx", _candidate())
 
 
 def test_panel_juez_decision_invalida():
-    provider = FakeProvider([
-        "Plan.",
-        '{"objections": ["algo"]}',
-        '{"p_exito": 0.5, "p_objeciones": {}}',
-        '{"decision": "quizás", "confidence": 0.5, "rationale": "", "review_triggers": []}',
-    ])
+    provider = FakeProvider(
+        [
+            "Plan.",
+            '{"objections": ["algo"]}',
+            '{"p_exito": 0.5, "p_objeciones": {}}',
+            '{"decision": "quizás", "confidence": 0.5, "rationale": "", "review_triggers": []}',
+        ]
+    )
     with pytest.raises(PanelError, match="inválida"):
         _panel(provider).deliberate("ctx", _candidate())
 
 
 def test_panel_reintenta_json_roto():
-    provider = FakeProvider([
-        "Plan.",
-        "esto no es JSON",  # primer intento del red team falla...
-        '{"objections": ["ataque"]}',  # ...y el reintento con feedback lo corrige
-        '{"p_exito": 0.5, "p_objeciones": {"ataque": 0.2}}',
-        '{"decision": "revisar", "confidence": 0.4, "rationale": "dudas", "review_triggers": []}',
-    ])
+    provider = FakeProvider(
+        [
+            "Plan.",
+            "esto no es JSON",  # primer intento del red team falla...
+            '{"objections": ["ataque"]}',  # ...y el reintento con feedback lo corrige
+            '{"p_exito": 0.5, "p_objeciones": {"ataque": 0.2}}',
+            '{"decision": "revisar", "confidence": 0.4, "rationale": "dudas", "review_triggers": []}',
+        ]
+    )
     verdict = _panel(provider).deliberate("ctx", _candidate())
     assert verdict.decision == "revisar"
     assert verdict.objections == ["ataque"]
 
 
 def test_panel_on_turn_recibe_los_turnos_en_orden():
-    provider = FakeProvider([
-        "Plan.",
-        '{"objections": ["algo"]}',
-        '{"p_exito": 0.5, "p_objeciones": {}}',
-        '{"decision": "emitir", "confidence": 0.5, "rationale": "", "review_triggers": []}',
-    ])
+    provider = FakeProvider(
+        [
+            "Plan.",
+            '{"objections": ["algo"]}',
+            '{"p_exito": 0.5, "p_objeciones": {}}',
+            '{"decision": "emitir", "confidence": 0.5, "rationale": "", "review_triggers": []}',
+        ]
+    )
     turns: list[str] = []
     verdict = _panel(provider).deliberate(
         "ctx", _candidate(), on_turn=lambda role, text: turns.append(role)
@@ -324,14 +336,16 @@ def test_panel_on_turn_recibe_los_turnos_en_orden():
 def test_drafter_genera_caso_valido():
     from oraqlo.drafter import draft_case
 
-    provider = FakeProvider([
-        '{"actions": {"lanzar": {"description": "Lanzar ya", '
-        '"outcomes": {"éxito": 0.4, "fracaso": 0.6}}, '
-        '"esperar": {"description": "Esperar un trimestre", '
-        '"outcomes": {"mercado madura": 0.5, "competidor se adelanta": 0.5}}}, '
-        '"utilities": {"éxito": 1.0, "fracaso": -0.6, "mercado madura": 0.3, '
-        '"competidor se adelanta": -0.4}}'
-    ])
+    provider = FakeProvider(
+        [
+            '{"actions": {"lanzar": {"description": "Lanzar ya", '
+            '"outcomes": {"éxito": 0.4, "fracaso": 0.6}}, '
+            '"esperar": {"description": "Esperar un trimestre", '
+            '"outcomes": {"mercado madura": 0.5, "competidor se adelanta": 0.5}}}, '
+            '"utilities": {"éxito": 1.0, "fracaso": -0.6, "mercado madura": 0.3, '
+            '"competidor se adelanta": -0.4}}'
+        ]
+    )
     spec = draft_case(provider, "fake", "¿lanzamos el producto?", horizon_days=120)
     assert spec.question == "¿lanzamos el producto?"
     assert {a.id for a in spec.actions} == {"lanzar", "esperar"}
@@ -343,8 +357,10 @@ def test_drafter_reintenta_y_falla_claro():
     from oraqlo.drafter import DraftError, draft_case
 
     # Probabilidades que no suman 1.0 en todos los intentos → error accionable.
-    bad = ('{"actions": {"a": {"description": "A", "outcomes": {"x": 0.5, "y": 0.2}}}, '
-           '"utilities": {"x": 1.0, "y": 0.0}}')
+    bad = (
+        '{"actions": {"a": {"description": "A", "outcomes": {"x": 0.5, "y": 0.2}}}, '
+        '"utilities": {"x": 1.0, "y": 0.0}}'
+    )
     provider = FakeProvider([bad, bad, bad])
     with pytest.raises(DraftError, match="no produjo un caso válido"):
         draft_case(provider, "fake", "¿?", horizon_days=30, max_retries=2)
@@ -371,18 +387,24 @@ def test_web_client_parsea_resultados(monkeypatch):
 
     client = OllamaWebClient()
     monkeypatch.setattr(
-        client, "_post",
-        lambda path, payload: {"results": [
-            {"title": "T1", "url": "https://a.example", "content": "C1"},
-            {"url": "https://b.example", "content": "C2"},
-            {"title": "sin url"},  # descartado
-        ]},
+        client,
+        "_post",
+        lambda path, payload: {
+            "results": [
+                {"title": "T1", "url": "https://a.example", "content": "C1"},
+                {"url": "https://b.example", "content": "C2"},
+                {"title": "sin url"},  # descartado
+            ]
+        },
     )
     results = client.search("q", max_results=5)
-    assert [(r.title, r.url) for r in results] == [("T1", "https://a.example"),
-                                                   ("", "https://b.example")]
-    monkeypatch.setattr(client, "_post",
-                        lambda path, payload: {"title": "Página", "content": "x" * 10000})
+    assert [(r.title, r.url) for r in results] == [
+        ("T1", "https://a.example"),
+        ("", "https://b.example"),
+    ]
+    monkeypatch.setattr(
+        client, "_post", lambda path, payload: {"title": "Página", "content": "x" * 10000}
+    )
     text = client.fetch("https://a.example", max_chars=100)
     assert text.startswith("Página") and len(text) == 100
 
@@ -392,10 +414,21 @@ class FakeWebClient:
 
     def __init__(self, results=None):
         self.queries: list[str] = []
-        self.results = results if results is not None else [
-            type("R", (), {"title": "Informe 2026", "url": "https://x.example/informe",
-                           "snippet": "El mercado creció 12% en 2025."})()
-        ]
+        self.results = (
+            results
+            if results is not None
+            else [
+                type(
+                    "R",
+                    (),
+                    {
+                        "title": "Informe 2026",
+                        "url": "https://x.example/informe",
+                        "snippet": "El mercado creció 12% en 2025.",
+                    },
+                )()
+            ]
+        )
 
     def is_available(self):
         return True
@@ -412,12 +445,14 @@ def test_researcher_produce_brief_y_observaciones():
     from oraqlo.forecaster.llm import _summarize_state
     from oraqlo.research import BRIEF_HEADER, Researcher
 
-    provider = FakeProvider([
-        '{"queries": ["mercado apps 2026", "competidores recetas"]}',
-        '{"action": "synthesize"}',  # la reflexión decide que basta una ronda
-        '{"facts": [{"text": "El mercado creció 12% en 2025", '
-        '"source": "https://x.example/informe"}]}',
-    ])
+    provider = FakeProvider(
+        [
+            '{"queries": ["mercado apps 2026", "competidores recetas"]}',
+            '{"action": "synthesize"}',  # la reflexión decide que basta una ronda
+            '{"facts": [{"text": "El mercado creció 12% en 2025", '
+            '"source": "https://x.example/informe"}]}',
+        ]
+    )
     web = FakeWebClient()
     brief = Researcher(web, provider, model="fake").investigate("¿lanzamos?", timedelta(days=90))
 
@@ -438,14 +473,16 @@ def test_researcher_produce_brief_y_observaciones():
 def test_researcher_itera_cuando_falta_informacion():
     from oraqlo.research import Researcher
 
-    provider = FakeProvider([
-        '{"queries": ["consulta inicial"]}',
-        # Reflexión 1: falta un dato → busca más.
-        '{"action": "search", "queries": ["dato que faltaba"], "reason": "falta el precio"}',
-        # Reflexión 2: suficiente.
-        '{"action": "synthesize"}',
-        '{"facts": [{"text": "Hecho completo", "source": "https://x.example/informe"}]}',
-    ])
+    provider = FakeProvider(
+        [
+            '{"queries": ["consulta inicial"]}',
+            # Reflexión 1: falta un dato → busca más.
+            '{"action": "search", "queries": ["dato que faltaba"], "reason": "falta el precio"}',
+            # Reflexión 2: suficiente.
+            '{"action": "synthesize"}',
+            '{"facts": [{"text": "Hecho completo", "source": "https://x.example/informe"}]}',
+        ]
+    )
     web = FakeWebClient()
     progress: list[str] = []
     brief = Researcher(web, provider, model="fake", max_rounds=3).investigate(
@@ -461,14 +498,16 @@ def test_researcher_itera_cuando_falta_informacion():
 def test_researcher_fetch_solo_urls_vistas():
     from oraqlo.research import Researcher
 
-    provider = FakeProvider([
-        '{"queries": ["q"]}',
-        # Pide leer una URL vista y una inventada: solo la vista se lee.
-        '{"action": "fetch", "urls": ["https://x.example/informe", '
-        '"https://atacante.example/mal"], "reason": "detalle"}',
-        '{"action": "synthesize"}',
-        '{"facts": [{"text": "H", "source": "https://x.example/informe"}]}',
-    ])
+    provider = FakeProvider(
+        [
+            '{"queries": ["q"]}',
+            # Pide leer una URL vista y una inventada: solo la vista se lee.
+            '{"action": "fetch", "urls": ["https://x.example/informe", '
+            '"https://atacante.example/mal"], "reason": "detalle"}',
+            '{"action": "synthesize"}',
+            '{"facts": [{"text": "H", "source": "https://x.example/informe"}]}',
+        ]
+    )
     web = FakeWebClient()
     fetched: list[str] = []
     web.fetch = lambda url, max_chars=6000: (fetched.append(url), "contenido")[1]
@@ -483,11 +522,13 @@ def test_researcher_respeta_el_tope_de_rondas():
     from oraqlo.research import Researcher
 
     # La reflexión pide más búsquedas; el tope corta y pasa directo a síntesis.
-    provider = FakeProvider([
-        '{"queries": ["q1"]}',
-        '{"action": "search", "queries": ["q2"], "reason": "más"}',
-        '{"facts": [{"text": "H", "source": "https://x.example/informe"}]}',
-    ])
+    provider = FakeProvider(
+        [
+            '{"queries": ["q1"]}',
+            '{"action": "search", "queries": ["q2"], "reason": "más"}',
+            '{"facts": [{"text": "H", "source": "https://x.example/informe"}]}',
+        ]
+    )
     web = FakeWebClient()
     brief = Researcher(web, provider, model="fake", max_rounds=2).investigate(
         "¿?", timedelta(days=30)
@@ -582,14 +623,18 @@ def test_goal_revisar_rehace_el_plan():
         '{"p_exito": 0.4, "p_objeciones": {"hitos poco realistas": 0.6}}',
         '{"decision": "revisar", "confidence": 0.5, "rationale": "flojo", "review_triggers": []}',
     ]
-    plan_v2 = ('{"summary": "Plan v2 realista", "steps": [{"order": 1, "action": "mejor paso",'
-               ' "when": "ya", "why": "objeciones atendidas"}], "milestones": []}')
-    provider = FakeProvider([
-        *_goal_responses(panel=panel_revisar)[:-1],  # hasta el primer debate (sin condicional)
-        plan_v2,
-        *GOAL_PANEL_OK,  # segundo debate: emitir
-        '{"p_logro": 0.55, "assumptions": [], "rationale": ""}',
-    ])
+    plan_v2 = (
+        '{"summary": "Plan v2 realista", "steps": [{"order": 1, "action": "mejor paso",'
+        ' "when": "ya", "why": "objeciones atendidas"}], "milestones": []}'
+    )
+    provider = FakeProvider(
+        [
+            *_goal_responses(panel=panel_revisar)[:-1],  # hasta el primer debate (sin condicional)
+            plan_v2,
+            *GOAL_PANEL_OK,  # segundo debate: emitir
+            '{"p_logro": 0.55, "assumptions": [], "rationale": ""}',
+        ]
+    )
     plan, _ = _pursue(provider)
     assert plan.revised is True
     assert plan.summary == "Plan v2 realista"
@@ -618,41 +663,75 @@ def test_goal_sin_palancas_es_error():
 def test_drafter_incluye_contexto_de_investigacion():
     from oraqlo.drafter import draft_case
 
-    provider = FakeProvider([
-        '{"actions": {"a": {"description": "A", "outcomes": {"x": 1.0}}}, '
-        '"utilities": {"x": 0.5}}'
-    ])
-    draft_case(provider, "fake", "¿?", horizon_days=30,
-               context="HECHOS RECUPERADOS: el mercado creció 12%")
+    provider = FakeProvider(
+        [
+            '{"actions": {"a": {"description": "A", "outcomes": {"x": 1.0}}}, '
+            '"utilities": {"x": 0.5}}'
+        ]
+    )
+    draft_case(
+        provider, "fake", "¿?", horizon_days=30, context="HECHOS RECUPERADOS: el mercado creció 12%"
+    )
     assert "el mercado creció 12%" in provider.calls[0][-1].content
 
 
 # ── Polymarket + práctica autónoma ────────────────────────────────────────
 
 
-def _market_payload(mid="111", question="¿Pasará X?", prices=("0.35", "0.65"),
-                    closed=False, uma=None, end="2026-07-25T00:00:00Z", vol=50000.0):
-    return {"id": mid, "question": question, "outcomes": '["Yes", "No"]',
-            "outcomePrices": f'["{prices[0]}", "{prices[1]}"]', "closed": closed,
-            "umaResolutionStatus": uma, "endDate": end, "volume24hr": vol}
+def _iso_in_days(n: int) -> str:
+    from datetime import datetime
+
+    return (datetime.now(UTC) + timedelta(days=n)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _market_payload(
+    mid="111",
+    question="¿Pasará X?",
+    prices=("0.35", "0.65"),
+    closed=False,
+    uma=None,
+    end=None,
+    vol=50000.0,
+):
+    if end is None:  # cierra pronto, relativo a hoy (sin bombas de tiempo)
+        end = _iso_in_days(5)
+    return {
+        "id": mid,
+        "question": question,
+        "outcomes": '["Yes", "No"]',
+        "outcomePrices": f'["{prices[0]}", "{prices[1]}"]',
+        "closed": closed,
+        "umaResolutionStatus": uma,
+        "endDate": end,
+        "volume24hr": vol,
+    }
 
 
 def test_polymarket_parsea_abiertos_y_resueltos(monkeypatch):
     from oraqlo.polymarket import PolymarketClient
 
     client = PolymarketClient()
-    monkeypatch.setattr(client, "_get", lambda path, params=None: [
-        _market_payload(mid="1"),
-        _market_payload(mid="2", vol=100.0),                      # volumen bajo: fuera
-        _market_payload(mid="3", end="2027-01-01T00:00:00Z"),     # cierra tarde: fuera
-        _market_payload(mid="4", closed=True),                    # cerrado: fuera
-    ])
+    monkeypatch.setattr(
+        client,
+        "_get",
+        lambda path, params=None: [
+            _market_payload(mid="1"),
+            _market_payload(mid="2", vol=100.0),  # volumen bajo: fuera
+            _market_payload(mid="3", end=_iso_in_days(400)),  # cierra tarde: fuera
+            _market_payload(mid="4", closed=True),  # cerrado: fuera
+        ],
+    )
     markets = client.list_open(limit=10, min_volume_24h=10000, max_days_to_close=30)
     assert [m.id for m in markets] == ["1"]
     assert markets[0].outcomes == {"Yes": 0.35, "No": 0.65}
 
-    monkeypatch.setattr(client, "_get", lambda path, params=None:
-                        _market_payload(mid="9", prices=("0", "1"), closed=True, uma="resolved"))
+    monkeypatch.setattr(
+        client,
+        "_get",
+        lambda path, params=None: _market_payload(
+            mid="9", prices=("0", "1"), closed=True, uma="resolved"
+        ),
+    )
     resolved = client.get_market("9")
     assert resolved.resolved and resolved.winner == "No"
 
@@ -670,20 +749,29 @@ class FakeMarketClient:
 
 
 def _mk(mid, question="¿Pasará X?", yes=0.35, resolved=False, winner=None):
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     from oraqlo.polymarket import Market
 
-    return Market(id=mid, question=question, outcomes={"Yes": yes, "No": 1 - yes},
-                  end_date=datetime(2026, 7, 25, tzinfo=timezone.utc),
-                  closed=resolved, resolved=resolved, winner=winner)
+    return Market(
+        id=mid,
+        question=question,
+        outcomes={"Yes": yes, "No": 1 - yes},
+        end_date=datetime(2026, 7, 25, tzinfo=UTC),
+        closed=resolved,
+        resolved=resolved,
+        winner=winner,
+    )
 
 
 def test_practice_predice_con_benchmark_y_dedupe():
     from oraqlo.autopractice import MARKET_SOURCE, PracticeEngine
 
-    provider = FakeProvider([
-        '{"outcomes": {"Yes": 0.6, "No": 0.4}, "assumptions": ["a1"]}',
-    ])
+    provider = FakeProvider(
+        [
+            '{"outcomes": {"Yes": 0.6, "No": 0.4}, "assumptions": ["a1"]}',
+        ]
+    )
     ledger = CalibrationLedger()
     engine = PracticeEngine(FakeMarketClient([_mk("77")]), provider, "fake", ledger)
 
@@ -773,12 +861,14 @@ def test_ollama_list_models(monkeypatch):
 
 
 def test_panel_confianza_se_recorta_a_rango():
-    provider = FakeProvider([
-        "Plan.",
-        '{"objections": ["algo"]}',
-        '{"p_exito": 1.7, "p_objeciones": {}}',  # oráculo sobreconfiado fuera de rango
-        '{"decision": "emitir", "confidence": 1.5, "rationale": "", "review_triggers": []}',
-    ])
+    provider = FakeProvider(
+        [
+            "Plan.",
+            '{"objections": ["algo"]}',
+            '{"p_exito": 1.7, "p_objeciones": {}}',  # oráculo sobreconfiado fuera de rango
+            '{"decision": "emitir", "confidence": 1.5, "rationale": "", "review_triggers": []}',
+        ]
+    )
     verdict = _panel(provider).deliberate("ctx", _candidate())
     assert verdict.confidence == 1.0
     assert verdict.p_success == 1.0
@@ -831,8 +921,10 @@ def test_tree_search_expectimax():
         first_is_win = t.utility > 1.0
         expected = 0.9 + (1.0 if first_is_win else 0.0)
         assert t.utility == pytest.approx(expected)
-    eu = {aid: sum(t.probability * t.utility for t in trajs if t.actions_taken[0].id == aid)
-          for aid in ("A", "B")}
+    eu = {
+        aid: sum(t.probability * t.utility for t in trajs if t.actions_taken[0].id == aid)
+        for aid in ("A", "B")
+    }
     assert eu["B"] == pytest.approx(1.8)
     assert eu["A"] == pytest.approx(1.5)
 
@@ -846,7 +938,8 @@ def test_softmax_adversary_prefiere_su_mejor_respuesta():
         temperature=0.5,
     )
     responses = dict(
-        (a.id, p) for a, p in adversary.respond(WorldModel().current(), Action(id="x", description=""))
+        (a.id, p)
+        for a, p in adversary.respond(WorldModel().current(), Action(id="x", description=""))
     )
     assert sum(responses.values()) == pytest.approx(1.0)
     assert responses["atk"] > responses["dfn"]
@@ -858,8 +951,10 @@ def test_softmax_adversary_prefiere_su_mejor_respuesta():
 def _trajs(action_id: str, pairs: list[tuple[float, float]]) -> list[Trajectory]:
     action = Action(id=action_id, description=action_id)
     state = WorldModel().current()
-    return [Trajectory(states=[state], probability=p, utility=u, actions_taken=[action])
-            for p, u in pairs]
+    return [
+        Trajectory(states=[state], probability=p, utility=u, actions_taken=[action])
+        for p, u in pairs
+    ]
 
 
 def test_planner_la_aversion_al_riesgo_cambia_el_ranking():
@@ -906,16 +1001,23 @@ class FakeForecaster(Forecaster):
         return _forecast("fx-1", {"bien": 0.7, "mal": 0.3}, source="fake")
 
 
-def _agent(panel_provider) -> "OraqloAgent":
+def _agent(panel_provider) -> OraqloAgent:  # noqa: F821  (import local)
     from oraqlo.agent import OraqloAgent
     from oraqlo.connectors import StaticConnector
 
     model = _toy_outcome_model({"A": {"win": 0.8, "lose": 0.2}, "B": {"win": 0.5, "lose": 0.5}})
     utility = lambda state, path: 1.0 if path[-1] == "win" else 0.0
     return OraqloAgent(
-        connectors=[StaticConnector("demo", [
-            Observation(entity_id="mercado", variable="tendencia", value="alcista", source="demo")
-        ])],
+        connectors=[
+            StaticConnector(
+                "demo",
+                [
+                    Observation(
+                        entity_id="mercado", variable="tendencia", value="alcista", source="demo"
+                    )
+                ],
+            )
+        ],
         world_model=WorldModel(),
         forecaster=FakeForecaster(),
         simulator=TreeSearchEngine(model, utility),
@@ -926,16 +1028,21 @@ def _agent(panel_provider) -> "OraqloAgent":
 
 
 def test_ciclo_ooda_completo_emite():
-    provider = FakeProvider([
-        "Plan sólido.",
-        '{"objections": ["riesgo de ejecución"]}',
-        '{"p_exito": 0.7, "p_objeciones": {"riesgo de ejecución": 0.2}}',
-        '{"decision": "emitir", "confidence": 0.7, "rationale": "ok", "review_triggers": []}',
-    ])
+    provider = FakeProvider(
+        [
+            "Plan sólido.",
+            '{"objections": ["riesgo de ejecución"]}',
+            '{"p_exito": 0.7, "p_objeciones": {"riesgo de ejecución": 0.2}}',
+            '{"decision": "emitir", "confidence": 0.7, "rationale": "ok", "review_triggers": []}',
+        ]
+    )
     agent = _agent(provider)
-    report = agent.cycle("¿expandimos?", [Action(id="A", description="expandir"),
-                                          Action(id="B", description="esperar")],
-                         horizon=timedelta(days=90), depth=1)
+    report = agent.cycle(
+        "¿expandimos?",
+        [Action(id="A", description="expandir"), Action(id="B", description="esperar")],
+        horizon=timedelta(days=90),
+        depth=1,
+    )
 
     assert report.verdict.decision == "emitir"
     assert report.recommendation.action.id == "A"  # mayor EU con el modelo toy
@@ -960,8 +1067,12 @@ def test_ciclo_ooda_revisar_redelibera_con_objeciones():
         '{"decision": "emitir", "confidence": 0.6, "rationale": "mejor", "review_triggers": ["churn > 5%"]}',
     ]
     provider = FakeProvider(reviewing + emitting)
-    report = _agent(provider).cycle("¿expandimos?", [Action(id="A", description="expandir")],
-                                    horizon=timedelta(days=90), depth=1)
+    report = _agent(provider).cycle(
+        "¿expandimos?",
+        [Action(id="A", description="expandir")],
+        horizon=timedelta(days=90),
+        depth=1,
+    )
 
     assert report.verdict.decision == "emitir"
     assert report.revisions == 1

@@ -75,8 +75,11 @@ def draft_case(
                 "actions": data.get("actions", {}),
                 "utilities": data.get("utilities", {}),
                 # Riesgo por defecto conservador; el usuario lo ajusta en el formulario.
-                "risk": {"risk_aversion": 0.3, "ruin_threshold": -0.9,
-                         "max_ruin_probability": 0.25},
+                "risk": {
+                    "risk_aversion": 0.3,
+                    "ruin_threshold": -0.9,
+                    "max_ruin_probability": 0.25,
+                },
             }
             return parse_case(case)
         except (CaseError, json.JSONDecodeError, TypeError, ValueError) as e:
