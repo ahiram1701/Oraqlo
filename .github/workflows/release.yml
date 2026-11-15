@@ -12,6 +12,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: write # para lanzar el CI sobre la rama del PR de release
 
 jobs:
   release-please:
@@ -25,6 +26,12 @@ jobs:
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+      - name: Lanzar el CI sobre el PR de release
+        if: steps.rp.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ fromJSON(steps.rp.outputs.pr).headBranchName }}
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
 
   publish:
     needs: release-please

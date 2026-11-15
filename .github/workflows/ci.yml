@@ -4,6 +4,10 @@ on:
   pull_request:
   push:
     branches: [main]
+  # El PR de release lo crea el GITHUB_TOKEN, y GitHub no dispara workflows con sus
+  # eventos; release.yml lanza este CI por workflow_dispatch sobre la rama del PR
+  # para que los checks obligatorios existan y el PR pueda mergearse.
+  workflow_dispatch:
 
 permissions:
   contents: read
