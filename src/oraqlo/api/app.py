@@ -28,6 +28,7 @@ from oraqlo.casefile import CaseError, case_to_dict, parse_case, template_json
 from oraqlo.goaltrack import MILESTONE_STATUSES, GoalTracker
 from oraqlo.services.core import OraqloService
 from oraqlo.services.jobs import TERMINAL, JobRunner
+from oraqlo.services.push import PushService, job_notification
 from oraqlo.services.scheduler import PeriodicTask, Scheduler
 from oraqlo.services.serialize import goal_json
 from oraqlo.store.db import dumps, loads
@@ -72,6 +73,16 @@ class CloseIn(BaseModel):
     achieved: bool
 
 
+class PushSubIn(BaseModel):
+    endpoint: str
+    keys: dict[str, str]
+    expirationTime: float | None = None
+
+
+class EndpointIn(BaseModel):
+    endpoint: str
+
+
 class PracticeIn(BaseModel):
     auto: bool | None = None
     interval_min: float | None = Field(None, ge=5, le=24 * 60)
@@ -85,7 +96,43 @@ def create_app(service: OraqloService | None = None, background: bool = True) ->
     service = service or OraqloService()
     runner = JobRunner(service)
     scheduler = Scheduler(service.store.settings)
+    push = PushService(service.store.db, service.store.settings)
     started = time.time()
+
+    def notify_job(job: dict) -> None:
+        note = job_notification(job)
+        if note:
+            push.send(*note, tag=f"job-{job.get('id')}")
+
+    runner.listeners.append(notify_job)
+
+    def notify_overdue() -> None:
+        """Un aviso por hito vencido (una sola vez por hito)."""
+        from oraqlo.goaltrack import GoalTracker as _Tracker
+
+        notified = set(service.store.settings.get("push.notified_milestones", []))
+        for goal, m in _Tracker(service.store.goals, service.store.ledger).overdue_milestones():
+            key = f"{goal.id}:{m.text}:{m.target_date}"
+            if key in notified:
+                continue
+            push.send(
+                "Hito vencido",
+                f"{goal.goal}: «{m.text}» era para el {m.target_date}. Márcalo o re-planifica.",
+                url=f"/objetivos/{goal.id}",
+                tag=f"milestone-{goal.id}",
+            )
+            notified.add(key)
+        service.store.settings.set("push.notified_milestones", sorted(notified))
+
+    scheduler.add(
+        PeriodicTask(
+            "milestones",
+            lambda: timedelta(hours=6),
+            lambda: push.count() > 0,
+            notify_overdue,
+            run_on_start=True,
+        )
+    )
 
     def practice_enabled() -> bool:
         return bool(service.store.settings.get("practice_auto", service.config.practice.auto))
@@ -117,6 +164,7 @@ def create_app(service: OraqloService | None = None, background: bool = True) ->
     app.state.service = service
     app.state.runner = runner
     app.state.scheduler = scheduler
+    app.state.push = push
 
     @app.middleware("http")
     async def auth(request: Request, call_next):
@@ -393,6 +441,32 @@ def create_app(service: OraqloService | None = None, background: bool = True) ->
     def goals_delete(goal_id: str) -> None:
         goal_or_404(goal_id)
         tracker().delete(goal_id)
+
+    # ── notificaciones push ───────────────────────────────────────────────
+
+    @app.get("/api/push/key")
+    def push_key() -> dict:
+        return {"public_key": push.public_key()}
+
+    @app.post("/api/push/subscribe", status_code=201)
+    def push_subscribe(body: PushSubIn, request: Request) -> dict:
+        try:
+            push.subscribe(body.model_dump(), request.state.identity.login)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        return {"devices": push.count()}
+
+    @app.post("/api/push/unsubscribe")
+    def push_unsubscribe(body: EndpointIn) -> dict:
+        push.unsubscribe(body.endpoint)
+        return {"devices": push.count()}
+
+    @app.post("/api/push/test")
+    def push_test() -> dict:
+        sent = push.send("Oraqlo", "Las notificaciones funcionan en este dispositivo.", "/ajustes")
+        if not sent:
+            raise HTTPException(409, "No hay dispositivos suscritos (o ninguno respondió).")
+        return {"delivered": sent}
 
     # ── práctica ──────────────────────────────────────────────────────────
 

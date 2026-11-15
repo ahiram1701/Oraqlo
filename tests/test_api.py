@@ -299,3 +299,79 @@ def test_proveedores_sin_exponer_claves(env, monkeypatch):
     assert "secreto" not in body
     groq = next(p for p in json.loads(body)["providers"] if p["name"] == "groq")
     assert groq["key_present"] is True
+
+
+# ── notificaciones push ──────────────────────────────────────────────────
+
+SUB = {"endpoint": "https://push.example/abc", "keys": {"p256dh": "k", "auth": "a"}}
+
+
+def test_push_claves_suscripcion_y_envio(env, monkeypatch):
+    import pywebpush
+
+    client, _service, _app, _ = env
+    key = client.get("/api/push/key").json()["public_key"]
+    assert len(key) > 80 and client.get("/api/push/key").json()["public_key"] == key  # estable
+    assert client.post("/api/push/test").status_code == 409  # nadie suscrito
+    assert client.post("/api/push/subscribe", json={"endpoint": "x", "keys": {}}).status_code == 422
+    assert client.post("/api/push/subscribe", json=SUB).json() == {"devices": 1}
+
+    sent = []
+    monkeypatch.setattr(pywebpush, "webpush", lambda **kw: sent.append(kw))
+    assert client.post("/api/push/test").json() == {"delivered": 1}
+    payload = json.loads(sent[0]["data"])
+    assert payload["title"] == "Oraqlo" and payload["url"] == "/ajustes"
+    assert sent[0]["vapid_claims"]["sub"].startswith("https://")
+
+
+def test_push_borra_suscripciones_muertas(env, monkeypatch):
+    import pywebpush
+
+    client, _, app, _ = env
+    client.post("/api/push/subscribe", json=SUB)
+
+    def gone(**kw):
+        raise pywebpush.WebPushException("gone", response=type("R", (), {"status_code": 410})())
+
+    monkeypatch.setattr(pywebpush, "webpush", gone)
+    assert app.state.push.send("t", "b") == 0
+    assert app.state.push.count() == 0
+
+
+def test_aviso_al_terminar_un_job(env, monkeypatch):
+    import pywebpush
+
+    client, *_ = env
+    client.post("/api/push/subscribe", json=SUB)
+    sent = []
+    monkeypatch.setattr(pywebpush, "webpush", lambda **kw: sent.append(json.loads(kw["data"])))
+    wait_job(
+        client,
+        client.post("/api/ask", json={"question": "¿Lloverá?", "research": False}).json()["job_id"],
+    )
+    deadline = time.monotonic() + 3
+    while not sent and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert sent and sent[0]["title"] == "Previsión lista"
+    assert "¿Lloverá?: sube 70%" in sent[0]["body"] and sent[0]["url"].startswith("/historial/")
+
+
+def test_aviso_de_hito_vencido_una_sola_vez(env, monkeypatch):
+    import pywebpush
+
+    from oraqlo.goaltrack import GoalTracker, TrackedMilestone
+    from test_goaltrack import _plan
+
+    client, service, app, _ = env
+    tracked = GoalTracker(service.store.goals, service.store.ledger).track(_plan())
+    goal = service.store.goals.get(tracked.id)
+    goal.milestones.append(TrackedMilestone(text="vencido", target_date="2020-01-01", signal="s"))
+    service.store.goals.update(goal)
+    client.post("/api/push/subscribe", json=SUB)
+    sent = []
+    monkeypatch.setattr(pywebpush, "webpush", lambda **kw: sent.append(json.loads(kw["data"])))
+    scheduler = app.state.scheduler
+    now = datetime(2026, 11, 15, tzinfo=UTC)
+    assert scheduler.tick(now) == ["milestones"]
+    assert scheduler.tick(now + timedelta(hours=7)) == ["milestones"]
+    assert len(sent) == 1 and "vencido" in sent[0]["body"]
