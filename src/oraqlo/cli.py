@@ -4,6 +4,8 @@
     oraqlo version                 muestra la versión instalada
     oraqlo tui [caso.json]         abre la TUI (requiere el extra `tui`)
     oraqlo practice [opciones]     autopráctica con Polymarket (ver --help)
+    oraqlo update [--apply]        busca / instala la última versión publicada
+    oraqlo rollback                vuelve a la versión anterior
     oraqlo config                  rutas y roles efectivos
     oraqlo doctor [--preflight]    diagnóstico (config, base, claves, proveedores)
     oraqlo import-legacy [carpeta] importa los JSON de la versión TUI
@@ -139,7 +141,55 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             host,
         )
     print(f"Oraqlo {__version__} en http://{host}:{port}  (datos: {config.home})")
-    uvicorn.run(create_app(), host=host, port=port, log_level="info", proxy_headers=False)
+    from oraqlo.updater import RESTART_EXIT_CODE
+
+    app = create_app()
+    server = uvicorn.Server(
+        uvicorn.Config(app, host=host, port=port, log_level="info", proxy_headers=False)
+    )
+    app.state.server = server  # el updater lo usa para pedir un reinicio limpio
+    server.run()
+    if app.state.restart_requested:
+        print("Reiniciando para activar la versión nueva…")
+        return RESTART_EXIT_CODE
+    return 0
+
+
+def _cmd_update(args: argparse.Namespace) -> int:
+    """Comprueba (y con --apply, prepara y activa) la última versión publicada."""
+    from oraqlo.config import load_config
+    from oraqlo.updater import UpdateError, Updater
+
+    config = load_config()
+    updater = Updater(config.home, config.updates.repo, config.updates.channel, config.db_path)
+    try:
+        result = updater.check()
+        print(result.detail)
+        if not args.apply or result.status != "available":
+            return 0
+        staged = updater.stage()
+        print(staged.detail)
+        if staged.status != "staged" or staged.version is None:
+            return 1 if staged.status == "unmanaged" else 0
+        backup = updater.activate(staged.version, config.backups_dir)
+        print(f"Activada {staged.version} (backup de la base: {backup.name}). Reinicia Oraqlo.")
+    except UpdateError as e:
+        print(f"Actualización abortada: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _cmd_rollback(args: argparse.Namespace) -> int:
+    from oraqlo.config import load_config
+    from oraqlo.updater import UpdateError, Updater
+
+    config = load_config()
+    try:
+        version = Updater(config.home, config.updates.repo).rollback()
+    except UpdateError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    print(f"Vuelta a {version}. Reinicia Oraqlo para aplicarlo.")
     return 0
 
 
@@ -158,6 +208,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve = sub.add_parser("serve", help="arranca el servidor web (API + app)")
     p_serve.add_argument("--host", default=None, help="por defecto server.host (127.0.0.1)")
     p_serve.add_argument("--port", type=int, default=None, help="por defecto server.port (8765)")
+    p_update = sub.add_parser("update", help="busca (y con --apply instala) la última versión")
+    p_update.add_argument("--apply", action="store_true", help="descargar, verificar y activar")
+    sub.add_parser("rollback", help="vuelve a la versión instalada anterior")
     sub.add_parser("config", help="muestra rutas y roles efectivos")
     p_doctor = sub.add_parser("doctor", help="diagnóstico de configuración, base y proveedores")
     p_doctor.add_argument(
@@ -193,6 +246,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_practice(args)
     if args.command == "serve":
         return _cmd_serve(args)
+    if args.command == "update":
+        return _cmd_update(args)
+    if args.command == "rollback":
+        return _cmd_rollback(args)
     if args.command == "config":
         return _cmd_config(args)
     if args.command == "doctor":
