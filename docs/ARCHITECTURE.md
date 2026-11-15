@@ -1,122 +1,115 @@
 # Oraqlo — Arquitectura
 
-Motor de estrategia bajo incertidumbre, genérico y reutilizable. Este documento amplía
-el diseño; los contratos ejecutables viven como ABCs en `src/oraqlo/`.
+Motor de estrategia bajo incertidumbre, servido como app web local y accesible desde el celular por Tailscale.
+
+## Vista general
+
+```
+Celular / PC (PWA React)                           este PC Windows
+   │  HTTPS (identidad Tailscale)                ┌──────────────────────────────────────┐
+   └──► tailscale serve ──► 127.0.0.1:8765 ────► │ FastAPI  (api/)                      │
+                                                 │   auth Tailscale · REST · SSE        │
+                                                 │ Servicios (services/)                │
+                                                 │   OraqloService · JobRunner ·        │
+                                                 │   Scheduler · Push · KeepAwake       │
+                                                 │ Dominio                              │
+                                                 │   agent (OODA) · forecaster ·        │
+                                                 │   simulator · planner · panel ·      │
+                                                 │   goals · research · autopractice    │
+                                                 │ LLM (llm/)  anthropic · openai-compat│
+                                                 │             · ollama                 │
+                                                 │ SQLite (store/)  único dueño estado  │
+                                                 └──────────────────────────────────────┘
+        tarea programada ──► launcher.py ──► versions/<X.Y.Z>/ (updater + rollback)
+```
 
 ## Principios de diseño
 
-1. **Calibración > confianza.** Toda predicción lleva una distribución o intervalo,
-   nunca un valor "seguro". Se mide con Brier score / log-loss y se recalibra.
-   (Ver [ADR 0001](decisions/0001-oraculo-honesto.md).)
-2. **Modularidad enchufable.** Fuentes de datos, modelos de forecasting y LLMs son
-   plugins detrás de interfaces. Cambiar de modelo Ollama = cambiar una línea de config.
-3. **Auto-crítica adversarial.** Ninguna estrategia se emite sin pasar por un Red Team
-   interno que intenta refutarla. El estratega piensa contra sí mismo.
-4. **Incertidumbre explícita.** El sistema distingue lo que sabe, lo que estima y lo
-   que ignora; marca supuestos y los degrada con el horizonte temporal.
-5. **Trazabilidad.** Cada recomendación guarda su cadena de razonamiento, supuestos y
-   confianza para auditarla después contra el resultado real.
+1. **Calibración > confianza.** Toda predicción es una distribución, se puntúa con Brier y se recalibra ([ADR 0001](decisions/0001-oraculo-honesto.md)).
+2. **Auto-crítica adversarial.** Ninguna estrategia sale sin pasar por el Red Team.
+3. **Modularidad enchufable.** Proveedores LLM, forecasters, motores de simulación y conectores son piezas detrás de contratos.
+4. **Trazabilidad.** Cada análisis guarda su previsión, su debate completo y su veredicto (tabla `runs`, informe Markdown).
+5. **Un solo dueño del estado.** El servidor y su base SQLite ([ADR 0004](decisions/0004-sqlite-duenio-unico.md)).
 
-## Bucle OODA
+## Capas
 
-Ver [diagrams/oda-loop.md](diagrams/oda-loop.md). El agente (`agent.py`) orquesta:
-Observe (conectores → world model) · Orient (forecaster + simulador) ·
-Decide (planificador + panel LLM) · Act (emitir recomendación, registrar predicciones).
+### Dominio (sin I/O de interfaz)
 
-## Componentes y contratos
+- **`world_model.py`**: estados versionados e inmutables (`apply`, `at`) con estatus epistémico por variable.
+- **`connectors/`**: `StaticConnector` y `FileConnector` (CSV/JSON/JSONL incremental), que alimentan el world model.
+- **`forecaster/`**:
+  - `LLMForecaster`: escenarios con probabilidad.
+  - `QuantForecaster`: Holt con intervalo que crece con √h; con umbral produce una binaria resoluble.
+  - `EnsembleForecaster`: pondera cada miembro por 1/Brier y registra sus predicciones para que cada fuente aprenda.
+- **`simulator/`**:
+  - `MonteCarloEngine` y `TreeSearchEngine` (expectimax).
+  - `with_adversary()` compone un `AdversaryModel` (p. ej. `SoftmaxAdversary`) dentro de cualquier motor.
+- **`strategy/planner.py`**: `ExpectedUtilityPlanner`, utilidad esperada + CVaR que descarta acciones con riesgo de ruina.
+- **`panel.py`**: debate secuencial de 4 roles con transcript completo.
+- **`agent.py`**: `OraqloAgent.cycle()`, el ciclo OODA. Redelibera ante "revisar", pasa a la siguiente candidata ante "descartar" y emite eventos de progreso.
+- **`goals.py` / `goaltrack.py`**: backcasting hacia un objetivo; seguimiento con hitos, check-ins y re-plan.
+- **`research.py`**: investigación web iterativa (consultas → reflexión → lectura a fondo → síntesis).
+- **`autopractice.py` / `polymarket.py`**: práctica de solo lectura contra mercados de predicción.
+- **`memory/calibration.py`**: Brier multiclase, log-loss, `CalibrationLedger`. Las etiquetas se normalizan al resolver.
 
-### 1. Ingesta / Percepción — `connectors/base.py`
+### LLM (`llm/`)
 
-`Connector` (ABC) normaliza observaciones heterogéneas (series, eventos, texto,
-señales) hacia `Observation` con timestamp y fuente. Implementaciones previstas:
-`FileConnector`, `APIConnector`, `ManualConnector`.
+`LLMProvider.chat(messages, model, temperature, json_mode, **kwargs)` es la única interfaz. Los adaptadores son:
 
-### 2. World Model — `world_model.py`
+- `AnthropicProvider`: SDK oficial, `effort` por rol (Claude no admite `temperature`), salida estructurada nativa, *fallbacks* ante rechazos.
+- `OpenAICompatProvider`: presets OpenAI, Gemini, OpenRouter, Groq, DeepSeek, Mistral, xAI y LM Studio, más proveedores propios.
+- `OllamaProvider`: local y cloud, `format` = JSON Schema, reintentos con backoff.
 
-Representación estructurada y agnóstica al dominio: `Entity`, `Variable` (con tipo e
-incertidumbre) y `WorldState` versionado en el tiempo (permite rebobinar y
-contrafactuales). Única fuente de verdad para los demás módulos.
+`structured.py` es el único camino para pedir JSON: esquema nativo si el proveedor lo soporta, extracción robusta, validación Pydantic y reintento con el error como feedback. `registry.py` construye y cachea un proveedor por rol a partir de `oraqlo.toml` ([ADR 0003](decisions/0003-multi-proveedor-salida-estructurada.md)).
 
-### 3. Forecaster (el oráculo) — `forecaster/base.py`
+### Persistencia (`store/`)
 
-Produce **distribuciones** (`Distribution`) sobre estados futuros combinando:
+SQLite en modo WAL, con migraciones versionadas por `PRAGMA user_version` y backup en caliente. Tablas:
 
-- *Cuantitativo:* series temporales / Bayes para variables numéricas (intervalos).
-- *Cualitativo:* razonamiento LLM (Ollama) para variables sin datos, generación de
-  escenarios y probabilidades subjetivas.
-- *Ensamble + calibración:* combina fuentes y ajusta con el histórico de aciertos.
+- `forecasts` (ledger), `goals`, `settings`, `cases`, `runs`;
+- `jobs` y `job_events`;
+- `push_subscriptions`.
 
-### 4. Simulador de escenarios — `simulator/base.py`
+`SqliteLedger` y `SqliteGoalStore` heredan la lógica de dominio y solo cambian dónde se persiste. `legacy.py` importa los JSON de la versión TUI sin re-puntuar nada.
 
-Expande futuros a partir de las distribuciones del Forecaster:
+### Servicios (`services/`)
 
-- `MonteCarloEngine` — muestrea trayectorias para propagar incertidumbre.
-- `TreeSearchEngine` — explora secuencias de decisiones varios pasos por delante (MCTS).
-- `AdversaryModel` — para dominios competitivos: asume que el oponente también
-  optimiza (minimax / teoría de juegos). Esto hace de Oraqlo un estratega, no solo
-  un pronosticador.
+- **`OraqloService`**: todos los flujos sin interfaz. Previsión, análisis completo, ciclo sobre un caso, objetivo, check-in, re-plan, práctica, calibración.
+- **`JobRunner`**: cada flujo largo es un job persistido. Sus eventos llevan número de secuencia, así que el SSE se reanuda con `Last-Event-ID`. Los jobs interrumpidos por un reinicio se marcan como fallidos.
+- **`Scheduler`**: tareas periódicas cuya última ejecución se guarda en la base. Son la práctica, los avisos de hitos, las actualizaciones y el backup diario.
+- **`PushService`**: Web Push con VAPID, que limpia solo las suscripciones muertas.
+- **`KeepAwake`**: evita que Windows se suspenda mientras haya análisis en curso.
 
-### 5. Planificador — `strategy/planner.py`
+### API y frontend
 
-Sobre los escenarios simulados calcula la acción de mayor **utilidad esperada ajustada
-a riesgo**: no solo la media — penaliza cola/ruina (CVaR), aversión al riesgo
-configurable, objetivos multi-criterio y restricciones duras.
+- **`api/app.py`** (FastAPI):
+  - REST + SSE.
+  - Sirve la app compilada (SPA) desde `api/static/`, que viaja dentro del wheel.
+  - Autenticación en **`api/auth.py`**: acepta solo localhost sin proxy o la identidad `Tailscale-User-Login` (con allowlist opcional). Rechaza el tráfico de Funnel ([ADR 0002](decisions/0002-web-tailscale.md)).
+- **`web/`**: React 19 + TypeScript + Tailwind + TanStack Query, mobile-first. Es una PWA con un service worker propio para la precaché y las notificaciones push.
 
-### 6. Memoria + Calibración — `memory/calibration.py`
+### Despliegue y actualización
 
-El bucle de aprendizaje: registra cada predicción con su probabilidad; al llegar el
-resultado real calcula Brier/log-loss por fuente y ajusta pesos y calibración.
-Memoria episódica (observaciones + predicciones + resultados) y semántica (patrones).
+- **`scripts/install-windows.ps1`**: instala la release en `versions/<X.Y.Z>`, registra la tarea programada y ejecuta `tailscale serve`.
+- **`launcher.py`**: solo stdlib, se copia fuera de las versiones. Arranca el servidor y reinicia con el código 75. Si la versión pendiente no supera `/api/health` en 60 s, hace **rollback**.
+- **`updater.py`**: modelo *pull* contra la API pública de GitHub. Su secuencia es:
+  1. Verifica el SHA256 y la attestation.
+  2. Crea un venv nuevo.
+  3. Hace un preflight sobre una copia de la base.
+  4. Hace un backup de la base real.
+  5. Cambia el puntero de versión.
 
-**Brier score** para un evento binario con probabilidad predicha `p` y resultado
-`o ∈ {0,1}`: `BS = (p − o)²`. Media sobre N predicciones; 0 = perfecto, 0.25 = azar
-con p=0.5 fijo.
+  Solo actúa en instalaciones gestionadas.
 
-### 7. Panel de decisión — `panel.py`
+### CI/CD
 
-Debate interno multi-rol (cada rol es un LLM vía Ollama, configurable por rol):
+- **CI**: en cada PR corren lint, tipos y tests en Ubuntu y Windows (py3.12/3.13), el frontend y el build del wheel con la app dentro.
+- **CD**: release-please convierte los Conventional Commits en un PR de release. Al mergearlo se crean el tag y la Release, con el wheel, `SHA256SUMS` y la attestation adjuntos.
 
-| Rol | Función | Temperatura típica |
-|---|---|---|
-| **Estratega** | propone el plan y su tesis | media-alta |
-| **Red Team** | ataca el plan, busca supuestos frágiles | alta |
-| **Oráculo** | asigna probabilidades a objeciones y éxito | baja |
-| **Juez** | sintetiza, decide, fija confianza y disparadores de revisión | muy baja |
+Ver [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-## Capa LLM: Ollama local + cloud — `llm/`
+## Fuera de alcance
 
-`LLMProvider` (ABC) con una única implementación `OllamaProvider` que habla el mismo
-protocolo contra dos backends elegidos por config:
-
-- **Local:** `http://localhost:11434`, sin credenciales. Privado, gratis, offline.
-- **Cloud (Ollama Turbo):** `https://ollama.com` + API key leída de la variable de
-  entorno `OLLAMA_API_KEY` (nunca hardcodeada). Acceso a modelos grandes
-  (`gpt-oss:120b-cloud`, `qwen3-coder:480b-cloud`, …).
-
-El resto del sistema no distingue local de cloud: solo cambian `host` y la cabecera de
-autorización. Los roles pueden mezclar backends (`config/roles.example.yaml`).
-Ollama es la única dependencia de inferencia — una clase, un protocolo, sin ramas
-divergentes.
-
-## Fuera de alcance (explícito)
-
-- **No hay "control de la realidad":** Oraqlo recomienda y prevé; actuar en el mundo
-  real queda a cargo de actuadores que el usuario integre, con humano en el bucle.
-- El QuantForecaster (series temporales/Bayes) y el EnsembleForecaster quedan
-  pendientes; el LLMForecaster cualitativo, el ledger de calibración, los motores
-  de simulación (Monte Carlo y expectimax), el planificador EU+CVaR, el panel y el
-  ciclo OODA del agente están implementados y testeados.
-- El `TreeSearchEngine` es expectimax exacto: suficiente para árboles pequeños;
-  árboles grandes necesitarán MCTS con presupuesto (la interfaz ya lo admite).
-- El `SoftmaxAdversary` existe como pieza independiente; su integración dentro de
-  los motores de simulación (turnos alternos) queda para la siguiente fase.
-- Sin promesas de exactitud: el valor es la calibración y la disciplina estratégica.
-
-## Verificación
-
-1. **Import sanity:** los módulos importan sin error; `tests/test_smoke.py` verifica
-   que las ABCs existen y que los métodos abstractos sin implementar lanzan
-   `NotImplementedError` / `TypeError`.
-2. **Prueba real de Ollama:** `examples/hello_oracle.py --backend local|cloud` manda
-   un prompt de escenarios a un modelo real y muestra la respuesta. Si el backend no
-   está disponible, avisa con un mensaje claro en vez de fallar con stack trace.
+- **Actuar en el mundo real:** Oraqlo recomienda y prevé; un humano decide.
+- **MCTS con presupuesto:** queda pendiente para árboles grandes. Hoy hay expectimax exacto y Monte Carlo.
+- **Puntuar previsiones de intervalo:** para que se puedan resolver, el `QuantForecaster` debe usarse con umbral, que da una binaria resoluble.

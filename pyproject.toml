@@ -21,10 +21,6 @@ dependencies = [
     "uvicorn[standard]>=0.54.0",
 ]
 
-[project.optional-dependencies]
-
-tui = ["textual>=1.0"]
-
 [project.scripts]
 oraqlo = "oraqlo.cli:main"
 
@@ -35,7 +31,6 @@ dev = [
     "ruff>=0.8",
     "pyright>=1.1.390",
     "pre-commit>=4",
-    "textual>=1.0",
     "httpx>=0.28.1",
 ]
 
@@ -83,8 +78,6 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["B011"]
-# La TUI se retira en la Fase 5 (sustituida por la app web): no se pule.
-"src/oraqlo/tui/**" = ["RUF012", "SIM117"]
 
 # --- tipos ---
 [tool.pyright]

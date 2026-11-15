@@ -181,8 +181,6 @@ class OraqloAgent:
             lines.extend(f"  - {a}" for a in forecast.assumptions)
         return "\n".join(lines)
 
-    _build_context = build_context  # compat (la TUI lo usa)
-
     def resolve(self, forecast_id: str, actual_outcome: str) -> None:
         """Cierra una predicción (y las de sus miembros si es un ensamble) con el
         resultado real: alimenta la calibración de cada fuente."""

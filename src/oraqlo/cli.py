@@ -2,7 +2,6 @@
 
     oraqlo serve [--port N]        servidor web: API + app (celular vía Tailscale)
     oraqlo version                 muestra la versión instalada
-    oraqlo tui [caso.json]         abre la TUI (requiere el extra `tui`)
     oraqlo practice [opciones]     autopráctica con Polymarket (ver --help)
     oraqlo update [--apply]        busca / instala la última versión publicada
     oraqlo rollback                vuelve a la versión anterior
@@ -28,18 +27,6 @@ def _configure_logging(verbose: bool) -> None:
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
     )
-
-
-def _cmd_tui(args: argparse.Namespace) -> int:
-    try:
-        from oraqlo.tui.app import OraqloTUI
-    except ModuleNotFoundError as e:
-        if "textual" in str(e):
-            print("La TUI necesita Textual: pip install 'oraqlo[tui]'", file=sys.stderr)
-            return 1
-        raise
-    OraqloTUI(case_path=args.case).run()
-    return 0
 
 
 def _cmd_practice(args: argparse.Namespace) -> int:
@@ -202,9 +189,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("version", help="muestra la versión instalada")
 
-    p_tui = sub.add_parser("tui", help="abre la interfaz de terminal")
-    p_tui.add_argument("case", nargs="?", default="cases/mi_caso.json")
-
     p_serve = sub.add_parser("serve", help="arranca el servidor web (API + app)")
     p_serve.add_argument("--host", default=None, help="por defecto server.host (127.0.0.1)")
     p_serve.add_argument("--port", type=int, default=None, help="por defecto server.port (8765)")
@@ -240,8 +224,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "version":
         print(__version__)
         return 0
-    if args.command == "tui":
-        return _cmd_tui(args)
     if args.command == "practice":
         return _cmd_practice(args)
     if args.command == "serve":

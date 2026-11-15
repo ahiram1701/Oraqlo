@@ -2,7 +2,7 @@
 
 Permite usar Oraqlo sin escribir código: la pregunta, las acciones con sus
 resultados posibles, las utilidades y el perfil de riesgo viven en un JSON
-que la TUI (o cualquier frontend) carga y valida.
+que la app web (o cualquier frontend) carga y valida.
 
 Formato:
 {

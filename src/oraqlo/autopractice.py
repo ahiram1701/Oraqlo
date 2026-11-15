@@ -294,62 +294,43 @@ class PracticeEngine:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI headless: una pasada (o bucle) de práctica autónoma."""
+    """CLI headless (`oraqlo practice`): una pasada o un bucle, sobre la base de Oraqlo.
+
+    Usa el rol `practica` de oraqlo.toml y el mismo ledger SQLite que la app web.
+    Con el servidor en marcha no hace falta: la práctica autónoma corre en él.
+    """
     import argparse
-    import io
-    import sys
     import time as _time
 
-    if isinstance(sys.stdout, io.TextIOWrapper) and sys.stdout.encoding.lower() != "utf-8":
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    from oraqlo.services.core import OraqloService
 
     parser = argparse.ArgumentParser(
-        prog="python -m oraqlo.autopractice",
+        prog="oraqlo practice",
         description="Práctica autónoma de Oraqlo con Polymarket (solo lectura).",
     )
-    parser.add_argument("--markets", type=int, default=2, help="mercados nuevos por pasada")
+    parser.add_argument("--markets", type=int, default=None, help="mercados nuevos por pasada")
     parser.add_argument("--no-research", action="store_true", help="predecir sin investigación web")
     parser.add_argument("--loop", action="store_true", help="repetir indefinidamente")
     parser.add_argument("--interval-min", type=float, default=60.0, help="minutos entre pasadas")
-    parser.add_argument("--ledger", default="oraqlo_ledger.json", help="ruta del ledger")
-    parser.add_argument("--backend", choices=["cloud", "local"], default="cloud")
-    parser.add_argument("--model", default=None)
     args = parser.parse_args(argv)
 
-    from oraqlo.llm.ollama import OllamaBackendConfig, OllamaProvider
-    from oraqlo.llm.websearch import OllamaWebClient
-    from oraqlo.memory.store import JsonLedger
-
-    config = OllamaBackendConfig.cloud() if args.backend == "cloud" else OllamaBackendConfig.local()
-    model = args.model or ("gpt-oss:120b-cloud" if args.backend == "cloud" else "llama3.1")
-    provider = OllamaProvider(config)
-    web = OllamaWebClient()
-    researcher = Researcher(web, provider, model) if web.is_available() else None
-
-    engine = PracticeEngine(
-        PolymarketClient(),
-        provider,
-        model,
-        JsonLedger(args.ledger),
-        researcher=researcher,
-        markets_per_run=args.markets,
-    )
+    service = OraqloService()
+    if args.markets is not None:
+        service.config.practice.markets = args.markets
+    log = lambda kind, data: print(data.get("msg", "")) if kind == "log" else None
 
     while True:
         print(f"── pasada de práctica · {datetime.now().strftime('%Y-%m-%d %H:%M')} ──")
-        report = engine.run_once(research=not args.no_research, on_progress=print)
-        print(f"predichas: {len(report.predicted)} · resueltas: {len(report.resolved)}")
-        if report.reliability_oraqlo is not None:
-            bench = (
-                f" · mercado {report.reliability_market:.3f}"
-                if report.reliability_market is not None
-                else ""
-            )
-            print(f"Brier Oraqlo {report.reliability_oraqlo:.3f}{bench}")
-        for error in report.errors:
+        result = service.practice(research=not args.no_research, emit=log)
+        print(f"predichas: {len(result['predicted'])} · resueltas: {len(result['resolved'])}")
+        if result["reliability_oraqlo"] is not None:
+            market = result["reliability_market"]
+            bench = f" · mercado {market:.3f}" if market is not None else ""
+            print(f"Brier Oraqlo {result['reliability_oraqlo']:.3f}{bench}")
+        for error in result["errors"]:
             print(f"error: {error}")
         if not args.loop:
-            return 1 if report.errors and not report.predicted and not report.resolved else 0
+            return 0
         _time.sleep(args.interval_min * 60)
 
 
