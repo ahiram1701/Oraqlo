@@ -1,5 +1,6 @@
 """Punto de entrada único: el comando `oraqlo`.
 
+    oraqlo serve [--port N]        servidor web: API + app (celular vía Tailscale)
     oraqlo version                 muestra la versión instalada
     oraqlo tui [caso.json]         abre la TUI (requiere el extra `tui`)
     oraqlo practice [opciones]     autopráctica con Polymarket (ver --help)
@@ -122,6 +123,26 @@ def _cmd_import_legacy(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_serve(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    from oraqlo.api.app import create_app
+    from oraqlo.config import load_config
+
+    config = load_config()
+    host = args.host or config.server.host
+    port = args.port or config.server.port
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        logging.getLogger("oraqlo").warning(
+            "Escuchando en %s: la autenticación asume que solo llega tráfico local o de "
+            "`tailscale serve`. No expongas este puerto a tu red.",
+            host,
+        )
+    print(f"Oraqlo {__version__} en http://{host}:{port}  (datos: {config.home})")
+    uvicorn.run(create_app(), host=host, port=port, log_level="info", proxy_headers=False)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="oraqlo", description="Motor de estrategia bajo incertidumbre."
@@ -134,6 +155,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_tui = sub.add_parser("tui", help="abre la interfaz de terminal")
     p_tui.add_argument("case", nargs="?", default="cases/mi_caso.json")
 
+    p_serve = sub.add_parser("serve", help="arranca el servidor web (API + app)")
+    p_serve.add_argument("--host", default=None, help="por defecto server.host (127.0.0.1)")
+    p_serve.add_argument("--port", type=int, default=None, help="por defecto server.port (8765)")
     sub.add_parser("config", help="muestra rutas y roles efectivos")
     p_doctor = sub.add_parser("doctor", help="diagnóstico de configuración, base y proveedores")
     p_doctor.add_argument(
@@ -167,6 +191,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_tui(args)
     if args.command == "practice":
         return _cmd_practice(args)
+    if args.command == "serve":
+        return _cmd_serve(args)
     if args.command == "config":
         return _cmd_config(args)
     if args.command == "doctor":
