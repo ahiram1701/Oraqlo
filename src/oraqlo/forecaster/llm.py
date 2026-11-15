@@ -13,6 +13,7 @@ from datetime import UTC, date, datetime, timedelta
 
 from oraqlo.forecaster.base import Distribution, Forecast, Forecaster
 from oraqlo.llm.base import ChatMessage, LLMProvider
+from oraqlo.llm.structured import extract_json_object
 from oraqlo.world_model import WorldState
 
 _SYSTEM_PROMPT = (
@@ -38,10 +39,10 @@ def _parse_forecast_json(text: str) -> tuple[dict[str, float], list[str], str]:
     Tolera texto alrededor del JSON (busca el primer '{' y el último '}'),
     pero es estricto con la estructura interna.
     """
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end <= start:
-        raise ForecastParseError(f"Sin objeto JSON en la respuesta: {text[:200]!r}")
-    data = json.loads(text[start : end + 1])
+    try:
+        data = extract_json_object(text)
+    except ValueError as e:
+        raise ForecastParseError(str(e)) from e
 
     raw_outcomes = data.get("outcomes")
     if not isinstance(raw_outcomes, dict) or not raw_outcomes:

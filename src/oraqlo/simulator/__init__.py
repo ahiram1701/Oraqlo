@@ -6,6 +6,7 @@ from .base import (
     SoftmaxAdversary,
     Trajectory,
     TreeSearchEngine,
+    with_adversary,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "SoftmaxAdversary",
     "Trajectory",
     "TreeSearchEngine",
+    "with_adversary",
 ]

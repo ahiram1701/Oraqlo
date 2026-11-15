@@ -3,6 +3,9 @@
     oraqlo version                 muestra la versión instalada
     oraqlo tui [caso.json]         abre la TUI (requiere el extra `tui`)
     oraqlo practice [opciones]     autopráctica con Polymarket (ver --help)
+    oraqlo config                  rutas y roles efectivos
+    oraqlo doctor [--preflight]    diagnóstico (config, base, claves, proveedores)
+    oraqlo import-legacy [carpeta] importa los JSON de la versión TUI
 
 Los subcomandos importan sus módulos de forma perezosa para que `oraqlo version`
 funcione aunque falten extras opcionales.
@@ -42,6 +45,83 @@ def _cmd_practice(args: argparse.Namespace) -> int:
     return practice_main(args.rest)
 
 
+def _cmd_config(args: argparse.Namespace) -> int:
+    from oraqlo.config import ROLES, config_path, load_config
+
+    config = load_config()
+    path = config_path(config.home)
+    print(f"Directorio de datos: {config.home}")
+    print(
+        f"Configuración:       {path} ({'existe' if path.exists() else 'no existe: valores por defecto'})"
+    )
+    print(f"Base de datos:       {config.db_path}")
+    print("Roles:")
+    for role in ROLES:
+        r = config.role(role)
+        extra = f" effort={r.effort}" if r.effort else f" T={r.temperature}"
+        print(f"  {role:<13} {r.provider}:{r.model}{extra}")
+    return 0
+
+
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    """Diagnóstico: configuración, claves, base de datos y proveedores en uso."""
+    from oraqlo.config import ROLES, load_config
+    from oraqlo.llm.registry import ProviderRegistry, provider_info
+    from oraqlo.store import Store
+
+    ok = True
+    try:
+        config = load_config()
+    except Exception as e:  # config inválida: se informa, no se lanza
+        print(f"[X] Configuración inválida: {e}")
+        return 1
+    print(f"[ok] Configuración cargada ({config.home})")
+    try:
+        store = Store(config.db_path)
+        print(
+            f"[ok] Base de datos v{store.db.version}: {len(store.ledger.open_forecasts)} abiertas, "
+            f"{len(store.ledger.resolved_forecasts)} resueltas, {len(store.goals.list_all())} objetivos"
+        )
+        store.close()
+    except Exception as e:
+        ok = False
+        print(f"[X] Base de datos: {e}")
+    registry = ProviderRegistry(config)
+    for name in sorted({config.role(r).provider for r in ROLES}):
+        info = provider_info(name, config)
+        if info.key_present is False:
+            ok = False
+            print(f"[X] {name}: falta la variable {info.api_key_env}")
+            continue
+        if args.preflight:
+            print(f"[ok] {name}: clave presente" if info.key_present else f"[ok] {name}")
+            continue
+        available = registry.get(name).is_available()
+        ok &= available
+        print(
+            f"[{'ok' if available else 'X'}] {name}: {'responde' if available else 'no responde'}"
+        )
+    return 0 if ok else 1
+
+
+def _cmd_import_legacy(args: argparse.Namespace) -> int:
+    from oraqlo.config import load_config
+    from oraqlo.store import Database
+    from oraqlo.store.legacy import import_legacy
+
+    config = load_config()
+    db = Database(config.db_path)
+    report = import_legacy(db, args.directory)
+    db.close()
+    print(
+        f"Importado en {config.db_path}: {report.open_forecasts} predicciones abiertas, "
+        f"{report.resolved_forecasts} resueltas, {report.goals} objetivos, {report.settings} ajustes."
+    )
+    if report.missing:
+        print(f"No encontrados (se omiten): {', '.join(report.missing)}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="oraqlo", description="Motor de estrategia bajo incertidumbre."
@@ -54,12 +134,30 @@ def build_parser() -> argparse.ArgumentParser:
     p_tui = sub.add_parser("tui", help="abre la interfaz de terminal")
     p_tui.add_argument("case", nargs="?", default="cases/mi_caso.json")
 
+    sub.add_parser("config", help="muestra rutas y roles efectivos")
+    p_doctor = sub.add_parser("doctor", help="diagnóstico de configuración, base y proveedores")
+    p_doctor.add_argument(
+        "--preflight", action="store_true", help="sin llamadas de red (solo config, base y claves)"
+    )
+    p_import = sub.add_parser("import-legacy", help="importa los JSON de la versión TUI")
+    p_import.add_argument("directory", nargs="?", default=".", help="carpeta con oraqlo_*.json")
+
     p_practice = sub.add_parser("practice", help="autopráctica con Polymarket", add_help=False)
     p_practice.add_argument("rest", nargs=argparse.REMAINDER)
     return parser
 
 
+def _utf8_stdio() -> None:
+    """La consola de Windows usa cp1252 por defecto: acentos ilegibles sin esto."""
+    import io
+
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper) and stream.encoding.lower() != "utf-8":
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _utf8_stdio()
     args = build_parser().parse_args(argv)
     _configure_logging(args.verbose)
     if args.command == "version":
@@ -69,6 +167,12 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_tui(args)
     if args.command == "practice":
         return _cmd_practice(args)
+    if args.command == "config":
+        return _cmd_config(args)
+    if args.command == "doctor":
+        return _cmd_doctor(args)
+    if args.command == "import-legacy":
+        return _cmd_import_legacy(args)
     return 2  # inalcanzable: argparse exige subcomando
 
 

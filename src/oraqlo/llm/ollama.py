@@ -4,7 +4,8 @@
 - Cloud:  https://ollama.com + API key leída de una variable de entorno
   (por defecto OLLAMA_API_KEY). La clave nunca se hardcodea ni se loguea.
 
-Solo librería estándar (urllib): cero dependencias.
+Solo librería estándar (urllib). Reintenta errores transitorios (timeouts,
+429, 5xx) con backoff; los permanentes (401/403) fallan con mensaje accionable.
 """
 
 from __future__ import annotations
@@ -14,11 +15,13 @@ import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from typing import Any
 
-from oraqlo.llm.base import ChatMessage, LLMProvider, LLMResponse
+from oraqlo.llm.base import ChatMessage, LLMProvider, LLMResponse, ProviderUnavailableError
+from oraqlo.llm.retry import TransientError, is_transient_status, retry_call
 
 
-class OllamaUnavailableError(RuntimeError):
+class OllamaUnavailableError(ProviderUnavailableError):
     """El backend no está accesible (Ollama apagado, sin red, o falta la API key)."""
 
 
@@ -33,7 +36,8 @@ class OllamaBackendConfig:
 
     host: str = "http://localhost:11434"
     api_key_env: str | None = None
-    timeout_s: float = 120.0
+    timeout_s: float = 300.0
+    attempts: int = 3
 
     @classmethod
     def local(cls) -> OllamaBackendConfig:
@@ -47,8 +51,11 @@ class OllamaBackendConfig:
 class OllamaProvider(LLMProvider):
     """Cliente del endpoint /api/chat de Ollama (idéntico en local y cloud)."""
 
+    supports_json_schema = True  # `format` acepta un JSON Schema completo
+
     def __init__(self, config: OllamaBackendConfig | None = None) -> None:
         self.config = config or OllamaBackendConfig.local()
+        self.name = "ollama-cloud" if self.config.api_key_env else "ollama-local"
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -69,6 +76,7 @@ class OllamaProvider(LLMProvider):
         model: str,
         temperature: float = 0.7,
         json_mode: bool = False,
+        **kwargs: Any,
     ) -> LLMResponse:
         payload: dict = {
             "model": model,
@@ -76,8 +84,13 @@ class OllamaProvider(LLMProvider):
             "stream": False,
             "options": {"temperature": temperature},
         }
-        if json_mode:
+        schema = kwargs.get("json_schema")
+        if schema is not None:
+            payload["format"] = schema
+        elif json_mode:
             payload["format"] = "json"
+        if "max_tokens" in kwargs:
+            payload["options"]["num_predict"] = kwargs["max_tokens"]
 
         request = urllib.request.Request(
             url=f"{self.config.host.rstrip('/')}/api/chat",
@@ -85,23 +98,35 @@ class OllamaProvider(LLMProvider):
             headers=self._headers(),
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(request, timeout=self.config.timeout_s) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode("utf-8", errors="replace")[:500]
-            if e.code in (401, 403):
-                raise OllamaUnavailableError(
-                    f"Autenticación rechazada por {self.config.host} (HTTP {e.code}). "
-                    f"Revisa la API key en {self.config.api_key_env}."
-                ) from e
-            raise OllamaUnavailableError(
-                f"Error HTTP {e.code} de {self.config.host}: {detail}"
-            ) from e
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
-            raise OllamaUnavailableError(
-                f"No se pudo conectar con {self.config.host}. ¿Está Ollama corriendo? ({e})"
-            ) from e
+
+        def attempt() -> dict:
+            try:
+                with urllib.request.urlopen(request, timeout=self.config.timeout_s) as resp:
+                    return json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as e:
+                detail = e.read().decode("utf-8", errors="replace")[:500]
+                if e.code in (401, 403):
+                    raise OllamaUnavailableError(
+                        f"Autenticación rechazada por {self.config.host} (HTTP {e.code}). "
+                        f"Revisa la API key en {self.config.api_key_env}."
+                    ) from e
+                error = OllamaUnavailableError(
+                    f"Error HTTP {e.code} de {self.config.host}: {detail}"
+                )
+                if is_transient_status(e.code):
+                    retry_after = e.headers.get("Retry-After") if e.headers else None
+                    raise TransientError(
+                        str(error),
+                        float(retry_after) if retry_after and retry_after.isdigit() else None,
+                    ) from error
+                raise error from e
+            except (urllib.error.URLError, TimeoutError, OSError) as e:
+                error = OllamaUnavailableError(
+                    f"No se pudo conectar con {self.config.host}. ¿Está Ollama corriendo? ({e})"
+                )
+                raise TransientError(str(error)) from error
+
+        body = retry_call(attempt, attempts=self.config.attempts)
 
         content = body.get("message", {}).get("content", "")
         return LLMResponse(content=content, model=body.get("model", model), raw=body)
