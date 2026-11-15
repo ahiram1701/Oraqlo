@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -32,6 +33,7 @@ from oraqlo.services.push import PushService, job_notification
 from oraqlo.services.scheduler import PeriodicTask, Scheduler
 from oraqlo.services.serialize import goal_json
 from oraqlo.store.db import dumps, loads
+from oraqlo.updater import UpdateError, Updater, is_managed
 
 log = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
@@ -149,11 +151,139 @@ def create_app(service: OraqloService | None = None, background: bool = True) ->
 
     scheduler.add(PeriodicTask("practice", practice_interval, practice_enabled, submit_practice))
 
+    # ── auto-actualización ────────────────────────────────────────────────
+    settings = service.store.settings
+    cfg = service.config
+    updater = Updater(cfg.home, cfg.updates.repo, cfg.updates.channel, db_path=cfg.db_path)
+    managed = is_managed(updater.layout)
+    staging: dict[str, threading.Thread | None] = {"thread": None}
+
+    def request_restart() -> None:
+        """Pide al servidor salir con RESTART_EXIT_CODE: el lanzador arranca la versión nueva."""
+        app.state.restart_requested = True
+        server = getattr(app.state, "server", None)
+        if server is not None:
+            server.should_exit = True
+
+    def stage_in_background() -> None:
+        current = staging["thread"]
+        if current is not None and current.is_alive():
+            return
+
+        def work() -> None:
+            try:
+                result = updater.stage(managed=managed)
+                if result.status == "staged":
+                    settings.set("update.staged", result.version)
+                settings.set(
+                    "update.last_result", {"status": result.status, "detail": result.detail}
+                )
+            except UpdateError as e:
+                log.warning("Actualización abortada: %s", e)
+                settings.set("update.last_result", {"status": "error", "detail": str(e)})
+
+        thread = threading.Thread(target=work, name="oraqlo-update", daemon=True)
+        staging["thread"] = thread
+        thread.start()
+
+    def check_updates() -> dict:
+        try:
+            result = updater.check()
+        except UpdateError as e:
+            settings.set("update.last_result", {"status": "error", "detail": str(e)})
+            return {"status": "error", "detail": str(e)}
+        settings.set("update.last_check", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        settings.set("update.available", result.version if result.status == "available" else None)
+        if result.status == "available":
+            if not managed:
+                return {
+                    "status": "unmanaged",
+                    "detail": result.detail + " Esta copia es de desarrollo: actualízala con git.",
+                }
+            if cfg.updates.mode == "auto" or settings.get("update.approved"):
+                stage_in_background()
+                return {
+                    "status": "staging",
+                    "detail": result.detail + " Preparándola en segundo plano…",
+                }
+        return {"status": result.status, "detail": result.detail}
+
+    def apply_staged() -> None:
+        version = settings.get("update.staged")
+        if not version or runner.active():
+            return  # con trabajos en curso se pospone al siguiente tick
+        if cfg.updates.mode != "auto" and not settings.get("update.approved"):
+            return
+        updater.activate(version, cfg.backups_dir)
+        updater.layout.prune()
+        settings.set("update.staged", None)
+        settings.set("update.approved", False)
+        settings.set("update.pending_notice", version)
+        request_restart()
+
+    def periodic_update_check() -> None:
+        check_updates()
+
+    scheduler.add(
+        PeriodicTask(
+            "updates",
+            lambda: timedelta(hours=cfg.updates.interval_hours),
+            lambda: cfg.updates.mode != "off",
+            periodic_update_check,
+            run_on_start=True,
+        )
+    )
+    scheduler.add(
+        PeriodicTask(
+            "update-apply",
+            lambda: timedelta(minutes=1),
+            lambda: managed and bool(settings.get("update.staged")),
+            apply_staged,
+            run_on_start=True,
+        )
+    )
+
+    def daily_backup() -> None:
+        stamp = time.strftime("%Y%m%d")
+        service.store.db.backup_to(cfg.backups_dir / f"daily-{stamp}.db")
+        for old in sorted(cfg.backups_dir.glob("daily-*.db"))[:-7]:
+            old.unlink(missing_ok=True)
+
+    scheduler.add(
+        PeriodicTask(
+            "backup", lambda: timedelta(hours=24), lambda: True, daily_backup, run_on_start=True
+        )
+    )
+
+    def startup_notices() -> None:
+        pending = settings.get("update.pending_notice")
+        if pending and pending == __version__:
+            push.send(
+                f"Oraqlo actualizado a {__version__}",
+                "Toca para ver las novedades.",
+                "/ajustes",
+                tag="update",
+            )
+            settings.set("update.pending_notice", None)
+        marker = updater.layout.root / "rolled_back.txt"
+        if marker.exists():
+            what = marker.read_text(encoding="utf-8").strip()
+            push.send(
+                "Actualización revertida",
+                f"La versión nueva no arrancó ({what}). Sigues en la anterior.",
+                "/ajustes",
+            )
+            marker.unlink(missing_ok=True)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         recovered = runner.recover()
         if recovered:
             log.warning("%d job(s) interrumpidos por reinicio marcados como fallidos", recovered)
+        try:
+            startup_notices()
+        except Exception:
+            log.exception("Avisos de arranque fallidos")
         if background:
             scheduler.start()
         yield
@@ -165,6 +295,11 @@ def create_app(service: OraqloService | None = None, background: bool = True) ->
     app.state.runner = runner
     app.state.scheduler = scheduler
     app.state.push = push
+    app.state.updater = updater
+    app.state.restart_requested = False
+    app.state.request_restart = request_restart
+    app.state.check_updates = check_updates
+    app.state.apply_staged = apply_staged
 
     @app.middleware("http")
     async def auth(request: Request, call_next):
@@ -190,6 +325,32 @@ def create_app(service: OraqloService | None = None, background: bool = True) ->
             "db_version": service.store.db.version,
             "uptime_s": round(time.time() - started),
             "active_jobs": runner.active(),
+            "update": {
+                "available": settings.get("update.available"),
+                "staged": settings.get("update.staged"),
+                "mode": cfg.updates.mode,
+                "managed": managed,
+                "last_check": settings.get("update.last_check"),
+                "last_result": settings.get("update.last_result"),
+            },
+        }
+
+    @app.post("/api/update/check")
+    def update_check() -> dict:
+        return check_updates()
+
+    @app.post("/api/update/apply")
+    def update_apply() -> dict:
+        """Modo `notify`: el usuario aprueba; se prepara y se activa cuando no haya trabajos."""
+        if not managed:
+            raise HTTPException(
+                409, "Esta copia no es una instalación gestionada: actualízala con git."
+            )
+        settings.set("update.approved", True)
+        result = check_updates()
+        return {
+            **result,
+            "detail": result["detail"] + " Se activará cuando no haya análisis en curso.",
         }
 
     @app.get("/api/me")

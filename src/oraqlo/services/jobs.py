@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from oraqlo.services.core import OraqloService
+from oraqlo.services.power import keep_awake
 from oraqlo.store.db import dumps, loads
 
 log = logging.getLogger(__name__)
@@ -143,6 +144,13 @@ class JobRunner:
             )
 
     def _run(self, job_id: str, kind: str, params: dict[str, Any]) -> None:
+        keep_awake.acquire()  # que el PC no se suspenda a mitad de un análisis
+        try:
+            self._execute(job_id, kind, params)
+        finally:
+            keep_awake.release()
+
+    def _execute(self, job_id: str, kind: str, params: dict[str, Any]) -> None:
         with self.db.tx() as conn:
             conn.execute(
                 "UPDATE jobs SET status = 'running', started_at = ? WHERE id = ?", (_now(), job_id)

@@ -55,6 +55,7 @@ def env(tmp_path, monkeypatch):
     for var in ("ANTHROPIC_API_KEY", "OLLAMA_API_KEY"):
         monkeypatch.delenv(var, raising=False)
     config = load_config(tmp_path / "none.toml", home=tmp_path)
+    config.updates.mode = "off"  # los tests nunca consultan GitHub
     service = OraqloService(config, Store(tmp_path / "o.db"))
     fake = RoleAwareFake()
     monkeypatch.setattr(service.registry, "get", lambda name, effort=None: fake)
@@ -264,12 +265,13 @@ def test_scheduler_arma_y_dispara_practica(env, monkeypatch):
     client.put("/api/practice", json={"auto": True, "interval_min": 30})
     scheduler = app.state.scheduler
     t0 = datetime(2026, 11, 15, 10, tzinfo=UTC)
-    assert scheduler.tick(t0) == []  # primera vez: arma el temporizador, no gasta llamadas
-    assert scheduler.tick(t0 + timedelta(minutes=10)) == []
-    assert scheduler.tick(t0 + timedelta(minutes=31)) == ["practice"]
+    ran = lambda t: [n for n in scheduler.tick(t) if n == "practice"]
+    assert ran(t0) == []  # primera vez: arma el temporizador, no gasta llamadas
+    assert ran(t0 + timedelta(minutes=10)) == []
+    assert ran(t0 + timedelta(minutes=31)) == ["practice"]
     assert submitted == ["practice"]
     client.put("/api/practice", json={"auto": False})
-    assert scheduler.tick(t0 + timedelta(hours=5)) == []
+    assert ran(t0 + timedelta(hours=5)) == []
 
 
 # ── casos y estáticos ────────────────────────────────────────────────────
@@ -372,6 +374,67 @@ def test_aviso_de_hito_vencido_una_sola_vez(env, monkeypatch):
     monkeypatch.setattr(pywebpush, "webpush", lambda **kw: sent.append(json.loads(kw["data"])))
     scheduler = app.state.scheduler
     now = datetime(2026, 11, 15, tzinfo=UTC)
-    assert scheduler.tick(now) == ["milestones"]
-    assert scheduler.tick(now + timedelta(hours=7)) == ["milestones"]
+    assert "milestones" in scheduler.tick(now)
+    assert "milestones" in scheduler.tick(now + timedelta(hours=7))
     assert len(sent) == 1 and "vencido" in sent[0]["body"]
+
+
+# ── actualizaciones y backups ────────────────────────────────────────────
+
+
+def test_backup_diario_rota(env):
+    _client, service, app, _ = env
+    backups = service.config.backups_dir
+    backups.mkdir(parents=True, exist_ok=True)
+    for i in range(9):
+        (backups / f"daily-2026010{i}.db").write_bytes(b"x")
+    assert "backup" in app.state.scheduler.tick(datetime(2026, 11, 15, tzinfo=UTC))
+    dailies = sorted(backups.glob("daily-*.db"))
+    assert len(dailies) == 7 and dailies[-1].stat().st_size > 1  # la de hoy es una base real
+
+
+def test_health_informa_actualizaciones_y_copia_no_gestionada(env, monkeypatch):
+
+    client, _service, app, _ = env
+    upd = client.get("/api/health").json()["update"]
+    assert upd["managed"] is False and upd["mode"] == "off"
+    monkeypatch.setattr(
+        app.state.updater,
+        "fetch",
+        lambda url: {
+            "tag_name": "v99.0.0",
+            "html_url": "x",
+            "assets": [{"name": "oraqlo-99.0.0-py3-none-any.whl", "browser_download_url": "u"}],
+        },
+    )
+    r = client.post("/api/update/check").json()
+    assert r["status"] == "unmanaged" and "git" in r["detail"]
+    assert client.get("/api/health").json()["update"]["available"] == "99.0.0"
+    assert client.post("/api/update/apply").status_code == 409
+
+
+def test_instalacion_gestionada_activa_cuando_no_hay_trabajos(tmp_path, monkeypatch):
+    from oraqlo.api import app as app_module
+    from oraqlo.api.app import create_app
+
+    monkeypatch.setattr(app_module, "is_managed", lambda layout: True)
+    config = load_config(tmp_path / "none.toml", home=tmp_path)
+    service = OraqloService(config, Store(config.db_path))
+    app = create_app(service, background=False)
+    activated = []
+    monkeypatch.setattr(app.state.updater, "activate", lambda v, d: activated.append(v))
+    monkeypatch.setattr(app.state.updater.layout, "prune", lambda: [])
+    with TestClient(app):
+        service.store.settings.set("update.staged", "9.9.9")
+        with service.store.db.tx() as conn:
+            conn.execute(
+                "INSERT INTO jobs (id, kind, status) VALUES ('busy', 'forecast', 'running')"
+            )
+        app.state.apply_staged()
+        assert activated == [] and not app.state.restart_requested  # pospuesto: hay un análisis
+        with service.store.db.tx() as conn:
+            conn.execute("UPDATE jobs SET status = 'done'")
+        app.state.apply_staged()
+        assert activated == ["9.9.9"] and app.state.restart_requested
+        assert service.store.settings.get("update.pending_notice") == "9.9.9"
+        assert service.store.settings.get("update.staged") is None
