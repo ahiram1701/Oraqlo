@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import sys
 from datetime import date, timedelta
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pytest
 
@@ -20,13 +16,18 @@ from oraqlo.goals import (
 )
 from oraqlo.goaltrack import GoalStore, GoalTracker, GoalTrackError, TrackedMilestone
 from oraqlo.memory.calibration import CalibrationLedger
-
 from test_smoke import FakeProvider  # doble compartido
+
+
+def _in_days(n: int) -> str:
+    """Fecha ISO relativa a hoy: los hitos de prueba nunca caducan."""
+    return (date.today() + timedelta(days=n)).isoformat()
 
 
 def _binary(fid: str, p: float, label: str) -> Forecast:
     return Forecast(
-        id=fid, question=f"[{label}] maratón",
+        id=fid,
+        question=f"[{label}] maratón",
         distribution=Distribution(outcomes={OUTCOME_ACHIEVED: p, OUTCOME_NOT_ACHIEVED: 1 - p}),
         horizon=timedelta(days=180),
     )
@@ -34,14 +35,17 @@ def _binary(fid: str, p: float, label: str) -> Forecast:
 
 def _plan() -> GoalPlan:
     return GoalPlan(
-        goal="maratón sub-4h", horizon=timedelta(days=180),
-        baseline=_binary("b1", 0.2, "statu quo"), with_plan=_binary("w1", 0.6, "con plan"),
-        levers=[], external_conditions=[],
+        goal="maratón sub-4h",
+        horizon=timedelta(days=180),
+        baseline=_binary("b1", 0.2, "statu quo"),
+        with_plan=_binary("w1", 0.6, "con plan"),
+        levers=[],
+        external_conditions=[],
         summary="Plan progresivo",
         steps=[PlanStep(order=1, action="base aeróbica", when="mes 1-2", why="resistencia")],
         milestones=[
-            Milestone(text="media en 1h55", target_date="2026-10-01", signal="ritmo"),
-            Milestone(text="tirada de 30km", target_date="2026-12-01", signal="distancia"),
+            Milestone(text="media en 1h55", target_date=_in_days(60), signal="ritmo"),
+            Milestone(text="tirada de 30km", target_date=_in_days(120), signal="distancia"),
         ],
     )
 
@@ -69,9 +73,11 @@ def test_track_y_roundtrip_persistente(tmp_path):
 
 
 def test_checkin_actualiza_trayectoria(tmp_path):
-    provider = FakeProvider([
-        '{"p_logro": 0.7, "comment": "buen ritmo", "replan_recommended": false}',
-    ])
+    provider = FakeProvider(
+        [
+            '{"p_logro": 0.7, "comment": "buen ritmo", "replan_recommended": false}',
+        ]
+    )
     tracker, store, _ = _tracker(tmp_path, provider)
     tracked = tracker.track(_plan())
 
@@ -90,10 +96,12 @@ def test_checkin_actualiza_trayectoria(tmp_path):
 
 
 def test_checkin_hito_fallado_fuerza_replan_recomendado(tmp_path):
-    provider = FakeProvider([
-        '{"p_logro": 0.5, "comment": "regular", "replan_recommended": false}',
-    ])
-    tracker, store, _ = _tracker(tmp_path, provider)
+    provider = FakeProvider(
+        [
+            '{"p_logro": 0.5, "comment": "regular", "replan_recommended": false}',
+        ]
+    )
+    tracker, _store, _ = _tracker(tmp_path, provider)
     tracked = tracker.track(_plan())
     tracker.set_milestone(tracked.id, 0, "fallado")
 
@@ -103,12 +111,14 @@ def test_checkin_hito_fallado_fuerza_replan_recomendado(tmp_path):
 
 
 def test_replan_conserva_cumplidos_y_versiona(tmp_path):
-    provider = FakeProvider([
-        '{"summary": "Plan v2 ajustado", "steps": [{"order": 1, "action": "más suave",'
-        ' "when": "ya", "why": "evitar lesión"}], "milestones":'
-        ' [{"text": "nuevo hito", "target_date": "2026-11-15", "signal": "nueva señal"}]}',
-    ])
-    tracker, store, _ = _tracker(tmp_path, provider)
+    provider = FakeProvider(
+        [
+            '{"summary": "Plan v2 ajustado", "steps": [{"order": 1, "action": "más suave",'
+            ' "when": "ya", "why": "evitar lesión"}], "milestones":'
+            ' [{"text": "nuevo hito", "target_date": "2026-11-15", "signal": "nueva señal"}]}',
+        ]
+    )
+    tracker, _store, _ = _tracker(tmp_path, provider)
     tracked = tracker.track(_plan())
     tracker.set_milestone(tracked.id, 0, "cumplido")
     tracker.set_milestone(tracked.id, 1, "fallado")
@@ -118,7 +128,8 @@ def test_replan_conserva_cumplidos_y_versiona(tmp_path):
     assert g.summary == "Plan v2 ajustado"
     # El cumplido se conserva; el fallado desaparece; entra el nuevo.
     assert [(m.text, m.status) for m in g.milestones] == [
-        ("media en 1h55", "cumplido"), ("nuevo hito", "pendiente"),
+        ("media en 1h55", "cumplido"),
+        ("nuevo hito", "pendiente"),
     ]
     assert g.steps[0].action == "más suave"
 
@@ -154,9 +165,9 @@ def test_delete_descarta_abiertas_y_conserva_resueltas(tmp_path):
     tracked = tracker.track(_plan())
 
     warnings = tracker.delete(tracked.id)
-    assert store.list_all() == []                # el objetivo desaparece
-    assert ledger.open_forecasts == []           # sus predicciones se descartaron
-    assert ledger.resolved_forecasts == []       # descartar NO puntúa (sin Brier)
+    assert store.list_all() == []  # el objetivo desaparece
+    assert ledger.open_forecasts == []  # sus predicciones se descartaron
+    assert ledger.resolved_forecasts == []  # descartar NO puntúa (sin Brier)
     assert len(warnings) == 2
     with pytest.raises(KeyError):
         store.get(tracked.id)
@@ -169,12 +180,12 @@ def test_delete_no_toca_predicciones_ya_resueltas(tmp_path):
     ledger.record(_binary("b1", 0.2, "statu quo"))
     ledger.record(_binary("w1", 0.6, "con plan"))
     tracked = tracker.track(_plan())
-    tracker.close(tracked.id, achieved=True)     # resuelve ambas (historial legítimo)
+    tracker.close(tracked.id, achieved=True)  # resuelve ambas (historial legítimo)
     assert len(ledger.resolved_forecasts) == 2
 
     tracker.delete(tracked.id)
     assert store.list_all() == []
-    assert len(ledger.resolved_forecasts) == 2   # calibración intacta
+    assert len(ledger.resolved_forecasts) == 2  # calibración intacta
 
 
 def test_overdue_milestones(tmp_path):
@@ -198,10 +209,9 @@ def test_tui_pestana_objetivos(tmp_path):
 
     from textual.widgets import DataTable, TabbedContent
 
-    from oraqlo.tui.app import OraqloTUI
-
     # Sembrar un objetivo trackeado con las predicciones abiertas en el ledger.
     from oraqlo.memory.store import JsonLedger
+    from oraqlo.tui.app import OraqloTUI
 
     ledger = JsonLedger(tmp_path / "ledger.json")
     ledger.record(_binary("b1", 0.2, "statu quo"))
@@ -210,8 +220,12 @@ def test_tui_pestana_objetivos(tmp_path):
     GoalTracker(store, ledger).track(_plan())
 
     async def go():
-        app = OraqloTUI(case_path=tmp_path / "caso.json", ledger_path=tmp_path / "ledger.json",
-                        goals_path=tmp_path / "goals.json", settings_path=tmp_path / "s.json")
+        app = OraqloTUI(
+            case_path=tmp_path / "caso.json",
+            ledger_path=tmp_path / "ledger.json",
+            goals_path=tmp_path / "goals.json",
+            settings_path=tmp_path / "s.json",
+        )
         async with app.run_test(size=(120, 50)) as pilot:
             await pilot.pause()
             app.query_one(TabbedContent).active = "tab-goals"
@@ -253,8 +267,12 @@ def test_tui_eliminar_objetivo_con_confirmacion(tmp_path):
     GoalTracker(store, ledger).track(_plan())
 
     async def go():
-        app = OraqloTUI(case_path=tmp_path / "caso.json", ledger_path=tmp_path / "ledger.json",
-                        goals_path=tmp_path / "goals.json", settings_path=tmp_path / "s.json")
+        app = OraqloTUI(
+            case_path=tmp_path / "caso.json",
+            ledger_path=tmp_path / "ledger.json",
+            goals_path=tmp_path / "goals.json",
+            settings_path=tmp_path / "s.json",
+        )
         async with app.run_test(size=(120, 50)) as pilot:
             await pilot.pause()
             app.query_one(TabbedContent).active = "tab-goals"

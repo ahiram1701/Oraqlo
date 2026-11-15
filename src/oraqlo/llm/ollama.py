@@ -100,8 +100,7 @@ class OllamaProvider(LLMProvider):
             ) from e
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise OllamaUnavailableError(
-                f"No se pudo conectar con {self.config.host}. "
-                f"¿Está Ollama corriendo? ({e})"
+                f"No se pudo conectar con {self.config.host}. ¿Está Ollama corriendo? ({e})"
             ) from e
 
         content = body.get("message", {}).get("content", "")

@@ -11,9 +11,10 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widget import Widget
 from textual.widgets import Button, Input, Label, Select, Static
 
-from oraqlo.casefile import CaseError, TEMPLATE, parse_case
+from oraqlo.casefile import TEMPLATE, CaseError, parse_case
 
 
 class CaseForm(Vertical):
@@ -47,13 +48,17 @@ class CaseForm(Vertical):
             yield Input(value=str(self._state.get("question", "")), id="cf-question")
         with Horizontal(classes="cf-row cf-short"):
             yield Label("Horizonte días:")
-            yield Input(value=str(self._state.get("horizon_days", 180)), id="cf-horizon", type="number")
+            yield Input(
+                value=str(self._state.get("horizon_days", 180)), id="cf-horizon", type="number"
+            )
             yield Label("Aversión riesgo:")
             yield Input(value=str(risk.get("risk_aversion", 0.3)), id="cf-aversion", type="number")
             yield Label("Umbral ruina:")
             yield Input(value=str(risk.get("ruin_threshold", "")), id="cf-ruin", type="number")
             yield Label("P(ruina) máx:")
-            yield Input(value=str(risk.get("max_ruin_probability", 0.01)), id="cf-maxruin", type="number")
+            yield Input(
+                value=str(risk.get("max_ruin_probability", 0.01)), id="cf-maxruin", type="number"
+            )
         with Horizontal(classes="cf-row"):
             yield Label("Acción:")
             yield Select([], allow_blank=True, id="cf-action-select")
@@ -100,7 +105,9 @@ class CaseForm(Vertical):
         prob_input = Input(value=prob, placeholder="prob", classes="cf-num", type="number")
         utility_input = Input(value=utility, placeholder="util", classes="cf-num", type="number")
         row = Horizontal(
-            label_input, prob_input, utility_input,
+            label_input,
+            prob_input,
+            utility_input,
             Button("−", classes="cf-del-outcome"),
             classes="cf-outcome-row",
         )
@@ -260,7 +267,8 @@ class CaseForm(Vertical):
         elif event.button.has_class("cf-del-outcome"):
             row = event.button.parent
             self._rows = [entry for entry in self._rows if entry[0] is not row]
-            row.remove()
+            if isinstance(row, Widget):
+                row.remove()
             self._recompute_status()
         event.stop()
 

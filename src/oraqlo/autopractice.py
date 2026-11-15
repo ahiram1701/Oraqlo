@@ -16,7 +16,7 @@ import re
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 from oraqlo.forecaster.base import Distribution, Forecast
 from oraqlo.llm.base import LLMProvider
@@ -61,7 +61,9 @@ def extract_market_id(question: str) -> str | None:
 
 
 def calibration_advice(
-    ledger: CalibrationLedger, source: str, benchmark_source: str = MARKET_SOURCE,
+    ledger: CalibrationLedger,
+    source: str,
+    benchmark_source: str = MARKET_SOURCE,
     min_resolved: int = 3,
 ) -> str | None:
     """Consejo de calibración a partir del historial resuelto de `source`.
@@ -76,26 +78,23 @@ def calibration_advice(
 
     briers = [r.brier for r in resolved]
     mean_brier = sum(briers) / len(briers)
-    parts = [f"En tus últimas {len(resolved)} predicciones resueltas tu Brier medio es "
-             f"{mean_brier:.3f} (0 = perfecto)."]
+    parts = [
+        f"En tus últimas {len(resolved)} predicciones resueltas tu Brier medio es "
+        f"{mean_brier:.3f} (0 = perfecto)."
+    ]
 
     bench = ledger.reliability(benchmark_source)
     if bench is not None:
         comparison = "mejor" if mean_brier < bench else "peor"
         parts.append(f"El mercado (multitud) tiene Brier {bench:.3f}: vas {comparison} que él.")
 
-    confident = [
-        r for r in resolved
-        if max(r.forecast.distribution.outcomes.values()) >= 0.7
-    ]
+    confident = [r for r in resolved if max(r.forecast.distribution.outcomes.values()) >= 0.7]
     if len(confident) >= 3:
-        hits = sum(
-            1 for r in confident
-            if max(r.forecast.distribution.outcomes, key=r.forecast.distribution.outcomes.get)
-            == r.actual_outcome
-        )
+        hits = sum(1 for r in confident if r.forecast.distribution.mode() == r.actual_outcome)
         rate = hits / len(confident)
-        avg_conf = sum(max(r.forecast.distribution.outcomes.values()) for r in confident) / len(confident)
+        avg_conf = sum(max(r.forecast.distribution.outcomes.values()) for r in confident) / len(
+            confident
+        )
         if rate < avg_conf - 0.1:
             parts.append(
                 f"Cuando afirmas con ≥70% de confianza solo aciertas el {rate:.0%} "
@@ -144,11 +143,10 @@ class PracticeEngine:
     def _horizon(self, market: Market) -> timedelta:
         if market.end_date is None:
             return timedelta(days=7)
-        delta = market.end_date - datetime.now(timezone.utc)
+        delta = market.end_date - datetime.now(UTC)
         return max(delta, timedelta(days=1))
 
-    def _forecast_market(self, market: Market, advice: str | None,
-                         context: str | None) -> Forecast:
+    def _forecast_market(self, market: Market, advice: str | None, context: str | None) -> Forecast:
         system = _FORECAST_PROMPT
         if advice:
             system += f"\n\nTu historial de calibración dice: {advice}"
@@ -185,14 +183,12 @@ class PracticeEngine:
             horizon=self._horizon(market),
             assumptions=[str(a) for a in data.get("assumptions", [])],
             source=self.oraqlo_source,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
     def _benchmark_forecast(self, market: Market) -> Forecast:
         total = sum(market.outcomes.values()) or 1.0
-        distribution = Distribution(
-            outcomes={k: v / total for k, v in market.outcomes.items()}
-        )
+        distribution = Distribution(outcomes={k: v / total for k, v in market.outcomes.items()})
         return Forecast(
             id=str(uuid.uuid4()),
             question=f"{market_tag(market.id)} {market.question}",
@@ -200,11 +196,13 @@ class PracticeEngine:
             horizon=self._horizon(market),
             assumptions=["precio del mercado en el momento de la predicción de Oraqlo"],
             source=MARKET_SOURCE,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
     def predict_new(
-        self, n: int | None = None, research: bool = True,
+        self,
+        n: int | None = None,
+        research: bool = True,
         on_progress: Callable[[str], None] | None = None,
     ) -> list[tuple[Market, Forecast]]:
         progress = on_progress or (lambda msg: None)
@@ -214,8 +212,9 @@ class PracticeEngine:
             progress(f"consejo de calibración activo: {advice}")
 
         known = self._known_market_ids()
-        candidates = [m for m in self.market_client.list_open(limit=n * 3 + len(known))
-                      if m.id not in known][:n]
+        candidates = [
+            m for m in self.market_client.list_open(limit=n * 3 + len(known)) if m.id not in known
+        ][:n]
         if not candidates:
             progress("sin mercados nuevos que predecir")
             return []
@@ -228,13 +227,15 @@ class PracticeEngine:
                 try:
                     brief = self.researcher.investigate(market.question, self._horizon(market))
                     context = brief.as_context()
-                    progress(f"  investigado: {len(brief.facts)} hechos de {len(brief.sources)} fuentes")
+                    progress(
+                        f"  investigado: {len(brief.facts)} hechos de {len(brief.sources)} fuentes"
+                    )
                 except (ResearchError, Exception) as e:  # la práctica no se detiene por esto
                     progress(f"  investigación no disponible ({e}); prediciendo sin ella")
             forecast = self._forecast_market(market, advice, context)
             self.ledger.record(forecast)
             self.ledger.record(self._benchmark_forecast(market))
-            top = max(forecast.distribution.outcomes, key=forecast.distribution.outcomes.get)
+            top = forecast.distribution.mode()
             progress(
                 f"  Oraqlo: {forecast.distribution.outcomes[top]:.0%} '{top}' · "
                 f"mercado: {market.outcomes.get(top, 0):.0%}"
@@ -266,8 +267,10 @@ class PracticeEngine:
             for f in forecasts:
                 r = self.ledger.resolve(f.id, market.winner)
                 resolved.append(r)
-                progress(f"resuelto [{f.source}] '{market.question}' → "
-                         f"'{market.winner}' (Brier {r.brier:.3f})")
+                progress(
+                    f"resuelto [{f.source}] '{market.question}' → "
+                    f"'{market.winner}' (Brier {r.brier:.3f})"
+                )
         return resolved
 
     # ── Pasada completa ───────────────────────────────────────────────────
@@ -293,10 +296,11 @@ class PracticeEngine:
 def main(argv: list[str] | None = None) -> int:
     """CLI headless: una pasada (o bucle) de práctica autónoma."""
     import argparse
+    import io
     import sys
     import time as _time
 
-    if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    if isinstance(sys.stdout, io.TextIOWrapper) and sys.stdout.encoding.lower() != "utf-8":
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     parser = argparse.ArgumentParser(
@@ -323,8 +327,12 @@ def main(argv: list[str] | None = None) -> int:
     researcher = Researcher(web, provider, model) if web.is_available() else None
 
     engine = PracticeEngine(
-        PolymarketClient(), provider, model, JsonLedger(args.ledger),
-        researcher=researcher, markets_per_run=args.markets,
+        PolymarketClient(),
+        provider,
+        model,
+        JsonLedger(args.ledger),
+        researcher=researcher,
+        markets_per_run=args.markets,
     )
 
     while True:
@@ -332,8 +340,11 @@ def main(argv: list[str] | None = None) -> int:
         report = engine.run_once(research=not args.no_research, on_progress=print)
         print(f"predichas: {len(report.predicted)} · resueltas: {len(report.resolved)}")
         if report.reliability_oraqlo is not None:
-            bench = (f" · mercado {report.reliability_market:.3f}"
-                     if report.reliability_market is not None else "")
+            bench = (
+                f" · mercado {report.reliability_market:.3f}"
+                if report.reliability_market is not None
+                else ""
+            )
             print(f"Brier Oraqlo {report.reliability_oraqlo:.3f}{bench}")
         for error in report.errors:
             print(f"error: {error}")

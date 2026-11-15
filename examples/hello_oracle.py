@@ -12,14 +12,12 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
 # La consola de Windows usa cp1252 por defecto y no puede imprimir toda la
 # salida de los modelos; forzamos UTF-8 sin romper otros entornos.
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from oraqlo.llm import ChatMessage, OllamaBackendConfig, OllamaProvider, OllamaUnavailableError
 
@@ -60,7 +58,10 @@ def main() -> int:
     try:
         response = provider.chat(
             messages=[
-                ChatMessage(role="system", content="Eres el Oráculo de Oraqlo: siempre probabilidades, nunca certezas."),
+                ChatMessage(
+                    role="system",
+                    content="Eres el Oráculo de Oraqlo: siempre probabilidades, nunca certezas.",
+                ),
                 ChatMessage(role="user", content=PROMPT),
             ],
             model=model,

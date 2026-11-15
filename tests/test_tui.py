@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import json
-import sys
-from datetime import timedelta
+from datetime import UTC, timedelta
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pytest
 
@@ -85,8 +82,13 @@ def test_json_ledger_discard_persiste(tmp_path):
     path = tmp_path / "ledger.json"
     ledger = JsonLedger(path)
     ledger.record(
-        Forecast(id="fd", question="¿?", horizon=timedelta(days=5),
-                 distribution=Distribution(outcomes={"a": 1.0}), source="test")
+        Forecast(
+            id="fd",
+            question="¿?",
+            horizon=timedelta(days=5),
+            distribution=Distribution(outcomes={"a": 1.0}),
+            source="test",
+        )
     )
     ledger.discard("fd")
     assert JsonLedger(path).open_forecasts == []
@@ -120,23 +122,42 @@ def test_render_report_markdown():
         horizon=timedelta(days=90),
         assumptions=["mercado estable"],
     )
-    ranking = [Recommendation(
-        action=Action(id="a", description="expandir"),
-        expected_utility=0.5, risk_adjusted_utility=0.4, confidence=0.6,
-    )]
+    ranking = [
+        Recommendation(
+            action=Action(id="a", description="expandir"),
+            expected_utility=0.5,
+            risk_adjusted_utility=0.4,
+            confidence=0.6,
+        )
+    ]
     verdict = Verdict(
-        decision="emitir", confidence=0.7, rationale="razonable",
-        objections=["riesgo X"], review_triggers=["churn > 5%"],
+        decision="emitir",
+        confidence=0.7,
+        rationale="razonable",
+        objections=["riesgo X"],
+        review_triggers=["churn > 5%"],
         transcript=[("estratega", "plan"), ("juez", '{"decision": "emitir"}')],
     )
     md = render_report_markdown("¿expandir?", forecast, ranking, verdict, "m1", "cloud")
-    for fragment in ("# Informe estratégico", "## Previsión del oráculo", "crece | 60.0%",
-                     "## Ranking del planificador", "EMITIR", "churn > 5%",
-                     "## Transcript del debate", "mercado estable"):
+    for fragment in (
+        "# Informe estratégico",
+        "## Previsión del oráculo",
+        "crece | 60.0%",
+        "## Ranking del planificador",
+        "EMITIR",
+        "churn > 5%",
+        "## Transcript del debate",
+        "mercado estable",
+    ):
         assert fragment in md, f"falta: {fragment}"
     assert "Fuentes consultadas" not in md  # sin investigación, sin sección
     md_research = render_report_markdown(
-        "¿expandir?", forecast, ranking, verdict, "m1", "cloud",
+        "¿expandir?",
+        forecast,
+        ranking,
+        verdict,
+        "m1",
+        "cloud",
         research_facts=[("El mercado creció 12%", "https://x.example")],
     )
     assert "## Fuentes consultadas" in md_research
@@ -146,38 +167,64 @@ def test_render_report_markdown():
 
 def test_render_goal_report_markdown():
     from oraqlo.goals import (
-        ExternalCondition, GoalPlan, Lever, Milestone, OUTCOME_ACHIEVED,
-        OUTCOME_NOT_ACHIEVED, PlanStep,
+        OUTCOME_ACHIEVED,
+        OUTCOME_NOT_ACHIEVED,
+        ExternalCondition,
+        GoalPlan,
+        Lever,
+        Milestone,
+        PlanStep,
     )
     from oraqlo.panel import Verdict
     from oraqlo.report import render_goal_report_markdown
 
     def _binary(fid, p, label):
         return Forecast(
-            id=fid, question=f"[{label}] maratón",
+            id=fid,
+            question=f"[{label}] maratón",
             distribution=Distribution(outcomes={OUTCOME_ACHIEVED: p, OUTCOME_NOT_ACHIEVED: 1 - p}),
             horizon=timedelta(days=180),
         )
 
     plan = GoalPlan(
-        goal="maratón sub-4h", horizon=timedelta(days=180),
-        baseline=_binary("b1", 0.2, "statu quo"), with_plan=_binary("w1", 0.6, "con plan"),
+        goal="maratón sub-4h",
+        horizon=timedelta(days=180),
+        baseline=_binary("b1", 0.2, "statu quo"),
+        with_plan=_binary("w1", 0.6, "con plan"),
         levers=[Lever(text="entrenar 4 días", impact="alto", effort="medio")],
         external_conditions=[ExternalCondition(text="no lesionarte", probability=0.8)],
         summary="Plan progresivo",
         steps=[PlanStep(order=1, action="base aeróbica", when="mes 1-2", why="resistencia")],
         milestones=[Milestone(text="media en 1h55", target_date="2026-10-01", signal="ritmo")],
-        verdict=Verdict(decision="emitir", confidence=0.6, rationale="razonable",
-                        objections=["constancia"], review_triggers=["dolor persistente"]),
+        verdict=Verdict(
+            decision="emitir",
+            confidence=0.6,
+            rationale="razonable",
+            objections=["constancia"],
+            review_triggers=["dolor persistente"],
+        ),
     )
-    md = render_goal_report_markdown(plan, "m1", "cloud",
-                                     research_facts=[("hecho", "https://x.example")])
-    for fragment in ("# Plan de objetivo", "## Probabilidades", "20%", "60%", "**+40%**",
-                     "## Qué puedes hacer", "entrenar 4 días",
-                     "## Qué tiene que pasar", "no lesionarte",
-                     "## Qué tienes que hacer", "base aeróbica",
-                     "## Hitos", "2026-10-01", "EMITIR", "dolor persistente",
-                     "## Fuentes consultadas"):
+    md = render_goal_report_markdown(
+        plan, "m1", "cloud", research_facts=[("hecho", "https://x.example")]
+    )
+    for fragment in (
+        "# Plan de objetivo",
+        "## Probabilidades",
+        "20%",
+        "60%",
+        "**+40%**",
+        "## Qué puedes hacer",
+        "entrenar 4 días",
+        "## Qué tiene que pasar",
+        "no lesionarte",
+        "## Qué tienes que hacer",
+        "base aeróbica",
+        "## Hitos",
+        "2026-10-01",
+        "EMITIR",
+        "dolor persistente",
+        "## Fuentes consultadas",
+    ):
         assert fragment in md, f"falta: {fragment}"
 
     # Uplift negativo: advertencia explícita.
@@ -187,7 +234,7 @@ def test_render_goal_report_markdown():
 
 
 def _seed_ledger(path: Path) -> None:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     ledger = JsonLedger(path)
     ledger.record(
@@ -198,7 +245,7 @@ def _seed_ledger(path: Path) -> None:
             horizon=timedelta(days=10),
             assumptions=["supuesto visible"],
             source="test",
-            created_at=datetime(2026, 7, 10, 15, 30, tzinfo=timezone.utc),
+            created_at=datetime(2026, 7, 10, 15, 30, tzinfo=UTC),
         )
     )
 
@@ -213,8 +260,11 @@ def test_tui_monta_formulario_y_modo_json(tmp_path):
     from oraqlo.tui.case_form import CaseForm
 
     async def go():
-        app = OraqloTUI(case_path=tmp_path / "caso.json", ledger_path=tmp_path / "ledger.json",
-                        settings_path=tmp_path / "settings.json")
+        app = OraqloTUI(
+            case_path=tmp_path / "caso.json",
+            ledger_path=tmp_path / "ledger.json",
+            settings_path=tmp_path / "settings.json",
+        )
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
             app.query_one(TabbedContent).active = "tab-caso"
@@ -236,6 +286,8 @@ def test_tui_monta_formulario_y_modo_json(tmp_path):
             parse_case(data)
             assert data["question"] == form.to_dict()["question"]
             # Y volver al formulario funciona si el JSON es válido.
+            # Textual ignora pulsaciones durante el efecto "active" del botón (0.2 s).
+            await pilot.pause(0.3)
             await pilot.click("#btn-mode")
             await pilot.pause()
             assert form.display and not editor.display
@@ -255,8 +307,11 @@ def test_tui_ledger_ofrece_los_escenarios_para_resolver(tmp_path):
     _seed_ledger(ledger_path)
 
     async def go():
-        app = OraqloTUI(case_path=tmp_path / "caso.json", ledger_path=ledger_path,
-                        settings_path=tmp_path / "settings.json")
+        app = OraqloTUI(
+            case_path=tmp_path / "caso.json",
+            ledger_path=ledger_path,
+            settings_path=tmp_path / "settings.json",
+        )
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
             from textual.widgets import TabbedContent
@@ -294,15 +349,32 @@ def test_tui_eliminar_abierta_y_resuelta_con_confirmacion(tmp_path):
 
     ledger_path = tmp_path / "ledger.json"
     seed = JsonLedger(ledger_path)
-    seed.record(Forecast(id="f-open", question="abierta", horizon=timedelta(days=5),
-                         distribution=Distribution(outcomes={"a": 0.5, "b": 0.5}), source="t"))
-    seed.record(Forecast(id="f-res", question="resuelta", horizon=timedelta(days=5),
-                         distribution=Distribution(outcomes={"a": 0.5, "b": 0.5}), source="t"))
+    seed.record(
+        Forecast(
+            id="f-open",
+            question="abierta",
+            horizon=timedelta(days=5),
+            distribution=Distribution(outcomes={"a": 0.5, "b": 0.5}),
+            source="t",
+        )
+    )
+    seed.record(
+        Forecast(
+            id="f-res",
+            question="resuelta",
+            horizon=timedelta(days=5),
+            distribution=Distribution(outcomes={"a": 0.5, "b": 0.5}),
+            source="t",
+        )
+    )
     seed.resolve("f-res", "a")
 
     async def go():
-        app = OraqloTUI(case_path=tmp_path / "caso.json", ledger_path=ledger_path,
-                        settings_path=tmp_path / "settings.json")
+        app = OraqloTUI(
+            case_path=tmp_path / "caso.json",
+            ledger_path=ledger_path,
+            settings_path=tmp_path / "settings.json",
+        )
         async with app.run_test(size=(120, 50)) as pilot:
             await pilot.pause()
             app.query_one(TabbedContent).active = "tab-ledger"
@@ -348,8 +420,11 @@ def test_tui_pestana_preguntar(tmp_path):
     from oraqlo.tui.app import OraqloTUI
 
     async def go():
-        app = OraqloTUI(case_path=tmp_path / "caso.json", ledger_path=tmp_path / "ledger.json",
-                        settings_path=tmp_path / "settings.json")
+        app = OraqloTUI(
+            case_path=tmp_path / "caso.json",
+            ledger_path=tmp_path / "ledger.json",
+            settings_path=tmp_path / "settings.json",
+        )
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
             # Preguntar es la primera pestaña: el camino más corto es el primero.
@@ -379,6 +454,19 @@ def test_tui_pestana_preguntar(tmp_path):
     asyncio.run(go())
 
 
+async def _until(pilot, cond, timeout: float = 3.0) -> bool:
+    """Espera (sin pausas fijas) a que `cond()` se cumpla: evita tests intermitentes
+    por el orden no determinista de los eventos de Textual."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while not cond():
+        if time.monotonic() > deadline:
+            return False
+        await pilot.pause(0.02)
+    return True
+
+
 def test_practica_autonoma_persiste_entre_sesiones(tmp_path):
     pytest.importorskip("textual")
     import asyncio
@@ -387,8 +475,12 @@ def test_practica_autonoma_persiste_entre_sesiones(tmp_path):
 
     from oraqlo.tui.app import OraqloTUI
 
-    paths = dict(case_path=tmp_path / "caso.json", ledger_path=tmp_path / "ledger.json",
-                 goals_path=tmp_path / "goals.json", settings_path=tmp_path / "settings.json")
+    paths = dict(
+        case_path=tmp_path / "caso.json",
+        ledger_path=tmp_path / "ledger.json",
+        goals_path=tmp_path / "goals.json",
+        settings_path=tmp_path / "settings.json",
+    )
 
     async def go():
         # Sesión 1: activar la práctica autónoma (sin pasada real: parcheamos el run).
@@ -398,8 +490,7 @@ def test_practica_autonoma_persiste_entre_sesiones(tmp_path):
             await pilot.pause()
             app.query_one("#practice-interval", Input).value = "30"
             app.query_one("#practice-auto", Switch).value = True
-            await pilot.pause()
-            assert app._practice_timer is not None
+            assert await _until(pilot, lambda: app._practice_timer is not None)
 
         settings = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
         assert settings["practice_auto"] is True
@@ -411,7 +502,7 @@ def test_practica_autonoma_persiste_entre_sesiones(tmp_path):
         app2 = OraqloTUI(**paths)
         app2._handle_practice_run = lambda: runs.append(1)
         async with app2.run_test(size=(120, 50)) as pilot:
-            await pilot.pause()
+            assert await _until(pilot, lambda: app2._practice_timer is not None)
             assert app2.query_one("#practice-auto", Switch).value is True
             assert app2.query_one("#practice-interval", Input).value == "30"
             assert app2._practice_timer is not None
@@ -419,8 +510,7 @@ def test_practica_autonoma_persiste_entre_sesiones(tmp_path):
 
             # Apagarla también persiste.
             app2.query_one("#practice-auto", Switch).value = False
-            await pilot.pause()
-            assert app2._practice_timer is None
+            assert await _until(pilot, lambda: app2._practice_timer is None)
 
         settings = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
         assert settings["practice_auto"] is False
@@ -444,7 +534,8 @@ def test_case_form_utilidades_contradictorias(tmp_path):
     from oraqlo.tui.case_form import CaseForm
 
     caso = {
-        "question": "¿?", "horizon_days": 30,
+        "question": "¿?",
+        "horizon_days": 30,
         "actions": {
             "a": {"description": "A", "outcomes": {"gana": 1.0}},
             "b": {"description": "B", "outcomes": {"gana": 1.0}},
@@ -453,8 +544,11 @@ def test_case_form_utilidades_contradictorias(tmp_path):
     }
 
     async def go():
-        app = OraqloTUI(case_path=tmp_path / "caso.json", ledger_path=tmp_path / "ledger.json",
-                        settings_path=tmp_path / "settings.json")
+        app = OraqloTUI(
+            case_path=tmp_path / "caso.json",
+            ledger_path=tmp_path / "ledger.json",
+            settings_path=tmp_path / "settings.json",
+        )
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
             form = app.query_one("#case-form", CaseForm)

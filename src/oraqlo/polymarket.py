@@ -9,12 +9,13 @@ fuente de preguntas y de verdades-resueltas. Esquema verificado contra la API:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 GAMMA_HOST = "https://gamma-api.polymarket.com"
 
@@ -42,14 +43,12 @@ def _parse_market(data: dict) -> Market:
         prices = [float(p) for p in json.loads(data.get("outcomePrices") or "[]")]
     except (json.JSONDecodeError, TypeError, ValueError) as e:
         raise PolymarketError(f"Mercado {data.get('id')}: outcomes/prices ilegibles: {e}") from e
-    outcomes = {str(label): price for label, price in zip(labels, prices)}
+    outcomes = {str(label): price for label, price in zip(labels, prices, strict=False)}
 
     end_date = None
     if data.get("endDate"):
-        try:
+        with contextlib.suppress(ValueError):
             end_date = datetime.fromisoformat(str(data["endDate"]).replace("Z", "+00:00"))
-        except ValueError:
-            pass
 
     resolved = str(data.get("umaResolutionStatus") or "").lower() == "resolved"
     winner = None
@@ -107,7 +106,7 @@ class PolymarketClient:
         )
         if not isinstance(data, list):
             raise PolymarketError("Respuesta inesperada al listar mercados (no es una lista).")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         markets = []
         for item in data:
             try:

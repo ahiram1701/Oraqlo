@@ -51,36 +51,35 @@ Cada rol del panel se mapea a un modelo y backend vía [config/roles.example.yam
 - El **núcleo no tiene dependencias** (solo librería estándar). Los extras son opcionales:
 
 ```bash
-git clone <url-del-repo> && cd Oraqlo
-pip install -e ".[tui]"        # instala Textual (para la TUI)
-pip install -e ".[tui,dev]"    # además pytest (para correr los tests)
+git clone https://github.com/ahiram1701/Oraqlo.git && cd Oraqlo
+pip install uv          # gestor de entorno (una vez)
+uv sync --all-extras    # crea .venv con Oraqlo + TUI + herramientas de desarrollo
+uv run oraqlo --help    # CLI: version | tui | practice
 ```
 
-Los ejemplos de `examples/` funcionan sin instalar nada (usan solo la stdlib).
+Ver [CONTRIBUTING.md](CONTRIBUTING.md) para la forma de trabajo (ramas, PRs, CI, releases).
 
 ## Quickstart
 
 ```bash
-# sin dependencias externas: solo la librería estándar de Python 3.12+
-python examples/hello_oracle.py --backend local            # necesita Ollama corriendo
-OLLAMA_API_KEY=... python examples/hello_oracle.py --backend cloud --model gpt-oss:120b-cloud
+uv run python examples/hello_oracle.py --backend local            # necesita Ollama corriendo
+OLLAMA_API_KEY=... uv run python examples/hello_oracle.py --backend cloud --model gpt-oss:120b-cloud
 
 # bucle de aprendizaje completo: predecir → registrar → resolver → Brier
-python examples/learning_loop.py --backend cloud
+uv run python examples/learning_loop.py --backend cloud
 
 # debate del panel: Estratega ▸ Red Team ▸ Oráculo ▸ Juez con LLMs reales
-python examples/panel_debate.py --backend cloud
+uv run python examples/panel_debate.py --backend cloud
 
 # ciclo OODA completo: observar → prever → simular → planificar → deliberar
-python examples/full_cycle.py --backend cloud
+uv run python examples/full_cycle.py --backend cloud
 ```
 
 ## TUI (interfaz de terminal)
 
 ```bash
-pip install textual
-python tui.py                        # abre con la plantilla de caso
-python tui.py cases/cafeterias.json  # abre con un caso concreto
+uv run oraqlo tui                        # abre con la plantilla de caso
+uv run oraqlo tui cases/cafeterias.json  # abre con un caso concreto
 ```
 
 Seis pestañas:
@@ -151,20 +150,11 @@ Seis pestañas:
   Sin TUI (headless / programable):
 
   ```bash
-  set PYTHONPATH=src
-  python -m oraqlo.autopractice --markets 2              # una pasada
-  python -m oraqlo.autopractice --loop --interval-min 60 # bucle continuo
+  uv run oraqlo practice --markets 2              # una pasada
+  uv run oraqlo practice --loop --interval-min 60 # bucle continuo
   ```
 
-  Para autonomía total, prográmalo en el Programador de tareas de Windows:
-  acción `python`, argumentos `-m oraqlo.autopractice --markets 2`, iniciar en
-  `C:\DEV\tests\Oraqlo` con la variable `PYTHONPATH=src`, cada hora.
-
-Tests de humo:
-
-```bash
-python -m pytest tests/ -q     # o: python tests/test_smoke.py
-```
+  (En la versión web, la autopráctica correrá como tarea programada del servidor.)
 
 ## Estado
 
@@ -193,13 +183,13 @@ grandes, e integración del `AdversaryModel` dentro de los motores de simulació
 ## Tests
 
 ```bash
-pip install -e ".[tui,dev]"
-pytest -q
+uv run pytest -q
 ```
 
 La suite (79 tests) corre **100% offline**: las llamadas a LLM, la búsqueda web y
 Polymarket están simuladas con dobles de test, así que no necesita red ni
-`OLLAMA_API_KEY`. Se ejecuta también en CI (GitHub Actions) sobre Python 3.12 y 3.13.
+`OLLAMA_API_KEY`. En cada PR, el CI (GitHub Actions) ejecuta lint, tipos y tests en
+Ubuntu y Windows con Python 3.12 y 3.13.
 
 ## Privacidad
 

@@ -15,12 +15,10 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from oraqlo.llm import OllamaBackendConfig, OllamaProvider, OllamaUnavailableError
 from oraqlo.panel import ROLE_PROMPTS, PanelError, RoleConfig, SequentialPanel
@@ -77,8 +75,9 @@ def main() -> int:
 
     panel = SequentialPanel(
         roles={
-            name: RoleConfig(name=name, provider=provider, model=model,
-                             temperature=ROLE_TEMPERATURES[name])
+            name: RoleConfig(
+                name=name, provider=provider, model=model, temperature=ROLE_TEMPERATURES[name]
+            )
             for name in ROLE_PROMPTS
         }
     )
@@ -99,7 +98,9 @@ def main() -> int:
         print(texto.strip()[:1500])
 
     print("\n" + "═" * 70)
-    print(f"\nVEREDICTO: {verdict.decision.upper()}  (confianza del Juez: {verdict.confidence:.0%})")
+    print(
+        f"\nVEREDICTO: {verdict.decision.upper()}  (confianza del Juez: {verdict.confidence:.0%})"
+    )
     if verdict.p_success is not None:
         print(f"P(éxito) según el Oráculo: {verdict.p_success:.0%}")
     print(f"Síntesis: {verdict.rationale}")

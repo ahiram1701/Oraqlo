@@ -118,10 +118,15 @@ class ExpectedUtilityPlanner(Planner):
                 ruin_p = sum(w for w, u in pairs if u < risk.ruin_threshold)
                 if ruin_p > risk.max_ruin_probability:
                     rejected.append(
-                        (action, f"P(ruina)={ruin_p:.1%} supera el máximo {risk.max_ruin_probability:.1%}")
+                        (
+                            action,
+                            f"P(ruina)={ruin_p:.1%} supera el máximo {risk.max_ruin_probability:.1%}",
+                        )
                     )
                     continue
-            adjusted = (1 - risk.risk_aversion) * eu + risk.risk_aversion * _cvar(pairs, risk.cvar_alpha)
+            adjusted = (1 - risk.risk_aversion) * eu + risk.risk_aversion * _cvar(
+                pairs, risk.cvar_alpha
+            )
             scored.append((action, eu, adjusted))
 
         scored.sort(key=lambda item: item[2], reverse=True)
