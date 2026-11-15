@@ -42,6 +42,27 @@ def multiclass_brier(outcomes: dict[str, float], actual: str) -> float:
     return score
 
 
+def normalize_label(label: str) -> str:
+    """Forma canónica para comparar etiquetas: sin mayúsculas ni espacios extra."""
+    return " ".join(str(label).split()).casefold()
+
+
+def canonical_outcome(outcomes: dict[str, float], actual: str) -> str:
+    """Devuelve la etiqueta predicha que coincide con `actual` ignorando mayúsculas
+    y espacios ("SÍ " ≡ "Sí"); si no hay coincidencia, `actual` tal cual.
+
+    Sin esto, un resultado tecleado con otra capitalización contaba como "no
+    contemplado" y sumaba +1.0 de Brier: un castigo por un error de formato.
+    """
+    if actual in outcomes:
+        return actual
+    target = normalize_label(actual)
+    for label in outcomes:
+        if normalize_label(label) == target:
+            return label
+    return actual.strip()
+
+
 @dataclass
 class ResolvedForecast:
     """Predicción cerrada: lo que se predijo + lo que realmente pasó."""
@@ -81,6 +102,7 @@ class CalibrationLedger:
                 f"La predicción '{forecast_id}' es numérica (intervalo), no de escenarios; "
                 f"la resolución de intervalos llegará con el QuantForecaster."
             )
+        actual_outcome = canonical_outcome(forecast.distribution.outcomes, actual_outcome)
         resolved = ResolvedForecast(
             forecast=forecast,
             actual_outcome=actual_outcome,

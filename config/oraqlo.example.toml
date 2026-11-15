@@ -1,0 +1,57 @@
+# Configuración de Oraqlo. Copia este archivo a tu directorio de datos como
+# `oraqlo.toml` (Windows: %LOCALAPPDATA%\Oraqlo\oraqlo.toml) — `oraqlo config`
+# te dice la ruta exacta. Los SECRETOS nunca van aquí: solo variables de entorno
+# (o el archivo .env del directorio de datos):
+#   ANTHROPIC_API_KEY, OLLAMA_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY,
+#   OPENROUTER_API_KEY, GROQ_API_KEY, DEEPSEEK_API_KEY, MISTRAL_API_KEY, XAI_API_KEY
+
+# ── Roles ─────────────────────────────────────────────────────────────────
+# Cada rol hereda de [roles.default]. Proveedores incorporados: anthropic,
+# ollama-local, ollama-cloud, openai, gemini, openrouter, groq, deepseek,
+# mistral, xai, lmstudio. Sin [roles.default], Oraqlo elige según las claves
+# que encuentre (Anthropic > Ollama cloud > Ollama local).
+#
+# Claude no admite `temperature`: usa `effort` (low|medium|high|xhigh|max).
+
+[roles.default]
+provider = "anthropic"
+model = "claude-opus-5-5"
+effort = "medium"
+
+[roles.juez]
+effort = "high"          # la decisión final merece más profundidad
+
+[roles.red_team]
+provider = "ollama-cloud" # ejemplo: mezclar backends por rol
+model = "gpt-oss:120b-cloud"
+temperature = 0.9
+
+# Rol auxiliar barato para la autopráctica con Polymarket:
+# [roles.practica]
+# provider = "anthropic"
+# model = "claude-haiku-5-5"
+# effort = "low"
+
+# ── Proveedores propios (opcional) ───────────────────────────────────────
+# [providers.mi-vllm]
+# type = "openai"
+# base_url = "http://192.168.1.50:8000/v1"
+# api_key_env = "MI_VLLM_KEY"
+
+# ── Servidor web ─────────────────────────────────────────────────────────
+[server]
+host = "127.0.0.1"   # solo local: el celular entra vía `tailscale serve`
+port = 8765
+allowed_users = []   # logins de Tailscale autorizados; vacío = todo tu tailnet
+
+# ── Auto-actualización ───────────────────────────────────────────────────
+[updates]
+mode = "auto"        # auto | notify | off
+channel = "stable"   # stable | beta
+interval_hours = 6
+
+# ── Autopráctica con Polymarket ──────────────────────────────────────────
+[practice]
+auto = false
+interval_min = 60
+markets = 2

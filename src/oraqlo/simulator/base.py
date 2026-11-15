@@ -235,3 +235,34 @@ class SoftmaxAdversary(AdversaryModel):
         exps = [math.exp((s - top) / self.temperature) for s in scores]
         total = sum(exps)
         return [(a, e / total) for a, e in zip(self.candidate_actions, exps, strict=False)]
+
+
+# Modelo de resultados condicionado a la respuesta del adversario.
+AdversarialOutcomeModel = Callable[[WorldState, Action, Action], Distribution]
+
+
+def with_adversary(adversary: AdversaryModel, model: AdversarialOutcomeModel) -> OutcomeModel:
+    """Integra un adversario en cualquier motor de simulación.
+
+    Devuelve un OutcomeModel normal cuya distribución es la mezcla de los
+    resultados bajo cada respuesta probable del oponente:
+
+        P(o | estado, nuestra) = Σ_a P(a | estado, nuestra) · P(o | estado, nuestra, a)
+
+    Como el adversario (p. ej. SoftmaxAdversary) elige respondiendo a SU
+    utilidad, cada acción nuestra se evalúa contra un oponente que optimiza:
+    Monte Carlo y expectimax lo usan sin cambiar una línea.
+    """
+
+    def outcome_model(state: WorldState, action: Action) -> Distribution:
+        mixed: dict[str, float] = {}
+        for their_action, p_their in adversary.respond(state, action):
+            dist = model(state, action, their_action)
+            if not dist.outcomes:
+                raise ValueError("El modelo adversarial debe devolver outcomes categóricos")
+            for label, p in dist.outcomes.items():
+                mixed[label] = mixed.get(label, 0.0) + p_their * p
+        total = sum(mixed.values())
+        return Distribution(outcomes={k: v / total for k, v in mixed.items()})
+
+    return outcome_model

@@ -13,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from oraqlo.llm.base import ChatMessage, LLMProvider
+from oraqlo.llm.structured import JsonChatError, chat_json, extract_json_object
 from oraqlo.strategy.planner import Recommendation
 
 # Callback de progreso: recibe (rol, texto) al terminar cada turno del debate.
@@ -54,15 +55,7 @@ class PanelError(RuntimeError):
     """Un rol del panel no produjo salida utilizable tras los reintentos."""
 
 
-def _extract_json(text: str) -> dict:
-    """Extrae el primer objeto JSON del texto (tolera prosa alrededor)."""
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end <= start:
-        raise ValueError(f"Sin objeto JSON en la respuesta: {text[:200]!r}")
-    data = json.loads(text[start : end + 1])
-    if not isinstance(data, dict):
-        raise ValueError("El JSON raíz no es un objeto")
-    return data
+_extract_json = extract_json_object  # compat
 
 
 @dataclass
@@ -149,27 +142,17 @@ class SequentialPanel(DecisionPanel):
 
     def _speak_json(self, role: str, prompt: str) -> dict:
         cfg = self.roles[role]
-        messages = [
-            ChatMessage(role="system", content=ROLE_PROMPTS[role]),
-            ChatMessage(role="user", content=prompt),
-        ]
-        last_error: Exception | None = None
-        for _ in range(self.max_retries + 1):
-            response = cfg.provider.chat(
-                messages=messages, model=cfg.model, temperature=cfg.temperature, json_mode=True
+        try:
+            return chat_json(
+                cfg.provider,
+                cfg.model,
+                ROLE_PROMPTS[role],
+                prompt,
+                temperature=cfg.temperature,
+                max_retries=self.max_retries,
             )
-            try:
-                return _extract_json(response.content)
-            except (ValueError, json.JSONDecodeError) as e:
-                last_error = e
-                messages.append(ChatMessage(role="assistant", content=response.content))
-                messages.append(
-                    ChatMessage(
-                        role="user",
-                        content=f"Tu respuesta no es válida ({e}). Devuelve SOLO el JSON corregido.",
-                    )
-                )
-        raise PanelError(f"El rol '{role}' ({cfg.model}) no produjo JSON válido: {last_error}")
+        except JsonChatError as e:
+            raise PanelError(f"El rol '{role}' ({cfg.model}) no produjo JSON válido: {e}") from e
 
     def deliberate(
         self, context: str, candidate: Recommendation, on_turn: OnTurn | None = None
