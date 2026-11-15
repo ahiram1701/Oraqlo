@@ -5,6 +5,7 @@
 ```bash
 pip install uv                 # una vez
 uv sync --all-extras           # crea .venv con todo (dev incluido)
+cd web && npm install && cd .. # frontend
 uv run pre-commit install --hook-type pre-commit --hook-type commit-msg
 ```
 
@@ -16,6 +17,9 @@ uv run ruff check --fix .      # lint
 uv run ruff format .           # formato
 uv run pyright                 # tipos
 uv run oraqlo --help           # CLI
+uv run oraqlo serve            # API + app en http://127.0.0.1:8765
+cd web && npm run dev          # frontend con recarga en caliente
+cd web && npm test             # tests del frontend
 ```
 
 ## Flujo: rama → PR → CI verde → squash-merge
@@ -25,6 +29,10 @@ uv run oraqlo --help           # CLI
 3. El PR solo se mergea con el **CI en verde**: lint + tipos + tests en Ubuntu y
    **Windows** (la plataforma donde corre Oraqlo) con Python 3.12 y 3.13, y build del wheel.
 4. Se mergea con **squash**: el título del PR se convierte en el commit de `main`.
+5. **Auto-merge activado**: al abrir el PR, `gh pr merge --auto --squash` lo deja
+   programado; GitHub lo mergea solo en cuanto pasan los checks obligatorios
+   (lint + tipos, tests en Ubuntu/Windows × py3.12/3.13, web y build del paquete).
+   Si un check falla, no se mergea: se corrige en la misma rama.
 
 ## Commits y versiones (Conventional Commits → SemVer)
 

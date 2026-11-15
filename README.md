@@ -1,204 +1,111 @@
 # Oraqlo
 
-**Motor de estrategia bajo incertidumbre** — un agente estratega general, genérico y
-reutilizable, que mantiene un modelo del mundo, genera previsiones probabilísticas
-calibradas, simula futuros y oponentes, y recomienda la jugada de mayor utilidad
-esperada ajustada a riesgo.
+**Motor de estrategia bajo incertidumbre.** Le haces una pregunta o le das un objetivo y Oraqlo:
 
-## Lo que Oraqlo NO es (límites honestos)
+- **prevé** con probabilidades calibradas, nunca con certezas;
+- **simula** futuros y oponentes;
+- somete el plan a un **debate adversarial**: Estratega ▸ Red Team ▸ Oráculo ▸ Juez;
+- **recomienda** la jugada de mayor utilidad esperada ajustada a riesgo.
 
-Oraqlo no "controla la realidad" ni "predice todo". Ningún sistema puede: la realidad
-es caótica, parcialmente observable y adversarial. Un sistema que finge certeza miente
-sobre su confianza — lo peor que puede hacer un estratega.
+Después **aprende**. Cada predicción se puntúa contra lo que realmente pasó (Brier score) y esa calibración pondera las siguientes.
 
-La fuerza de Oraqlo es **cuantificar lo que no sabe**: toda predicción lleva una
-distribución de probabilidad, se mide contra los resultados reales (Brier score) y se
-recalibra. Es un oráculo honesto.
+Funciona como una **app web instalable en el celular** que corre en tu PC y llega a cualquier dispositivo tuyo por **Tailscale**.
 
-## Arquitectura (bucle OODA)
+## Lo que Oraqlo NO es
 
+No "predice todo" ni "controla la realidad": la realidad es caótica, parcialmente observable y adversarial. La fuerza de Oraqlo es **cuantificar lo que no sabe**. Toda previsión es una distribución, se mide contra el resultado real y se recalibra. Ver [ADR 0001](docs/decisions/0001-oraculo-honesto.md).
+
+## Qué puedes hacer
+
+| Pantalla | Para qué |
+|---|---|
+| **Preguntar** | Previsión rápida (1 llamada), análisis completo (el LLM redacta acciones y escenarios, simula y debate) o **lograr objetivo** (plan, palancas, hitos y *uplift* medible). Con investigación web opcional. |
+| **Objetivos** | Seguimiento: check-ins en lenguaje natural, trayectoria de P(objetivo), hitos con aviso de vencidos, re-planificación y cierre. |
+| **Ledger** | Predicciones abiertas: las resuelves con un toque y alimentan la calibración. |
+| **Práctica** | Auto-mejora con Polymarket, solo lectura. Oraqlo predice sin ver el precio y compara su Brier con el de la multitud. Corre sola en el servidor. |
+| **Calibración** | Diagrama de fiabilidad y Brier por fuente/modelo. |
+| **Caso · Historial · Ajustes** | Editor de casos, informes en Markdown, roles, proveedores, notificaciones y actualizaciones. |
+
+Los análisis largos corren en el servidor: **puedes bloquear el celular** y al volver el resultado está ahí. Si activas las notificaciones push, te avisa al terminar.
+
+## Instalación (Windows)
+
+Requisitos: **Python 3.12+** y, para el celular, **[Tailscale](https://tailscale.com/download)** en el PC y en el teléfono.
+
+```powershell
+git clone https://github.com/ahiram1701/Oraqlo.git
+cd Oraqlo
+powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1
 ```
-Fuentes → Ingesta → World Model → Forecaster ⇄ Simulador → Planificador → Panel LLM → Recomendación
-                        ↑                                        │
-                        └──────── Memoria + Calibración ◀────────┘  (predicción vs resultado)
-```
 
-- **World Model** — estado estructurado del dominio, versionado en el tiempo.
-- **Forecaster** — distribuciones sobre futuros (ML + Bayes + razonamiento LLM).
-- **Simulador** — Monte Carlo, búsqueda en árbol, modelo del adversario.
-- **Planificador** — utilidad esperada ajustada a riesgo, multi-criterio.
-- **Memoria + Calibración** — Brier/log-loss por fuente; el bucle de aprendizaje.
-- **Panel LLM** — debate interno: Estratega ▸ Red Team ▸ Oráculo ▸ Juez.
+El instalador hace lo siguiente:
 
-Ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) para el diseño completo.
+1. Descarga la última release y verifica su SHA256.
+2. La instala en `%LOCALAPPDATA%\Oraqlo`.
+3. Registra la tarea programada **Oraqlo**, que arranca al iniciar sesión.
+4. Publica la app en tu tailnet con `tailscale serve`.
+5. Al terminar, te muestra la URL `https://<tu-pc>.<tu-tailnet>.ts.net`.
 
-## LLMs vía Ollama (local + cloud)
+Ábrela en el celular y elige **"Añadir a pantalla de inicio"**.
 
-Una sola implementación (`OllamaProvider`) habla el mismo protocolo contra dos backends:
+- ¿Vienes de la versión TUI? Añade `-ImportFrom C:\ruta\con\oraqlo_ledger.json` para conservar tu historial de calibración y tus objetivos.
+- `-Uninstall` quita la tarea y la publicación. Tus datos se conservan.
 
-- **Local:** `http://localhost:11434`, sin credenciales.
-- **Cloud (Ollama Turbo):** `https://ollama.com` + API key en la variable de entorno
-  `OLLAMA_API_KEY` (nunca hardcodeada).
+### Actualizaciones automáticas
 
-Cada rol del panel se mapea a un modelo y backend vía [config/roles.example.yaml](config/roles.example.yaml)
-— se pueden mezclar (p. ej. Juez en cloud, Red Team en local).
+Oraqlo comprueba las releases cada 6 h. Cuando hay una versión nueva, la instala él solo:
 
-## Requisitos e instalación
+1. Verifica el hash y la procedencia del paquete.
+2. Prueba la versión nueva sobre una copia de tu base de datos.
+3. Hace un backup de la base real.
+4. Espera a que no haya ningún análisis en curso y la activa.
 
-- **Python ≥ 3.12**.
-- **Ollama** para la inferencia: [local](https://ollama.com) (gratis, offline) o cloud
-  (Ollama Turbo). Para cloud, exporta tu clave: `OLLAMA_API_KEY`.
-- El **núcleo no tiene dependencias** (solo librería estándar). Los extras son opcionales:
+Si la versión nueva no arranca, **vuelve sola a la anterior** y te avisa.
+
+Configúralo con `[updates] mode = "auto" | "notify" | "off"`. A mano: `oraqlo update --apply` y `oraqlo rollback`.
+
+## Configuración
+
+`oraqlo config` te dice dónde está todo. Copia [config/oraqlo.example.toml](config/oraqlo.example.toml) a esa ruta como `oraqlo.toml`.
+
+Cada rol del panel (estratega, red_team, oraculo, juez, investigador, redactor, practica) puede usar **un proveedor y un modelo distinto**:
+
+| Proveedor | Clave (variable de entorno) |
+|---|---|
+| `anthropic` (Claude; por defecto `claude-opus-5-5`, con `effort` por rol) | `ANTHROPIC_API_KEY` |
+| `ollama-local` / `ollama-cloud` | — / `OLLAMA_API_KEY` |
+| `openai`, `gemini`, `openrouter`, `groq`, `deepseek`, `mistral`, `xai` | `OPENAI_API_KEY`, `GEMINI_API_KEY`, … |
+| `lmstudio` o cualquier API compatible con OpenAI (`[providers.x]`) | la que definas |
+
+Sin configuración, Oraqlo elige el proveedor según las claves que encuentre: Anthropic, luego Ollama cloud, luego Ollama local.
+
+Las claves **solo** se leen del entorno o del archivo `.env` del directorio de datos. Nunca van en el TOML ni salen por la API.
+
+La investigación web usa la API de búsqueda de Ollama (`OLLAMA_API_KEY`). Sin esa clave, Oraqlo avisa y sigue sin investigar.
+
+`oraqlo doctor` comprueba la configuración, la base de datos, las claves y que los proveedores respondan.
+
+## Seguridad y privacidad
+
+- El servidor escucha **solo en `127.0.0.1`**. Desde fuera solo se llega por `tailscale serve`, que autentica cada dispositivo de tu tailnet. Puedes restringir aún más con `server.allowed_users`.
+- Se rechaza el tráfico que llega por un proxy sin identidad de Tailscale, incluido Tailscale Funnel (internet público).
+- Tus datos (base SQLite, informes y backups diarios) viven en `%LOCALAPPDATA%\Oraqlo` y nunca entran al repositorio.
+
+## Desarrollo
 
 ```bash
-git clone https://github.com/ahiram1701/Oraqlo.git && cd Oraqlo
-pip install uv          # gestor de entorno (una vez)
-uv sync --all-extras    # crea .venv con Oraqlo + TUI + herramientas de desarrollo
-uv run oraqlo --help    # CLI: version | tui | practice
+pip install uv
+uv sync --all-extras                  # entorno Python
+uv run oraqlo serve                   # API + app compilada en http://127.0.0.1:8765
+cd web && npm install && npm run dev  # frontend con recarga en caliente (proxy a la API)
+uv run pytest -q                      # tests Python (offline)
+cd web && npm test                    # tests del frontend
 ```
 
-Ver [CONTRIBUTING.md](CONTRIBUTING.md) para la forma de trabajo (ramas, PRs, CI, releases).
+`Oraqlo.bat` arranca el servidor desde el checkout y abre el navegador. Un checkout de desarrollo **nunca se auto-actualiza**.
 
-## Quickstart
-
-```bash
-uv run python examples/hello_oracle.py --backend local            # necesita Ollama corriendo
-OLLAMA_API_KEY=... uv run python examples/hello_oracle.py --backend cloud --model gpt-oss:120b-cloud
-
-# bucle de aprendizaje completo: predecir → registrar → resolver → Brier
-uv run python examples/learning_loop.py --backend cloud
-
-# debate del panel: Estratega ▸ Red Team ▸ Oráculo ▸ Juez con LLMs reales
-uv run python examples/panel_debate.py --backend cloud
-
-# ciclo OODA completo: observar → prever → simular → planificar → deliberar
-uv run python examples/full_cycle.py --backend cloud
-```
-
-## TUI (interfaz de terminal)
-
-```bash
-uv run oraqlo tui                        # abre con la plantilla de caso
-uv run oraqlo tui cases/cafeterias.json  # abre con un caso concreto
-```
-
-Seis pestañas:
-
-- **Preguntar** — el camino corto: **escribe tu pregunta y pulsa Enter** (previsión
-  rápida, 1 llamada LLM) o "Análisis completo" (el LLM redacta el caso entero —
-  acciones candidatas, escenarios, utilidades — y ejecuta el ciclo con panel).
-  El caso redactado queda cargado en la pestaña Caso por si quieres afinarlo.
-  Y **"Lograr objetivo"**: escribe lo que quieres conseguir y Oraqlo hace
-  backcasting — estima P(objetivo) si no cambias nada, separa **qué puedes
-  hacer** (palancas con impacto/esfuerzo) de **qué tiene que pasar** (condiciones
-  externas con probabilidad), diseña **qué tienes que hacer** (plan con pasos e
-  hitos fechados), lo somete al Red Team (y lo re-diseña si el Juez lo pide), y
-  mide el **uplift**: P(objetivo | plan) − P(statu quo). Ambas predicciones
-  quedan en el ledger — al vencer, resuélvelas y Oraqlo aprende si sus planes
-  de verdad mueven la probabilidad. Si el uplift sale ≤ 0, lo dice tal cual.
-  Con **"Investigar en internet"** (activado por defecto), Oraqlo primero busca
-  en la web (API de búsqueda de Ollama, misma `OLLAMA_API_KEY`): un rol
-  investigador genera las consultas **sabiendo la fecha de hoy**, y tras cada
-  ronda **reflexiona** — si falta un dato concreto busca más, si una fuente
-  merece leerse completa la lee a fondo (solo URLs surgidas de la búsqueda),
-  y si ya basta sintetiza (máx. 3 rondas). Los hechos, con su URL, entran al
-  world model y al contexto del panel — las probabilidades se apoyan en datos
-  actuales, no solo en la memoria del modelo. Sin API key o si la búsqueda
-  falla, avisa y continúa sin investigación.
-- **Caso** — formulario guiado (pregunta, acciones con sus resultados/probabilidades/
-  utilidades, perfil de riesgo) con **validación en vivo** (Σp por acción en
-  verde/rojo). "Modo JSON" conmuta al editor avanzado, sincronizado en ambos
-  sentidos. `cases/cafeterias.json` es un ejemplo completo.
-- **Ejecutar** — backend (cloud/local) y **selector de modelos** ("↻ Modelos"
-  consulta los disponibles de verdad). "Solo previsión" (1 llamada LLM) o "Ciclo
-  completo". **Debate del panel en vivo rol a rol**, botones deshabilitados e
-  indicador mientras corre, duración por fase, y **"Exportar informe"** que
-  escribe el rastro completo (previsión, ranking, debate, veredicto) a
-  `informes/<fecha>-<caso>.md`.
-- **Ledger** — predicciones abiertas **persistidas en `oraqlo_ledger.json`**:
-  selecciona una y sus **escenarios aparecen como opciones** (más "otro
-  resultado…" libre) — resolver ya no exige teclear el texto exacto. El Brier
-  alimenta la fiabilidad por fuente entre sesiones. También puedes **Eliminar**
-  una abierta (se descarta sin puntuar, no afecta a la calibración) y, en la
-  tabla de **Resueltas**, eliminar entradas del historial — con confirmación,
-  porque borra datos de calibración y la fiabilidad se recalcula sin ellas.
-- **Objetivos** — **seguimiento para lograr lo planeado**. Cada "Lograr objetivo"
-  queda en seguimiento automático (persistido en `oraqlo_goals.json`): hitos con
-  fecha y estado (pendiente/cumplido/fallado, con aviso de vencidos al abrir la
-  TUI), **check-ins** ("semana 1: 3 entrenamientos, 28 km") que re-estiman
-  P(objetivo) — la **trayectoria de P en el tiempo** es tu señal de progreso —,
-  **re-planificación** cuando un hito falla o la trayectoria cae (conserva lo
-  cumplido, corrige lo demás, versiona el plan), **cierre** logrado/no logrado
-  que resuelve las dos predicciones originales del ledger (Oraqlo aprende si sus
-  planes funcionan de verdad), y **eliminar** un objetivo por completo (con
-  confirmación): sus predicciones abiertas se descartan sin puntuar y las ya
-  resueltas se conservan.
-- **Práctica** — **auto-mejora autónoma con Polymarket** (solo lectura: cero
-  cuentas, cero apuestas). Oraqlo elige mercados reales que cierran pronto,
-  predice sin ver el precio, registra también el precio del mercado como
-  benchmark (`polymarket:mercado`), y cuando cada mercado se resuelve cierra
-  ambas predicciones solo y compara Brier: ¿va mejor o peor que la multitud?
-  Del historial resuelto deriva un **consejo de calibración** ("sobreconfías:
-  reparte más la probabilidad") que se inyecta a las siguientes predicciones —
-  el mecanismo concreto de auto-mejora. El Switch "Autónoma" repite pasadas
-  cada N minutos mientras la TUI esté abierta (apagado por defecto: cuesta
-  llamadas LLM). **El estado del switch y el intervalo persisten** en
-  `oraqlo_settings.json`: si lo dejas activado, la próxima vez que abras la TUI
-  se reanuda solo (armando el temporizador, sin pasada inmediata — abrir la
-  app no cuesta llamadas); si lo apagas, arranca apagado.
-
-  Sin TUI (headless / programable):
-
-  ```bash
-  uv run oraqlo practice --markets 2              # una pasada
-  uv run oraqlo practice --loop --interval-min 60 # bucle continuo
-  ```
-
-  (En la versión web, la autopráctica correrá como tarea programada del servidor.)
-
-## Estado
-
-**Todo el bucle OODA es funcional de punta a punta** (`examples/full_cycle.py`):
-
-- `llm/ollama.py` — proveedor local + cloud (Turbo) con errores accionables.
-- `forecaster/llm.py` — LLMForecaster con JSON validado, normalización y reintento
-  con feedback.
-- `memory/calibration.py` — Brier binario/multiclase, log-loss, `CalibrationLedger`
-  completo (`resolve`/`reliability`).
-- `panel.py` — `SequentialPanel`: debate adversarial de 4 roles con transcript trazable.
-- `world_model.py` — estados versionados e inmutables, `apply`/`at` (rebobinado).
-- `simulator/` — `MonteCarloEngine` (rollouts reproducibles), `TreeSearchEngine`
-  (expectimax exacto con continuación óptima), `SoftmaxAdversary` (oponente
-  racional-con-ruido).
-- `strategy/planner.py` — `ExpectedUtilityPlanner`: EU + CVaR, descarte por riesgo
-  de ruina (se niega a recomendar si todo es ruina), restricciones como supuestos.
-- `agent.py` — `OraqloAgent.cycle()`: el ciclo completo, con redeliberación ante
-  "revisar" (objeciones inyectadas al contexto) y fallback a la siguiente candidata
-  ante "descartar".
-
-**Pendiente para producción:** QuantForecaster (series temporales/Bayes),
-EnsembleForecaster ponderado por `reliability()`, MCTS con presupuesto para árboles
-grandes, e integración del `AdversaryModel` dentro de los motores de simulación.
-
-## Tests
-
-```bash
-uv run pytest -q
-```
-
-La suite (79 tests) corre **100% offline**: las llamadas a LLM, la búsqueda web y
-Polymarket están simuladas con dobles de test, así que no necesita red ni
-`OLLAMA_API_KEY`. En cada PR, el CI (GitHub Actions) ejecuta lint, tipos y tests en
-Ubuntu y Windows con Python 3.12 y 3.13.
-
-## Privacidad
-
-Tu estado vive en archivos JSON locales (`oraqlo_ledger.json`, `oraqlo_goals.json`,
-`oraqlo_settings.json`) y los informes en `informes/`. El `.gitignore` los excluye para
-que **tus datos personales nunca se suban** al repositorio. La `OLLAMA_API_KEY` se lee de
-la variable de entorno y jamás se guarda en disco ni en el código.
+La forma de trabajo (ramas, PRs, Conventional Commits, CI, releases y auto-merge) está en [CONTRIBUTING.md](CONTRIBUTING.md). La arquitectura está en [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Licencia
 
-© 2026 Alberto H. Saucedo G. Proyecto **sin licencia de código abierto**: todos los
-derechos reservados. Contacta al autor para permisos de uso.
+© 2026 Alberto H. Saucedo G. Proyecto **sin licencia de código abierto**: todos los derechos reservados. Contacta al autor para permisos de uso.
