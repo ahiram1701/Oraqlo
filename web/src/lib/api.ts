@@ -75,10 +75,43 @@ export interface Goal {
   overdue: number[];
 }
 
+export interface ScoreStats {
+  n: number;
+  /** Brier medio (multiclase, 0 = perfecto). */
+  brier: number | null;
+  /** Brier de repartir por igual entre los escenarios de cada pregunta. */
+  chance: number | null;
+  /** 1 − brier/chance: 0 = como el azar, 1 = perfecto, negativo = peor que el azar. */
+  skill: number | null;
+}
+
 export interface Calibration {
   n: number;
-  sources: { source: string; n: number; brier: number }[];
-  reliability: { bin: number; p_mid: number; n: number; observed: number | null }[];
+  filters?: { kinds: ForecastKind[]; models: string[] };
+  summary?: ScoreStats & {
+    log_loss: number | null;
+    hit_rate: number | null;
+    confidence: number | null;
+    overconfidence: number | null;
+    open: number;
+  };
+  /** Un punto por previsión: confianza en lo más probable frente a cuántas veces acertó. */
+  reliability: { bin: number; p_mid: number; confidence: number | null; n: number; observed: number | null }[];
+  trend?: (ScoreStats & { month: string })[];
+  by_kind?: (ScoreStats & { kind: ForecastKind })[];
+  by_horizon?: (ScoreStats & { horizon: string; label: string })[];
+  sources: (ScoreStats & { source: string })[];
+  worst?: {
+    id: string;
+    question: string;
+    source: string;
+    predicted: string;
+    predicted_p: number;
+    actual: string;
+    actual_p: number;
+    brier: number;
+    resolved_at: string;
+  }[];
   /** Corrección aprendida por modelo: p' ∝ p^a (a < 1 suaviza, a > 1 concentra). */
   recalibration?: {
     model: string;

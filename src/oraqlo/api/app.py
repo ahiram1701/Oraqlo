@@ -1007,8 +1007,12 @@ def create_app(
             raise HTTPException(404, _message(e)) from e
 
     @app.get("/api/calibration")
-    def calibration() -> dict:
-        return service.calibration()
+    def calibration(
+        kind: Literal["prevision", "objetivo", "panel", "practica"] | None = None,
+        model: str | None = None,
+        days: int | None = Query(None, ge=1, le=36500),
+    ) -> dict:
+        return service.calibration(kind=kind, model=model or None, days=days)
 
     # ── objetivos ─────────────────────────────────────────────────────────
 
