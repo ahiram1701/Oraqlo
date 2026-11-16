@@ -1,8 +1,9 @@
 /// <reference lib="webworker" />
-// Service worker de Oraqlo: abre la app al instante (precaché) y recibe avisos push.
+// Service worker de Oraqlo: abre la app (del servidor, o de la copia si no hay red) y recibe avisos push.
 import { clientsClaim } from "workbox-core";
 import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from "workbox-precaching";
 import { NavigationRoute, registerRoute } from "workbox-routing";
+import { networkFirst } from "./lib/navigationStrategy";
 import { checkOrigin } from "./lib/swGuard";
 
 declare const self: ServiceWorkerGlobalScope;
@@ -33,14 +34,18 @@ function verifyOrigin(): Promise<void> {
   return checking;
 }
 
-// Navegación SPA: cualquier ruta que no sea de la API sirve index.html cacheado
-// (abre al instante) y, en paralelo, comprueba que en esta dirección siga Oraqlo.
+// Navegación SPA: cualquier ruta que no sea de la API pide index.html al servidor
+// (así su versión siempre coincide) y, sin red, sirve la copia del precache. En
+// paralelo comprueba que en esta dirección siga Oraqlo.
 const shell = createHandlerBoundToURL("/index.html");
 registerRoute(
   new NavigationRoute(
     (options) => {
       options.event?.waitUntil(verifyOrigin());
-      return shell(options);
+      return networkFirst(
+        () => fetch(options.request, { cache: "no-store" }),
+        () => shell(options),
+      );
     },
     { denylist: [/^\/api\//] },
   ),
