@@ -112,9 +112,18 @@ def _normal_priority() -> None:
     if os.name != "nt":
         return
     import ctypes
+    from ctypes import wintypes
 
-    kernel32 = ctypes.windll.kernel32  # pyright: ignore[reportAttributeAccessIssue]
-    kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), 0x20)  # NORMAL_PRIORITY_CLASS
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    # Tipos explícitos: sin ellos, el pseudo-handle de GetCurrentProcess (-1) se
+    # pasa como int de 32 bits y la llamada falla en silencio (pasó en la 0.5.6).
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.SetPriorityClass.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.SetPriorityClass.restype = wintypes.BOOL
+    if not kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), 0x20):  # NORMAL
+        logging.getLogger("oraqlo").warning(
+            "No pude subir la prioridad del servidor (error %d)", ctypes.get_last_error()
+        )
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
