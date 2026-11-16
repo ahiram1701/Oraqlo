@@ -1,6 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
-import { useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { HorizonPicker, daysUntil, fromDays, horizonDays, isoInDays, type Horizon } from "../components/HorizonPicker";
 import { Icon } from "../components/icons";
 import { JobTimeline } from "../components/JobView";
 import { ResultCard, resultText } from "../components/ResultCard";
@@ -20,8 +21,8 @@ const MODES: { id: AskMode; title: string; hint: string }[] = [
   { id: "goal", title: "Lograr objetivo", hint: "Un plan con hitos y cuánto sube tu probabilidad de lograrlo. Luego lo sigues en Objetivos." },
 ];
 
-const HORIZONS = [7, 30, 90, 180, 365];
 const LAST_KEY = "oraqlo.ask.last";
+const HORIZON_KEY = "oraqlo.ask.horizon";
 
 interface LastAsk {
   question: string;
@@ -38,23 +39,30 @@ function loadLast(): LastAsk | null {
   }
 }
 
-function isoInDays(days: number) {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-function daysUntil(iso: string) {
-  const ms = new Date(`${iso}T23:59:59`).getTime() - Date.now();
-  return Math.min(3650, Math.max(1, Math.ceil(ms / 86_400_000)));
+/** El último plazo elegido: el usuario suele pensar siempre a un horizonte parecido. */
+function loadHorizon(): Horizon {
+  try {
+    const saved = JSON.parse(localStorage.getItem(HORIZON_KEY) ?? "null");
+    if (saved && (saved.preset === null || typeof saved.preset === "number")) return saved as Horizon;
+  } catch {
+    /* sin almacenamiento */
+  }
+  return fromDays(90);
 }
 
 export default function Ask() {
-  // "Repetir pregunta" desde el Historial llega con la pregunta y el modo.
-  const incoming = (useLocation().state ?? {}) as { question?: string; mode?: AskMode };
+  // "Repetir pregunta" desde el Historial llega con la pregunta, el modo y el plazo.
+  const incoming = (useLocation().state ?? {}) as { question?: string; mode?: AskMode; horizon?: number };
   const [question, setQuestion] = useState(incoming.question ?? "");
   const [mode, setMode] = useState<AskMode>(incoming.mode ?? "forecast");
-  const [horizon, setHorizon] = useState(90);
+  const [horizon, setHorizon] = useState<Horizon>(() => (incoming.horizon ? fromDays(incoming.horizon) : loadHorizon()));
+  useEffect(() => {
+    try {
+      localStorage.setItem(HORIZON_KEY, JSON.stringify(horizon));
+    } catch {
+      /* sin almacenamiento */
+    }
+  }, [horizon]);
   const [deadline, setDeadline] = useState(isoInDays(90));
   const [research, setResearch] = useState(true);
   const { webSearch } = useWebSearch();
@@ -80,7 +88,7 @@ export default function Ask() {
   });
   const busy =
     submit.isPending || job.status === "running" || job.status === "connecting" || job.status === "queued";
-  const days = mode === "goal" ? daysUntil(deadline) : horizon;
+  const days = mode === "goal" ? daysUntil(deadline) : horizonDays(horizon);
 
   function send(params?: LastAsk) {
     const p = params ?? { question: question.trim(), mode, horizon: days, research };
@@ -220,16 +228,7 @@ export default function Ask() {
                 />
               </label>
             ) : (
-              <label className="flex items-center gap-2 text-sm whitespace-nowrap text-muted">
-                Pensando a
-                <select className={cx(inputClass, "w-auto py-2")} value={horizon} onChange={(e) => setHorizon(Number(e.target.value))}>
-                  {HORIZONS.map((d) => (
-                    <option key={d} value={d}>
-                      {d === 7 ? "1 semana" : d === 30 ? "1 mes" : d === 90 ? "3 meses" : d === 180 ? "6 meses" : "1 año"}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <HorizonPicker value={horizon} onChange={setHorizon} />
             )}
             <Toggle checked={research} onChange={setResearch} label="Investigar en internet" />
           </div>
