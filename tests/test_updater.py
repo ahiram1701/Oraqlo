@@ -424,3 +424,13 @@ def test_instalacion_que_tarda_demasiado_es_un_error_visible(tmp_path, monkeypat
     with pytest.raises(UpdateError, match="tardó más de 900 s"):
         up.install_version(layout, "9.9.9", wheel)
     assert not layout.venv("9.9.9").exists()  # nada a medias
+
+
+def test_attestation_que_no_responde_cuenta_como_no_comprobable(monkeypatch):
+    monkeypatch.setattr(up.shutil, "which", lambda name: "gh")
+
+    def hang(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, 120)
+
+    monkeypatch.setattr(up.subprocess, "run", hang)
+    assert up.verify_attestation(Path("x.whl"), "ahiram1701/Oraqlo") is None
