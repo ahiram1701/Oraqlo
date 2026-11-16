@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 
 from oraqlo import __version__
@@ -105,12 +106,24 @@ def _cmd_import_legacy(args: argparse.Namespace) -> int:
     return 0
 
 
+def _normal_priority() -> None:
+    """La tarea programada arranca todo en prioridad baja (CPU y disco). Un servidor
+    lanzado por un lanzador antiguo la hereda: se sube a normal al arrancar."""
+    if os.name != "nt":
+        return
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32  # pyright: ignore[reportAttributeAccessIssue]
+    kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), 0x20)  # NORMAL_PRIORITY_CLASS
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
     from oraqlo.api.app import create_app
     from oraqlo.config import load_config
 
+    _normal_priority()
     config = load_config()
     host = args.host or config.server.host
     port = args.port or config.server.port
