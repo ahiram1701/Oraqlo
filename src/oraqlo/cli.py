@@ -135,6 +135,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         uvicorn.Config(app, host=host, port=port, log_level="info", proxy_headers=False)
     )
     app.state.server = server  # el updater lo usa para pedir un reinicio limpio
+    app.state.port = port  # para /api/server y para sincronizar tailscale serve
     server.run()
     if app.state.restart_requested:
         print("Reiniciando para activar la versión nueva…")

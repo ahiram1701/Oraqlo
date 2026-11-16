@@ -7,7 +7,7 @@ Motor de estrategia bajo incertidumbre, servido como app web local y accesible d
 ```
 Celular / PC (PWA React)                           este PC Windows
    │  HTTPS (identidad Tailscale)                ┌──────────────────────────────────────┐
-   └──► tailscale serve ──► 127.0.0.1:8765 ────► │ FastAPI  (api/)                      │
+   └──► tailscale serve ──► 127.0.0.1:<port> ──► │ FastAPI  (api/)                      │
                                                  │   auth Tailscale · REST · SSE        │
                                                  │ Servicios (services/)                │
                                                  │   OraqloService · JobRunner ·        │

@@ -60,8 +60,10 @@ def env(tmp_path, monkeypatch):
     fake = RoleAwareFake()
     monkeypatch.setattr(service.registry, "get", lambda name, effort=None: fake)
     from oraqlo.api.app import create_app
+    from oraqlo.services.network import TailscaleServe
 
-    app = create_app(service, background=False)
+    # Sin Tailscale real: los tests no tocan la configuración del equipo.
+    app = create_app(service, background=False, tailscale=TailscaleServe(exe=""))
     with TestClient(app) as client:
         yield client, service, app, fake
 
@@ -448,3 +450,70 @@ def test_instalacion_gestionada_activa_cuando_no_hay_trabajos(tmp_path, monkeypa
         assert activated == ["9.9.9"] and app.state.restart_requested
         assert service.store.settings.get("update.pending_notice") == "9.9.9"
         assert service.store.settings.get("update.staged") is None
+
+
+# ── puerto y tailnet ─────────────────────────────────────────────────────
+
+
+def _managed_app(tmp_path, monkeypatch, ts):
+    import oraqlo.api.app as app_module
+
+    config = load_config(tmp_path / "none.toml", home=tmp_path)
+    config.updates.mode = "off"
+    service = OraqloService(config, Store(tmp_path / "o.db"))
+    monkeypatch.setattr(app_module, "is_managed", lambda layout: True)
+    app = app_module.create_app(service, background=False, tailscale=ts)
+    app.state.port = 8765
+    return app
+
+
+def test_server_info_y_cambio_de_puerto(tmp_path, monkeypatch):
+    import oraqlo.api.app as app_module
+    from test_network import fake_tailscale
+
+    ts, _calls = fake_tailscale()
+    app = _managed_app(tmp_path, monkeypatch, ts)
+    (tmp_path / "app").mkdir(exist_ok=True)
+    (tmp_path / "app" / "tailscale.txt").write_text("on", encoding="utf-8")
+    with TestClient(app) as client:
+        info = client.get("/api/server").json()
+        assert info["port"] == 8765 and info["managed"] is True
+        assert info["tailscale"] == {
+            "installed": True,
+            "enabled": True,
+            "url": "https://pc.tail1.ts.net",
+            "serving_port": 8765,
+        }
+        assert client.put("/api/server/port", json={"port": 80}).status_code == 422
+        same = client.put("/api/server/port", json={"port": 8765}).json()
+        assert same["restarting"] is False
+
+        monkeypatch.setattr(app_module, "port_in_use", lambda port: port == 8766)
+        busy = client.put("/api/server/port", json={"port": 8766})
+        assert busy.status_code == 409 and "otra aplicación" in busy.json()["detail"]
+
+        ok = client.put("/api/server/port", json={"port": 8770}).json()
+        assert ok["restarting"] is True and ok["local_url"] == "http://127.0.0.1:8770"
+        assert (tmp_path / "app" / "port.txt").read_text() == "8770"
+        assert app.state.restart_requested is True
+
+
+def test_al_arrancar_tailscale_sigue_al_puerto_real(tmp_path, monkeypatch):
+    from test_network import fake_tailscale
+
+    ts, calls = fake_tailscale()  # publica 8765
+    app = _managed_app(tmp_path, monkeypatch, ts)
+    app.state.port = 8767  # el lanzador saltó de puerto
+    (tmp_path / "app").mkdir(exist_ok=True)
+    (tmp_path / "app" / "tailscale.txt").write_text("on", encoding="utf-8")
+    with TestClient(app):
+        deadline = time.monotonic() + 5
+        while ["serve", "--bg", "8767"] not in calls and time.monotonic() < deadline:
+            time.sleep(0.05)
+    assert ["serve", "--bg", "8767"] in calls
+
+
+def test_cambiar_puerto_en_copia_no_gestionada(env):
+    client, *_ = env
+    r = client.put("/api/server/port", json={"port": 8770})
+    assert r.status_code == 409 and "oraqlo serve --port" in r.json()["detail"]

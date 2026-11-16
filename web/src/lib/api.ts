@@ -106,12 +106,27 @@ export interface ProvidersView {
 }
 
 export interface Health {
+  app?: string;
   status: string;
   version: string;
   db_version: number;
   uptime_s: number;
   active_jobs: number;
   update?: { available: string | null; mode: string; last_check: string | null } | null;
+}
+
+export interface ServerInfo {
+  port: number | null;
+  local_url: string | null;
+  managed: boolean;
+  tailscale: { installed: boolean; enabled: boolean; url: string | null; serving_port: number | null };
+}
+
+export interface PortChangeResult {
+  port: number;
+  restarting: boolean;
+  local_url?: string;
+  detail: string;
 }
 
 export class ApiError extends Error {

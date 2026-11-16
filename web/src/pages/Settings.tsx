@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
+import ConnectionCard from "../components/ConnectionCard";
 import { Badge, Button, Card, ErrorNote, SectionTitle } from "../components/ui";
 import { api, type Health, type ProvidersView } from "../lib/api";
 import { pushSupported, subscribePush, unsubscribePush } from "../lib/push";
@@ -46,6 +47,8 @@ export default function Settings() {
         {update.data && <p className="mt-2 text-sm text-muted">{update.data.detail}</p>}
         <ErrorNote error={update.error} />
       </Card>
+
+      <ConnectionCard />
 
       <Card>
         <SectionTitle>Notificaciones</SectionTitle>

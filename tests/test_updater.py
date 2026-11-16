@@ -224,7 +224,12 @@ def _launcher(tmp_path, exit_codes: list[int], healthy_versions: set[str]):
         return started[-1] in healthy_versions
 
     launcher = Launcher(
-        tmp_path, spawn=spawn, healthy=healthy, sleep=lambda s: None, health_timeout_s=3
+        tmp_path,
+        spawn=spawn,
+        healthy=healthy,
+        sleep=lambda s: None,
+        health_timeout_s=3,
+        busy=lambda port: False,
     )
     return launcher, layout, started
 
@@ -304,3 +309,29 @@ def test_launcher_only_trusts_oraqlo_health():
     assert not is_oraqlo_health(b'{"status": "ok", "version": "0.7.0"}')
     assert not is_oraqlo_health(b"<html>")
     assert not is_oraqlo_health(b"[]")
+
+
+def test_lanzador_salta_al_siguiente_puerto_si_otra_app_lo_ocupa(tmp_path):
+    (tmp_path / "app").mkdir()
+    taken = {8765, 8766}
+    launcher = Launcher(tmp_path, port=8765, sleep=lambda s: None, busy=lambda p: p in taken)
+    assert launcher.resolve_port() == 8767
+    assert (tmp_path / "app" / "port.txt").read_text() == "8767"
+    assert "8765 lo usa otra aplicación; uso 8767" in (tmp_path / "app" / "update.log").read_text(
+        encoding="utf-8"
+    )
+    assert launcher.command("0.2.0")[-1] == "8767"
+
+
+def test_lanzador_respeta_port_txt_y_espera_si_se_libera(tmp_path):
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "port.txt").write_text("﻿9000", encoding="utf-8")
+    checks: list[int] = []
+
+    def busy(port):  # ocupado la primera vez (el proceso anterior aún lo suelta)
+        checks.append(port)
+        return len(checks) == 1
+
+    launcher = Launcher(tmp_path, port=8765, sleep=lambda s: None, busy=busy)
+    assert launcher.resolve_port() == 9000
+    assert checks == [9000, 9000]
