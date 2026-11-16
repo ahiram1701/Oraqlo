@@ -79,6 +79,31 @@ export interface Calibration {
   n: number;
   sources: { source: string; n: number; brier: number }[];
   reliability: { bin: number; p_mid: number; n: number; observed: number | null }[];
+  /** Corrección aprendida por modelo: p' ∝ p^a (a < 1 suaviza, a > 1 concentra). */
+  recalibration?: {
+    model: string;
+    a: number;
+    n: number;
+    active: boolean;
+    min_resolved: number;
+    brier_before: number | null;
+    brier_after: number | null;
+    summary: string;
+  }[];
+}
+
+/** Nombre legible de una fuente del ledger (`llm:<modelo>[:tipo]`, `polymarket:mercado`…). */
+export function sourceLabel(source: string): string {
+  if (source === "polymarket:mercado") return "Mercado de Polymarket (referencia)";
+  if (!source.startsWith("llm:")) return source;
+  const rest = source.slice(4);
+  for (const [suffix, label] of [
+    [":prevision", "previsiones"],
+    [":objetivo", "objetivos"],
+  ] as const) {
+    if (rest.endsWith(suffix)) return `${rest.slice(0, -suffix.length)} · ${label}`;
+  }
+  return `${rest} · práctica`;
 }
 
 export interface PracticeState {

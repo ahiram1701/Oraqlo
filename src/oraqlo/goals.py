@@ -18,10 +18,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
+from oraqlo.forecaster.aggregate import clamp, clamp_probability
 from oraqlo.forecaster.base import Distribution, Forecast
 from oraqlo.llm.base import LLMProvider
 from oraqlo.llm.jsonchat import JsonChatError, chat_json
 from oraqlo.memory.calibration import CalibrationLedger
+from oraqlo.memory.recalibration import Recalibration, llm_source
 from oraqlo.panel import DecisionPanel, Verdict
 from oraqlo.research import ResearchBrief
 from oraqlo.simulator.base import Action
@@ -34,8 +36,11 @@ OUTCOME_NOT_ACHIEVED = "no se logra"
 _BASELINE_PROMPT = (
     "Eres el Oráculo de Oraqlo: probabilidades calibradas, nunca certezas. "
     "Estima la probabilidad de que el objetivo se logre en el horizonte dado "
-    "SI EL USUARIO NO CAMBIA NADA de lo que hace hoy (statu quo). Responde SOLO "
-    'con JSON: {"p_logro": <prob en [0,1]>, "assumptions": ["<supuesto>", ...], '
+    "SI EL USUARIO NO CAMBIA NADA de lo que hace hoy (statu quo). Empieza por la "
+    "tasa base (con qué frecuencia logran algo así personas en una situación parecida) "
+    "y ajústala con lo específico; evita 0 y 1. Responde SOLO "
+    'con JSON: {"base_rate": "<clase de referencia y con qué frecuencia se logra>", '
+    '"p_logro": <prob en [0,1]>, "assumptions": ["<supuesto>", ...], '
     '"rationale": "<una frase>"} — en el idioma del objetivo.'
 )
 
@@ -68,8 +73,10 @@ _CONDITIONAL_PROMPT = (
     "Eres el Oráculo de Oraqlo: probabilidades calibradas, nunca certezas. "
     "Estima la probabilidad de que el objetivo se logre en el horizonte dado "
     "SI EL USUARIO EJECUTA FIELMENTE el plan adjunto. No premies el plan por "
-    "existir: pondera su realismo y las objeciones del debate. Responde SOLO "
-    'con JSON: {"p_logro": <prob en [0,1]>, "assumptions": ["<supuesto>", ...], '
+    "existir: pondera su realismo y las objeciones del debate. Parte de la tasa base "
+    "de quienes ejecutan planes parecidos y evita 0 y 1. Responde SOLO "
+    'con JSON: {"base_rate": "<clase de referencia y con qué frecuencia se logra>", '
+    '"p_logro": <prob en [0,1]>, "assumptions": ["<supuesto>", ...], '
     '"rationale": "<una frase>"} — en el idioma del objetivo.'
 )
 
@@ -140,10 +147,20 @@ OnProgress = Callable[[str], None]
 class GoalStrategist:
     """Orquesta el pipeline de objetivo. Cada dependencia se inyecta."""
 
-    def __init__(self, provider: LLMProvider, model: str, max_retries: int = 1) -> None:
+    def __init__(
+        self,
+        provider: LLMProvider,
+        model: str,
+        max_retries: int = 1,
+        advice: str | None = None,
+        recalibration: Recalibration | None = None,
+    ) -> None:
         self.provider = provider
         self.model = model
         self.max_retries = max_retries
+        # Lo aprendido del historial resuelto (ver memory.recalibration).
+        self.advice = advice
+        self.recalibration = recalibration
 
     def _chat(self, system: str, user: str, temperature: float = 0.2) -> dict:
         try:
@@ -161,16 +178,25 @@ class GoalStrategist:
     def _binary_forecast(
         self, system: str, user: str, goal: str, horizon: timedelta, label: str
     ) -> Forecast:
+        if self.advice:
+            system += f"\n\nTu historial de calibración dice: {self.advice}"
         data = self._chat(system, user)
         try:
-            p = min(max(float(data["p_logro"]), 0.0), 1.0)
+            p = clamp_probability(float(data["p_logro"]))
         except (KeyError, TypeError, ValueError) as e:
             raise GoalError(f"El oráculo no devolvió 'p_logro' numérico: {e}") from e
         assumptions = [str(a) for a in data.get("assumptions", [])]
+        base_rate = str(data.get("base_rate") or "").strip()
+        if base_rate:
+            assumptions.append(f"Tasa base: {base_rate}")
         rationale = str(data.get("rationale", ""))
         if rationale:
             assumptions.append(f"Razonamiento: {rationale}")
-        distribution = Distribution(outcomes={OUTCOME_ACHIEVED: p, OUTCOME_NOT_ACHIEVED: 1.0 - p})
+        outcomes = {OUTCOME_ACHIEVED: p, OUTCOME_NOT_ACHIEVED: 1.0 - p}
+        if self.recalibration is not None and self.recalibration.active:
+            outcomes = clamp(self.recalibration.apply(outcomes))
+            assumptions.append(self.recalibration.note())
+        distribution = Distribution(outcomes=outcomes)
         distribution.validate()
         return Forecast(
             id=str(uuid.uuid4()),
@@ -178,7 +204,7 @@ class GoalStrategist:
             distribution=distribution,
             horizon=horizon,
             assumptions=assumptions,
-            source=f"llm:{self.model}",
+            source=llm_source(self.model, "objetivo"),
             created_at=datetime.now(UTC),
         )
 
@@ -234,7 +260,7 @@ class GoalStrategist:
         conditions = [
             ExternalCondition(
                 text=str(c.get("text", "")).strip(),
-                probability=min(max(float(c.get("probability", 0.5)), 0.0), 1.0),
+                probability=clamp_probability(float(c.get("probability", 0.5))),
             )
             for c in data.get("external_conditions", [])
             if isinstance(c, dict) and str(c.get("text", "")).strip()
@@ -315,9 +341,7 @@ class GoalStrategist:
         with_plan = self._binary_forecast(
             _CONDITIONAL_PROMPT,
             f"{base_ctx}\n\nPlan:\n{plan_text()}\n\n"
-            f"Objeciones del debate (pondéralas):\n{objections_txt}\n\n"
-            f"Referencia: P(objetivo | statu quo) se estimó en "
-            f"{baseline.distribution.outcomes[OUTCOME_ACHIEVED]:.0%}.",
+            f"Objeciones del debate (pondéralas):\n{objections_txt}",
             goal,
             horizon,
             "con plan",
