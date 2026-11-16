@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.6](https://github.com/ahiram1701/Oraqlo/compare/v0.5.5...v0.5.6) (2026-11-16)
+
+
+### Correcciones
+
+* servidor, pip y tarea en prioridad normal ([#37](https://github.com/ahiram1701/Oraqlo/issues/37)) ([2ac6390](https://github.com/ahiram1701/Oraqlo/commit/2ac6390c33cd7cd589d6b1a15b65872beb5beb85))
+
 ## [0.5.5](https://github.com/ahiram1701/Oraqlo/compare/v0.5.4...v0.5.5) (2026-11-16)
 
 
