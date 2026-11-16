@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/ahiram1701/Oraqlo/compare/v0.2.1...v0.2.2) (2026-11-16)
+
+
+### Correcciones
+
+* no anunciar como novedad la versión que ya está corriendo ([#19](https://github.com/ahiram1701/Oraqlo/issues/19)) ([45757fb](https://github.com/ahiram1701/Oraqlo/commit/45757fbce6884c402e5c30b220e595fb3c34e21e))
+
 ## [0.2.1](https://github.com/ahiram1701/Oraqlo/compare/v0.2.0...v0.2.1) (2026-11-16)
 
 
