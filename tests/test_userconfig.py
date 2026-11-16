@@ -243,3 +243,65 @@ def test_desde_la_tailnet_funciona_pero_no_reinicia_ni_hace_rollback(env):
     ]:
         r = client.request(method, url, json=body, headers=phone)
         assert r.status_code == 403, url
+
+
+# ── búsqueda web: su clave se puede poner con cualquier proveedor ─────────
+
+
+def test_clave_busqueda_web_con_ollama_local(env):
+    client, service, *_ = env
+    assert service.config.role("default").provider == "ollama-local"
+    view = client.get("/api/providers").json()
+    assert view["web_search"] == {
+        "api_key_env": "OLLAMA_API_KEY",
+        "key_present": False,
+        "key_hint": None,
+    }
+    r = client.put("/api/keys/OLLAMA_API_KEY", json={"value": "ollama-key-123456"})
+    assert r.status_code == 200, r.text
+    assert r.json()["web_search"]["key_present"] is True
+    assert r.json()["web_search"]["key_hint"] == "olla…3456"
+    assert client.delete("/api/keys/OLLAMA_API_KEY").json()["web_search"]["key_present"] is False
+
+
+def test_probar_busqueda_web(env, monkeypatch):
+    from oraqlo.llm.ollama import OllamaUnavailableError
+    from oraqlo.llm.websearch import OllamaWebClient
+
+    client, *_ = env
+    sin_clave = client.post("/api/websearch/test").json()
+    assert sin_clave["ok"] is False and sin_clave["optional"] is True
+    assert "Ajustes" in sin_clave["fix"]
+
+    monkeypatch.setenv("OLLAMA_API_KEY", "k")
+    monkeypatch.setattr(OllamaWebClient, "search", lambda self, q, max_results=5: [])
+    assert client.post("/api/websearch/test").json()["ok"] is True
+
+    def rechaza(self, q, max_results=5):
+        raise OllamaUnavailableError("Autenticación rechazada por la búsqueda web (HTTP 401)")
+
+    monkeypatch.setattr(OllamaWebClient, "search", rechaza)
+    mal = client.post("/api/websearch/test").json()
+    assert mal["ok"] is False and "401" in mal["detail"]
+
+
+def test_diagnostico_sin_clave_de_busqueda_no_es_un_fallo(env):
+    client, *_ = env
+    doctor = client.get("/api/doctor").json()
+    web = next(c for c in doctor["checks"] if c["name"] == "Investigación web")
+    assert web["ok"] is False and web["optional"] is True
+    assert doctor["ok"] is True  # opcional: avisa, pero no marca el diagnóstico
+
+
+def test_sin_clave_de_busqueda_el_job_avisa_con_codigo(env):
+    _, service, *_ = env
+    events: list[tuple[str, dict]] = []
+    assert service.research("¿Lloverá?", 7, emit=lambda t, d: events.append((t, d))) is None
+    assert (
+        "log",
+        {
+            "msg": "Sin clave de búsqueda web: continúo sin investigar en internet.",
+            "level": "warn",
+            "code": "no_websearch_key",
+        },
+    ) in events

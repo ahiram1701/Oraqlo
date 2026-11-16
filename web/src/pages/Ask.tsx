@@ -4,6 +4,7 @@ import { Link, useLocation } from "react-router-dom";
 import { Icon } from "../components/icons";
 import { JobTimeline } from "../components/JobView";
 import { ResultCard, resultText } from "../components/ResultCard";
+import { WEB_SEARCH_ANCHOR, useWebSearch } from "../components/WebSearchCard";
 import { Button, Card, ErrorNote, Notice, Toggle, cx, inputClass, useFeedback } from "../components/ui";
 import { ask, type AskMode } from "../lib/api";
 import { useSetup } from "../lib/setup";
@@ -56,6 +57,8 @@ export default function Ask() {
   const [horizon, setHorizon] = useState(90);
   const [deadline, setDeadline] = useState(isoInDays(90));
   const [research, setResearch] = useState(true);
+  const { webSearch } = useWebSearch();
+  const noSearchKey = research && webSearch?.key_present === false;
   const [jobId, setJobId] = useStoredJob("ask");
   const [last, setLast] = useState<LastAsk | null>(loadLast);
   const job = useJob(jobId, () => setJobId(null));
@@ -230,6 +233,15 @@ export default function Ask() {
             )}
             <Toggle checked={research} onChange={setResearch} label="Investigar en internet" />
           </div>
+          {noSearchKey && (
+            <Notice tone="warn">
+              Para investigar en internet falta la clave de búsqueda web.{" "}
+              <Link to={`/ajustes#${WEB_SEARCH_ANCHOR}`} className="underline">
+                Añádela en Ajustes
+              </Link>{" "}
+              (es gratis). Sin ella, Oraqlo responde solo con lo que ya sabe.
+            </Notice>
+          )}
           <Button type="submit" className="w-full sm:w-auto" disabled={busy || question.trim().length < 3}>
             {busy ? "Trabajando…" : "Preguntar a Oraqlo"}
           </Button>

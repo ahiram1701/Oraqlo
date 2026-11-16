@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from oraqlo.forecaster.aggregate import clamp_probability
 from oraqlo.llm.base import ChatMessage, LLMProvider
 from oraqlo.llm.structured import JsonChatError, chat_json, extract_json_object
 from oraqlo.strategy.planner import Recommendation
@@ -190,7 +191,7 @@ class SequentialPanel(DecisionPanel):
             + "\n".join(f"- {o}" for o in objections),
         )
         p_success = oracle.get("p_exito")
-        p_success = min(max(float(p_success), 0.0), 1.0) if p_success is not None else None
+        p_success = clamp_probability(float(p_success)) if p_success is not None else None
         turn("oraculo", json.dumps(oracle, ensure_ascii=False))
 
         # 4. Juez: sintetiza y decide.

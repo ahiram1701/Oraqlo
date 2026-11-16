@@ -871,7 +871,7 @@ def test_panel_confianza_se_recorta_a_rango():
     )
     verdict = _panel(provider).deliberate("ctx", _candidate())
     assert verdict.confidence == 1.0
-    assert verdict.p_success == 1.0
+    assert verdict.p_success == 0.98  # nunca certeza (ADR 0001)
 
 
 def test_risk_profile_defaults():

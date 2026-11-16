@@ -154,7 +154,9 @@ export function DoctorCard() {
         <ul className="mt-3 space-y-2 text-sm">
           {doctor.data.checks.map((c) => (
             <li key={c.name} className="flex gap-2">
-              <span className={c.ok ? "text-good" : "text-bad"}>{c.ok ? "✓" : "✗"}</span>
+              <span className={c.ok ? "text-good" : c.optional ? "text-warn" : "text-bad"}>
+                {c.ok ? "✓" : c.optional ? "–" : "✗"}
+              </span>
               <span>
                 <span className="font-medium">{c.name}:</span> {c.detail}
                 {c.fix && <span className="block text-muted">{c.fix}</span>}

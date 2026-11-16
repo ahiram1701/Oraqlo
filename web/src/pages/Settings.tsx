@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { useLocation } from "react-router-dom";
 import ConnectionCard from "../components/ConnectionCard";
 import ProvidersCard from "../components/ProvidersCard";
 import RolesCard from "../components/RolesCard";
+import WebSearchCard from "../components/WebSearchCard";
 import { DoctorCard, ImportCard, UpdatesCard } from "../components/SystemCards";
 import { useSetup } from "../lib/setup";
 import { Badge, Button, Card, ErrorNote, Notice, SectionTitle, Toggle, cx } from "../components/ui";
@@ -155,6 +157,11 @@ function Group({ id, title, hint, children }: { id: string; title: string; hint:
 }
 
 export default function Settings() {
+  // Enlaces como /ajustes#busqueda-web (desde Preguntar o un aviso) llevan a la tarjeta.
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (hash) document.getElementById(hash.slice(1))?.scrollIntoView({ block: "start" });
+  }, [hash]);
   return (
     <div className="space-y-6">
       <nav aria-label="Secciones de ajustes" className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1">
@@ -174,6 +181,7 @@ export default function Settings() {
       </nav>
       <Group id="ia" title="IA" hint="Qué modelo usa Oraqlo y con qué claves.">
         <ProvidersCard />
+        <WebSearchCard />
         <RolesCard />
       </Group>
       <Group id="dispositivos" title="Dispositivos" hint="Celular, avisos y apariencia.">

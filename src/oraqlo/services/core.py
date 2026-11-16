@@ -25,8 +25,10 @@ from oraqlo.forecaster.llm import LLMForecaster
 from oraqlo.goals import GoalStrategist
 from oraqlo.goaltrack import GoalTracker
 from oraqlo.llm.registry import ProviderRegistry, provider_info
-from oraqlo.llm.websearch import OllamaWebClient
+from oraqlo.llm.websearch import WEB_SEARCH_KEY_ENV, OllamaWebClient
+from oraqlo.memory import recalibration
 from oraqlo.memory.calibration import ResolvedForecast
+from oraqlo.memory.recalibration import Recalibration, llm_source
 from oraqlo.panel import ROLE_PROMPTS, RoleConfig, SequentialPanel
 from oraqlo.report import render_goal_report_markdown, render_report_markdown, slugify
 from oraqlo.research import ResearchBrief, Researcher
@@ -83,6 +85,26 @@ class OraqloService:
             )
         return run_id
 
+    def _learned(self, model: str) -> tuple[str | None, Recalibration]:
+        """Lo que el historial resuelto de `model` enseña: un consejo para el prompt
+        (de la práctica, con resultados objetivos) y la corrección numérica."""
+        from oraqlo.autopractice import calibration_advice
+
+        ledger = self.store.ledger
+        return calibration_advice(ledger, llm_source(model)), recalibration.for_model(ledger, model)
+
+    def _oracle(self, model: str, provider, samples: int = 1, emit: Emit = _noop):
+        advice, recal = self._learned(model)
+        return LLMForecaster(
+            provider,
+            model=model,
+            source=llm_source(model, "prevision"),
+            advice=advice,
+            recalibration=recal,
+            samples=samples,
+            on_progress=lambda msg: emit("log", {"msg": msg}),
+        )
+
     def research(
         self, question: str, horizon_days: int, emit: Emit = _noop
     ) -> ResearchBrief | None:
@@ -91,7 +113,11 @@ class OraqloService:
         if not web.is_available():
             emit(
                 "log",
-                {"msg": "Sin OLLAMA_API_KEY: continúo sin investigación web.", "level": "warn"},
+                {
+                    "msg": "Sin clave de búsqueda web: continúo sin investigar en internet.",
+                    "level": "warn",
+                    "code": "no_websearch_key",
+                },
             )
             return None
         emit("phase", {"name": "investigar"})
@@ -128,9 +154,8 @@ class OraqloService:
         brief = self.research(question, horizon_days, emit) if research else None
         emit("phase", {"name": "prever"})
         provider, r = self._role("oraculo")
-        forecast = LLMForecaster(provider, model=r.model).forecast(
-            self._state_from(brief), question, timedelta(days=horizon_days)
-        )
+        oracle = self._oracle(r.model, provider, self.config.forecast.samples, emit)
+        forecast = oracle.forecast(self._state_from(brief), question, timedelta(days=horizon_days))
         self.store.ledger.record(forecast)
         emit("forecast", forecast_json(forecast))
         facts = [(f.text, f.source_url) for f in brief.facts] if brief else None
@@ -166,7 +191,7 @@ class OraqloService:
         agent = OraqloAgent(
             connectors=[],
             world_model=world,
-            forecaster=LLMForecaster(provider, model=r.model),
+            forecaster=self._oracle(r.model, provider),
             simulator=TreeSearchEngine(spec.outcome_model(), spec.utility_fn()),
             planner=ExpectedUtilityPlanner(),
             panel=self._panel(),
@@ -230,7 +255,8 @@ class OraqloService:
     ) -> dict:
         brief = self.research(goal, horizon_days, emit) if research else None
         provider, r = self._role("estratega")
-        plan = GoalStrategist(provider, r.model).pursue(
+        advice, recal = self._learned(r.model)
+        plan = GoalStrategist(provider, r.model, advice=advice, recalibration=recal).pursue(
             goal,
             timedelta(days=horizon_days),
             self._panel(),
@@ -367,6 +393,11 @@ class OraqloService:
                 }
                 for i, (n, hits) in enumerate(buckets)
             ],
+            # Corrección aprendida por modelo de IA (se aplica a las previsiones nuevas).
+            "recalibration": [
+                {"model": m, **rc.as_dict()}
+                for m, rc in recalibration.by_model(self.store.ledger).items()
+            ],
         }
 
     def providers_view(self) -> dict:
@@ -387,19 +418,26 @@ class OraqloService:
                 else None,
             }
 
+        web_key = os.environ.get(WEB_SEARCH_KEY_ENV)
         return {
             "providers": [entry(n) for n in self.registry.names()],
             "roles": [self.config.role(r).model_dump() for r in ROLES],
             "configured": toml_roles(self.config.home),
+            "web_search": {
+                "api_key_env": WEB_SEARCH_KEY_ENV,
+                "key_present": bool(web_key),
+                "key_hint": key_hint(web_key),
+            },
         }
 
     def key_envs(self) -> set[str]:
-        """Variables de clave que la app puede escribir (las de proveedores conocidos)."""
+        """Variables de clave que la app puede escribir: las de proveedores conocidos y
+        la de la búsqueda web (que se usa con cualquier proveedor, también Ollama local)."""
         return {
             env
             for n in self.registry.names()
             if (env := provider_info(n, self.config).api_key_env) is not None
-        }
+        } | {WEB_SEARCH_KEY_ENV}
 
     def reload_config(self, config: OraqloConfig | None = None) -> None:
         """Aplica una config nueva sin reiniciar. Se actualiza el MISMO objeto (otras

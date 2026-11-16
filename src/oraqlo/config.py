@@ -78,6 +78,12 @@ class PracticeSettings(BaseModel):
     markets: int = 2
 
 
+class ForecastSettings(BaseModel):
+    # Estimaciones independientes por previsión rápida (se agregan en log-odds).
+    # Más = más fiable pero más llamadas al modelo; 1 = como antes.
+    samples: int = Field(default=3, ge=1, le=7)
+
+
 class OraqloConfig(BaseModel):
     home: Path
     roles: dict[str, RoleSettings] = Field(default_factory=dict)
@@ -85,6 +91,7 @@ class OraqloConfig(BaseModel):
     server: ServerSettings = Field(default_factory=ServerSettings)
     updates: UpdateSettings = Field(default_factory=UpdateSettings)
     practice: PracticeSettings = Field(default_factory=PracticeSettings)
+    forecast: ForecastSettings = Field(default_factory=ForecastSettings)
 
     @property
     def db_path(self) -> Path:

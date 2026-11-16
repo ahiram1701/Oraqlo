@@ -28,7 +28,7 @@ from oraqlo.api.auth import AuthError, check_request, identify
 from oraqlo.casefile import CaseError, case_to_dict, parse_case, template_json
 from oraqlo.goaltrack import MILESTONE_STATUSES, GoalTracker, GoalTrackError
 from oraqlo.services.core import OraqloService
-from oraqlo.services.doctor import probe_provider, run_checks
+from oraqlo.services.doctor import probe_provider, probe_web_search, run_checks
 from oraqlo.services.jobs import TERMINAL, JobRunner
 from oraqlo.services.network import (
     HTTPS_PORT,
@@ -621,6 +621,10 @@ def create_app(
             raise HTTPException(404, f"Proveedor desconocido: {name}")
         return probe_provider(service.registry, name).as_dict()
 
+    @app.post("/api/websearch/test")
+    def websearch_test() -> dict:
+        return probe_web_search().as_dict()
+
     # ── primer arranque y configuración desde la app ──────────────────────
 
     @app.get("/api/setup")
@@ -728,9 +732,10 @@ def create_app(
                     "ok": False,
                     "detail": f"Falló la última vez ({err['at'][:16].replace('T', ' ')}): {err['error']}",
                     "fix": "Se reintenta sola en unos minutos.",
+                    "optional": False,
                 }
             )
-        return {"ok": all(c["ok"] for c in checks), "checks": checks}
+        return {"ok": all(c["ok"] or c["optional"] for c in checks), "checks": checks}
 
     @app.post("/api/import-legacy", dependencies=[Depends(require_local)])
     def import_legacy_files(body: LegacyIn) -> dict:
