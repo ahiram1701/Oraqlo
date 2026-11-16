@@ -100,7 +100,7 @@ def any_visible(pids: Iterable[int]) -> bool:
     user32 = ctypes.windll.user32  # pyright: ignore[reportAttributeAccessIssue]
     seen = [False]
 
-    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)  # pyright: ignore[reportAttributeAccessIssue]
     def callback(hwnd, _lparam):
         pid = wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
