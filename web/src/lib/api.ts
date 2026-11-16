@@ -100,10 +100,80 @@ export interface RunSummary {
   created_at: string;
 }
 
-export interface ProvidersView {
-  providers: { name: string; kind: string; api_key_env: string | null; key_present: boolean | null }[];
-  roles: { name: string; provider: string; model: string; temperature: number; effort: string | null }[];
+export interface ProviderEntry {
+  name: string;
+  kind: string;
+  api_key_env: string | null;
+  key_present: boolean | null;
+  key_hint: string | null;
 }
+
+export interface RoleView {
+  name: string;
+  provider: string;
+  model: string;
+  temperature: number;
+  effort: string | null;
+}
+
+export type RoleSettings = { provider?: string | null; model?: string | null; temperature?: number | null; effort?: string | null };
+
+export interface ProvidersView {
+  providers: ProviderEntry[];
+  roles: RoleView[];
+  /** Lo fijado a mano por rol en la configuración (sin lo heredado). */
+  configured: Record<string, RoleSettings>;
+}
+
+export interface SetupStatus {
+  ready: boolean;
+  needs_setup: boolean;
+  local: boolean;
+  legacy_imported: boolean;
+}
+
+export interface ConfigView {
+  roles: Record<string, RoleSettings>;
+  updates_mode: "auto" | "notify" | "off";
+  allowed_users: string[];
+}
+
+export interface Check {
+  name: string;
+  ok: boolean;
+  detail: string;
+  fix: string | null;
+}
+
+export type UpdateMode = ConfigView["updates_mode"];
+
+/** Nombres amables y dónde conseguir la clave de cada proveedor. */
+export const PROVIDER_INFO: Record<string, { label: string; keyUrl?: string; note?: string }> = {
+  anthropic: { label: "Claude (Anthropic)", keyUrl: "https://console.anthropic.com/settings/keys", note: "Recomendado" },
+  openai: { label: "OpenAI (ChatGPT)", keyUrl: "https://platform.openai.com/api-keys" },
+  gemini: { label: "Google Gemini", keyUrl: "https://aistudio.google.com/apikey" },
+  openrouter: { label: "OpenRouter", keyUrl: "https://openrouter.ai/keys", note: "Muchos modelos con una clave" },
+  "ollama-cloud": { label: "Ollama Cloud", keyUrl: "https://ollama.com/settings/keys" },
+  "ollama-local": { label: "Ollama en este PC", note: "Gratis y sin clave; necesita Ollama abierto" },
+  mistral: { label: "Mistral", keyUrl: "https://console.mistral.ai/api-keys" },
+  xai: { label: "xAI (Grok)", keyUrl: "https://console.x.ai" },
+  deepseek: { label: "DeepSeek", keyUrl: "https://platform.deepseek.com/api_keys" },
+  groq: { label: "Groq", keyUrl: "https://console.groq.com/keys" },
+  lmstudio: { label: "LM Studio en este PC", note: "Sin clave; necesita LM Studio abierto" },
+};
+
+export const providerLabel = (name: string) => PROVIDER_INFO[name]?.label ?? name;
+
+export const ROLE_LABELS: Record<string, string> = {
+  default: "Todos (por defecto)",
+  estratega: "Estratega",
+  red_team: "Red Team",
+  oraculo: "Oráculo",
+  juez: "Juez",
+  investigador: "Investigador",
+  redactor: "Redactor",
+  practica: "Práctica",
+};
 
 export interface Health {
   app?: string;
@@ -112,14 +182,29 @@ export interface Health {
   db_version: number;
   uptime_s: number;
   active_jobs: number;
-  update?: { available: string | null; mode: string; last_check: string | null } | null;
+  update?: {
+    available: string | null;
+    staged?: string | null;
+    mode: string;
+    managed?: boolean;
+    last_check: string | null;
+    last_result?: { status: string; detail: string } | null;
+  } | null;
 }
+
+export type TailscaleState = "missing" | "stopped" | "needs_login" | "running";
 
 export interface ServerInfo {
   port: number | null;
   local_url: string | null;
   managed: boolean;
-  tailscale: { installed: boolean; enabled: boolean; url: string | null; serving_port: number | null };
+  tailscale: {
+    installed: boolean;
+    state: TailscaleState;
+    enabled: boolean;
+    url: string | null;
+    serving_port: number | null;
+  };
 }
 
 export interface PortChangeResult {

@@ -23,7 +23,7 @@ SERVE = {
     "TCP": {"443": {"HTTPS": True}},
     "Web": {"pc.tail1.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8765"}}}},
 }
-STATUS = {"Self": {"DNSName": "pc.tail1.ts.net."}}
+STATUS = {"BackendState": "Running", "Self": {"DNSName": "pc.tail1.ts.net."}}
 
 
 def fake_tailscale(serve=SERVE):

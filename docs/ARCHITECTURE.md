@@ -90,8 +90,13 @@ SQLite en modo WAL, con migraciones versionadas por `PRAGMA user_version` y back
 
 ### Despliegue y actualización
 
-- **`scripts/install-windows.ps1`**: instala la release en `versions/<X.Y.Z>`, registra la tarea programada y ejecuta `tailscale serve`.
-- **`launcher.py`**: solo stdlib, se copia fuera de las versiones. Arranca el servidor y reinicia con el código 75. Si la versión pendiente no supera `/api/health` en 60 s, hace **rollback**.
+- **`installer/oraqlo.iss`** → **`Oraqlo-Setup.exe`** (Inno Setup, compilado en CI): instalación por usuario sin administrador. Empaqueta el wheel, `uv.exe` (con versión y hash fijados) y el script de instalación. Lo que hace es preguntar y mostrar el progreso; el trabajo lo delega en el script. También registra la desinstalación en "Aplicaciones instaladas".
+- **`scripts/install-windows.ps1`**: el único camino de instalación, tanto para el .exe como a mano. Instala la release en `versions/<X.Y.Z>` y registra la tarea programada. Con `-Uv`, descarga un Python propio en `app/python`, así que el PC no necesita Python. También crea el acceso directo del menú Inicio y, si Tailscale está listo, ejecuta `tailscale serve`.
+- **`launcher.py`**: solo stdlib, se copia fuera de las versiones. Arranca el servidor y reinicia con el código 75. Si la versión pendiente no supera `/api/health` en 60 s, hace **rollback**. Con `--open`, que es lo que usa el acceso directo, abre el navegador y arranca la tarea si hacía falta.
+- **Configuración desde la app** (`services/userconfig.py`, `services/doctor.py`):
+  - La bienvenida y Ajustes escriben `.env` (claves, de forma atómica) y `oraqlo.toml` (con tomlkit, que conserva los comentarios). Antes de guardar se valida con el cargador real.
+  - Los cambios se recargan en caliente: `OraqloService.reload_config` actualiza el mismo objeto de config y vacía la caché de proveedores.
+  - Estas rutas exigen acceso local (`require_local`): desde la tailnet se pueden leer, pero no cambiar.
 - **`updater.py`**: modelo *pull* contra la API pública de GitHub. Su secuencia es:
   1. Verifica el SHA256 y la attestation.
   2. Crea un venv nuevo.

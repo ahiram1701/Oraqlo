@@ -335,3 +335,43 @@ def test_lanzador_respeta_port_txt_y_espera_si_se_libera(tmp_path):
     launcher = Launcher(tmp_path, port=8765, sleep=lambda s: None, busy=busy)
     assert launcher.resolve_port() == 9000
     assert checks == [9000, 9000]
+
+
+def test_abrir_lleva_al_navegador_si_ya_corre(tmp_path):
+    from oraqlo.launcher import open_app
+
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "port.txt").write_text("8766", encoding="utf-8")
+    launcher = Launcher(tmp_path, sleep=lambda s: None, healthy=lambda p: p == 8766)
+    started, opened = [], []
+    assert open_app(launcher, start=lambda: started.append(1), browse=opened.append) == 0
+    assert started == [] and opened == ["http://127.0.0.1:8766/"]
+
+
+def test_abrir_arranca_la_tarea_y_espera(tmp_path):
+    from oraqlo.launcher import open_app
+
+    (tmp_path / "app").mkdir()
+    started: list[int] = []
+    checks: list[int] = []
+
+    def healthy(port):
+        checks.append(port)
+        return bool(started) and len(checks) > 3
+
+    launcher = Launcher(tmp_path, sleep=lambda s: None, healthy=healthy)
+    opened: list[str] = []
+    assert open_app(launcher, start=lambda: started.append(1), browse=opened.append) == 0
+    assert started == [1] and opened == ["http://127.0.0.1:8765/"]
+
+
+def test_abrir_avisa_si_no_arranca(tmp_path):
+    from oraqlo.launcher import open_app
+
+    (tmp_path / "app").mkdir()
+    launcher = Launcher(tmp_path, sleep=lambda s: None, healthy=lambda p: False)
+    notes: list[str] = []
+    code = open_app(
+        launcher, start=lambda: None, browse=lambda u: None, notify=notes.append, timeout_s=3
+    )
+    assert code == 1 and "server.log" in notes[0]

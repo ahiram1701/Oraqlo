@@ -18,6 +18,7 @@ dependencies = [
     "pydantic>=2.14.3",
     "python-dotenv>=1.2.4",
     "pywebpush>=2.5.0",
+    "tomlkit>=0.13",
     "uvicorn[standard]>=0.54.0",
 ]
 
@@ -78,6 +79,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["B011"]
+# Fixtures compartidas importadas desde otro módulo de tests.
+"tests/test_userconfig.py" = ["F811"]
 
 # --- tipos ---
 [tool.pyright]

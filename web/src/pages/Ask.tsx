@@ -2,6 +2,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { JobTimeline } from "../components/JobView";
+import { useSetup } from "../components/ProvidersCard";
 import { Badge, Button, Card, ErrorNote, Toggle, cx, inputClass } from "../components/ui";
 import { ask, pct, type AskMode } from "../lib/api";
 import { useJob, useStoredJob } from "../lib/useJob";
@@ -27,9 +28,19 @@ export default function Ask() {
     onSuccess: (r) => setJobId(r.job_id),
   });
   const busy = submit.isPending || job.status === "running" || job.status === "connecting";
+  const setup = useSetup();
 
   return (
     <div className="space-y-4">
+      {setup.data && !setup.data.ready && (
+        <p className="rounded-xl bg-warn/10 p-3 text-sm text-warn">
+          Aún no hay un modelo de IA listo.{" "}
+          <Link to="/bienvenida" className="underline">
+            Configúralo en un minuto
+          </Link>
+          .
+        </p>
+      )}
       <Card>
         <form
           onSubmit={(e) => {

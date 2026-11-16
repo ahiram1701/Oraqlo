@@ -14,6 +14,10 @@ Bucle:
    si no responde, la mata y vuelve a previous.txt (rollback automático).
 3. Si el servidor sale con 75 → hay versión nueva: relanza. Con 0 → fin.
    Con otro código → reintenta con espera creciente (máx. 5 caídas en 10 min).
+
+Con `--open` (lo usan los accesos directos del menú Inicio) no hace nada de lo
+anterior: abre Oraqlo en el navegador y, si no estaba corriendo, arranca antes
+la tarea programada.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import webbrowser
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -212,14 +217,69 @@ class Launcher:
             self.sleep(min(60.0, 2.0 ** len(self.crashes)))
 
 
+# ── abrir en el navegador (accesos directos) ───────────────────────────────
+
+TASK_NAME = "Oraqlo"
+OPEN_TIMEOUT_S = 45.0
+
+
+def _start_task() -> None:
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    subprocess.run(
+        ["schtasks", "/Run", "/TN", TASK_NAME], capture_output=True, timeout=20, creationflags=flags
+    )
+
+
+def _message(text: str) -> None:
+    if os.name == "nt":
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(None, text, "Oraqlo", 0x10)  # type: ignore[attr-defined]
+    else:
+        print(text, file=sys.stderr)
+
+
+def open_app(
+    launcher: Launcher,
+    start: Callable[[], None] = _start_task,
+    browse: Callable[[str], object] = webbrowser.open,
+    notify: Callable[[str], None] = _message,
+    timeout_s: float = OPEN_TIMEOUT_S,
+) -> int:
+    """Abre Oraqlo en el navegador; si no responde, arranca la tarea y espera."""
+
+    def port() -> int:
+        saved = launcher.read("port.txt")
+        return int(saved) if saved and saved.isdigit() else launcher.port
+
+    if not launcher.healthy(port()):
+        start()
+        waited = 0.0
+        while not launcher.healthy(port()):
+            if waited >= timeout_s:
+                notify(
+                    "Oraqlo no arrancó. Prueba a reiniciar sesión en Windows; "
+                    f"el registro está en {launcher.root / 'server.log'}"
+                )
+                return 1
+            launcher.sleep(1.0)
+            waited += 1.0
+    browse(f"http://127.0.0.1:{port()}/")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Lanzador de Oraqlo (instalación gestionada).")
     parser.add_argument(
         "--home", default=os.environ.get("ORAQLO_HOME"), required="ORAQLO_HOME" not in os.environ
     )
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--open", action="store_true", help="abrir Oraqlo en el navegador")
     args = parser.parse_args(argv)
-    return Launcher(Path(args.home), port=args.port).run()
+    launcher = Launcher(Path(args.home), port=args.port)
+    if args.open:
+        return open_app(launcher)
+    return launcher.run()
 
 
 if __name__ == "__main__":
