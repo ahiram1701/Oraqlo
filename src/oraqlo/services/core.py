@@ -29,8 +29,7 @@ from oraqlo.goals import GoalStrategist
 from oraqlo.goaltrack import GoalTracker
 from oraqlo.llm.registry import ProviderRegistry, provider_info
 from oraqlo.llm.websearch import WEB_SEARCH_KEY_ENV, OllamaWebClient
-from oraqlo.memory import recalibration
-from oraqlo.memory.calibration import ResolvedForecast
+from oraqlo.memory import recalibration, scorecard
 from oraqlo.memory.recalibration import Recalibration, llm_source, user_resolvable
 from oraqlo.panel import ROLE_PROMPTS, RoleConfig, SequentialPanel
 from oraqlo.report import render_goal_report_markdown, render_report_markdown, slugify
@@ -436,39 +435,41 @@ class OraqloService:
             if r.forecast.id not in before
         ]
 
-    def calibration(self, bins: int = 10) -> dict:
-        """Brier por fuente + diagrama de fiabilidad (prob. predicha vs frecuencia real)."""
-        resolved: list[ResolvedForecast] = self.store.ledger.resolved_forecasts
-        by_source: dict[str, list[float]] = {}
-        buckets = [[0, 0] for _ in range(bins)]  # [n, aciertos]
-        for r in resolved:
-            by_source.setdefault(r.forecast.source, []).append(r.brier)
-            for label, p in r.forecast.distribution.outcomes.items():
-                i = min(int(p * bins), bins - 1)
-                buckets[i][0] += 1
-                buckets[i][1] += int(label == r.actual_outcome)
+    def calibration(
+        self,
+        kind: str | None = None,
+        model: str | None = None,
+        days: int | None = None,
+        bins: int = 10,
+    ) -> dict:
+        """Cómo de bien acierta: resumen frente al azar, fiabilidad, tendencia,
+        desgloses y peores fallos (ver memory.scorecard), con filtros."""
+        ledger = self.store.ledger
+        everything = ledger.resolved_forecasts
+        items = scorecard.select(everything, kind=kind, model=model, days=days)
+        open_n = sum(
+            1
+            for f in ledger.open_forecasts
+            if (not kind or scorecard.forecast_kind(f.source) == kind)
+            and (not model or recalibration.model_of(f.source) == model)
+        )
+        card = scorecard.scorecard(items, bins=bins)
+        card["summary"]["open"] = open_n
         return {
-            "n": len(resolved),
-            "sources": sorted(
-                (
-                    {"source": s, "n": len(v), "brier": sum(v) / len(v)}
-                    for s, v in by_source.items()
+            "n": len(items),
+            "filters": {
+                "kinds": sorted(
+                    {scorecard.forecast_kind(r.forecast.source) for r in everything},
+                    key=scorecard.KINDS.index,
                 ),
-                key=lambda x: x["brier"],
-            ),
-            "reliability": [
-                {
-                    "bin": i,
-                    "p_mid": (i + 0.5) / bins,
-                    "n": n,
-                    "observed": (hits / n) if n else None,
-                }
-                for i, (n, hits) in enumerate(buckets)
-            ],
+                "models": sorted(
+                    {m for r in everything if (m := recalibration.model_of(r.forecast.source))}
+                ),
+            },
+            **card,
             # Corrección aprendida por modelo de IA (se aplica a las previsiones nuevas).
             "recalibration": [
-                {"model": m, **rc.as_dict()}
-                for m, rc in recalibration.by_model(self.store.ledger).items()
+                {"model": m, **rc.as_dict()} for m, rc in recalibration.by_model(ledger).items()
             ],
         }
 

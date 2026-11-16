@@ -216,7 +216,7 @@ def test_ledger_resolver_descartar_y_calibracion(env):
     assert view["resolved"][0]["brier"] == pytest.approx(0.18)
     cal = client.get("/api/calibration").json()
     assert cal["n"] == 1 and cal["sources"][0]["brier"] == pytest.approx(0.18)
-    assert sum(b["n"] for b in cal["reliability"]) == 2
+    assert sum(b["n"] for b in cal["reliability"]) == 1  # un punto por previsión, no por etiqueta
     assert client.delete(f"/api/ledger/resolved/{ids[0]}").status_code == 204
 
 
