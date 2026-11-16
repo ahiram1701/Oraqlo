@@ -36,15 +36,17 @@ export function resultText(question: string, result: any): string {
   if (result?.kind === "goal") {
     return `${question}\nProbabilidad de lograrlo: ${pct(result.baseline_p)} → ${pct(result.with_plan_p)} con el plan.\n${result.plan?.summary ?? ""}`;
   }
-  if (result?.kind === "cycle") {
-    const v = verdictInfo(result.verdict?.decision);
-    return `${question}\n${v.label}: ${result.recommendation?.action?.description ?? ""}\n${result.verdict?.rationale ?? ""}`;
-  }
   const top = topOutcome(result?.forecast?.outcomes ?? {});
   const lines = Object.entries(result?.forecast?.outcomes ?? {})
     .sort((a: any, b: any) => b[1] - a[1])
     .map(([k, v]) => `• ${k}: ${pct(v as number)}`);
-  return [question, top ? `Lo más probable: ${top[0]} (${pct(top[1])})` : "", ...lines].filter(Boolean).join("\n");
+  const answer = [top ? `Lo más probable: ${top[0]} (${pct(top[1])})` : "", ...lines].filter(Boolean);
+  if (result?.kind === "cycle") {
+    const v = verdictInfo(result.verdict?.decision);
+    const todo = [`Qué hacer (${v.label}): ${result.recommendation?.action?.description ?? ""}`, result.verdict?.rationale ?? ""];
+    return [question, ...answer, ...(answer.length ? [""] : []), ...todo.filter(Boolean)].join("\n");
+  }
+  return [question, ...answer].join("\n");
 }
 
 /** La respuesta, arriba y grande; los detalles, debajo. */
@@ -88,9 +90,22 @@ export function ResultCard({ result }: { result: any }) {
   if (result?.kind === "cycle") {
     const v = result.verdict ?? {};
     const info = verdictInfo(v.decision);
+    const hasAnswer = !!result.forecast;
     return (
-      <div className="result-glow -mx-4 -mt-4 space-y-3 rounded-t-2xl px-4 pt-5 pb-1 sm:-mx-5 sm:-mt-5 sm:px-5">
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="result-glow -mx-4 -mt-4 space-y-5 rounded-t-2xl px-4 pt-5 pb-1 sm:-mx-5 sm:-mt-5 sm:px-5">
+        {hasAnswer && (
+          <section aria-labelledby="respuesta" className="space-y-4">
+            <h3 id="respuesta" className="text-xs font-semibold tracking-wide text-muted uppercase">
+              Respuesta
+            </h3>
+            <ForecastAnswer forecast={result.forecast} />
+          </section>
+        )}
+        <section aria-labelledby="que-hacer" className={cx("space-y-3", hasAnswer && "border-t border-line pt-4")}>
+          <h3 id="que-hacer" className="text-xs font-semibold tracking-wide text-muted uppercase">
+            Qué hacer
+          </h3>
+          <div className="flex flex-wrap items-center gap-2">
           <VerdictBadge decision={v.decision} />
           <span className="text-sm text-muted">confianza {confidenceWords(v.confidence)} ({pct(v.confidence)})</span>
         </div>
@@ -98,6 +113,11 @@ export function ResultCard({ result }: { result: any }) {
           {result.recommendation?.action?.description ?? "El panel no llegó a una recomendación."}
         </p>
         {info.meaning && <p className="text-sm text-muted">{info.meaning}</p>}
+        {typeof v.p_success === "number" && (
+          <p className="text-sm">
+            Probabilidad de que salga bien: <b>{pct(v.p_success)}</b>
+          </p>
+        )}
         {v.rationale && <p className="text-sm">{v.rationale}</p>}
         {v.review_triggers?.length > 0 && (
           <div className="rounded-xl bg-surface-2 p-3">
@@ -109,11 +129,27 @@ export function ResultCard({ result }: { result: any }) {
             </ul>
           </div>
         )}
+        </section>
       </div>
     );
   }
 
-  const forecast = result?.forecast ?? {};
+  return (
+    <div className="result-glow -mx-4 -mt-4 space-y-4 rounded-t-2xl px-4 pt-5 pb-1 sm:-mx-5 sm:-mt-5 sm:px-5">
+      <ForecastAnswer forecast={result?.forecast ?? {}} />
+      <p className="text-xs text-muted">
+        Guardada en{" "}
+        <Link to="/predicciones" className="text-accent underline">
+          Predicciones
+        </Link>
+        : cuando sepas qué pasó, márcalo ahí y Oraqlo aprenderá.
+      </p>
+    </div>
+  );
+}
+
+/** La respuesta a la pregunta: lo más probable, las probabilidades, cuándo se sabrá y en qué se basa. */
+export function ForecastAnswer({ forecast }: { forecast: any }) {
   const outcomes = forecast.outcomes ?? {};
   const top = topOutcome(outcomes);
   const interval: [number, number] | null = Array.isArray(forecast.interval) ? forecast.interval : null;
@@ -122,7 +158,7 @@ export function ResultCard({ result }: { result: any }) {
   const shown = assumptions.slice(0, 3);
   const folded = assumptions.slice(3);
   return (
-    <div className="result-glow -mx-4 -mt-4 space-y-4 rounded-t-2xl px-4 pt-5 pb-1 sm:-mx-5 sm:-mt-5 sm:px-5">
+    <>
       {top && (
         <div>
           <p className="text-sm text-muted">Lo más probable</p>
@@ -172,13 +208,6 @@ export function ResultCard({ result }: { result: any }) {
           )}
         </div>
       )}
-      <p className="text-xs text-muted">
-        Guardada en{" "}
-        <Link to="/predicciones" className="text-accent underline">
-          Predicciones
-        </Link>
-        : cuando sepas qué pasó, márcalo ahí y Oraqlo aprenderá.
-      </p>
-    </div>
+    </>
   );
 }

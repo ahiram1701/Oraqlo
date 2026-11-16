@@ -155,7 +155,11 @@ export function RunDetail() {
         <div className="mt-4 flex flex-wrap gap-2 border-t border-line pt-3">
           <Button
             variant="secondary"
-            onClick={() => navigate("/", { state: { question: data.title, mode: MODE_FOR_KIND[data.kind] } })}
+            onClick={() =>
+              navigate("/", {
+                state: { question: data.title, mode: MODE_FOR_KIND[data.kind], horizon: d.forecast?.horizon_days ?? d.horizon_days },
+              })
+            }
           >
             <Icon name="repeat" className="size-4" /> Repetir pregunta
           </Button>
