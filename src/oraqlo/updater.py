@@ -326,7 +326,8 @@ def install_version(layout: Layout, version: str, wheel: Path, python: str | Non
     venv = layout.venv(version)
     if venv.exists():
         shutil.rmtree(venv)
-    run = lambda *cmd: subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=900)
+    # Margen amplio: con una conexión lenta, bajar las dependencias tarda.
+    run = lambda *cmd: subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=1800)
     try:
         run(python or _base_python(), "-m", "venv", str(venv))
         run(
@@ -341,6 +342,14 @@ def install_version(layout: Layout, version: str, wheel: Path, python: str | Non
     except subprocess.CalledProcessError as e:
         shutil.rmtree(venv, ignore_errors=True)
         raise UpdateError(f"Fallo instalando {version}: {(e.stderr or '')[-800:]}") from e
+    except subprocess.TimeoutExpired as e:
+        # Conexión lenta: se descarta lo instalado a medias y se reintenta en la
+        # próxima comprobación (antes el hilo moría en silencio).
+        shutil.rmtree(venv, ignore_errors=True)
+        raise UpdateError(
+            f"La instalación de {version} tardó más de {int(e.timeout)} s "
+            "(¿conexión lenta?). Se reintentará más tarde."
+        ) from e
     return venv
 
 

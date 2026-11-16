@@ -406,3 +406,21 @@ def test_sin_instalacion_gestionada_no_hace_nada(tmp_path):
 
     assert up.refresh_launcher(Layout(tmp_path), Path(launcher.__file__)) is False
     assert not (tmp_path / "app" / "launcher.py").exists()
+
+
+def test_instalacion_que_tarda_demasiado_es_un_error_visible(tmp_path, monkeypatch):
+    layout = Layout(tmp_path)
+    layout.root.mkdir(parents=True)
+    wheel = tmp_path / "oraqlo-9.9.9-py3-none-any.whl"
+    wheel.write_bytes(b"x")
+
+    def slow(cmd, **kw):
+        if "pip" in cmd:
+            raise subprocess.TimeoutExpired(cmd, 900)
+        Path(cmd[-1]).mkdir(parents=True)  # el venv sí se crea
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(up.subprocess, "run", slow)
+    with pytest.raises(UpdateError, match="tardó más de 900 s"):
+        up.install_version(layout, "9.9.9", wheel)
+    assert not layout.venv("9.9.9").exists()  # nada a medias
