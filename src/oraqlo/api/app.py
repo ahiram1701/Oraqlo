@@ -1132,7 +1132,7 @@ def create_app(
     # ── práctica ──────────────────────────────────────────────────────────
 
     def practice_state() -> dict:
-        from oraqlo.autopractice import MARKET_SOURCE, calibration_advice
+        from oraqlo.autopractice import MARKET_SOURCE, calibration_advice, duels
 
         ledger = service.store.ledger
         source = f"llm:{service.config.role('practica').model}"
@@ -1149,6 +1149,8 @@ def create_app(
             "reliability_market": ledger.reliability(MARKET_SOURCE),
             "advice": calibration_advice(ledger, source),
             "recent": runner.list(limit=20, kind="practice"),
+            # Pregunta a pregunta: quién se acercó más, Oraqlo o el mercado.
+            "duels": duels(ledger),
         }
 
     @app.get("/api/practice")

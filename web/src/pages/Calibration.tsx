@@ -18,6 +18,7 @@ import { Card, Empty, ErrorNote, SectionTitle, Skeleton, cx, inputClass } from "
 import {
   FORECAST_KIND_LABEL,
   api,
+  displayQuestion,
   fmtDate,
   pct,
   sourceLabel,
@@ -288,7 +289,7 @@ export default function Calibration() {
           <ul className="divide-y divide-line">
             {data.worst!.map((w) => (
               <li key={w.id} className="py-2 text-sm">
-                <p className="line-clamp-2">{w.question}</p>
+                <p className="line-clamp-2">{displayQuestion(w.question)}</p>
                 <p className="text-xs text-muted">
                   Dijo <b className="text-fg">{w.predicted}</b> ({pct(w.predicted_p)}) y pasó <b className="text-fg">{w.actual}</b> (le daba{" "}
                   {pct(w.actual_p)}) · {fmtDate(w.resolved_at)}

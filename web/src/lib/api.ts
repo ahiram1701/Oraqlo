@@ -150,6 +150,42 @@ export interface PracticeState {
   reliability_market: number | null;
   advice: string | null;
   recent: Job[];
+  duels?: { items: Duel[]; summary: DuelSummary };
+}
+
+/** Oraqlo frente al mercado en una pregunta de Práctica. */
+export interface Duel {
+  market_id: string;
+  question: string;
+  /** El resultado que se compara: el que ganó o, si sigue abierto, el «sí». */
+  label: string;
+  oraqlo_p: number;
+  market_p: number;
+  created_at: string | null;
+  closes_at: string | null;
+  status: "resuelto" | "abierto";
+  actual: string | null;
+  resolved_at: string | null;
+  oraqlo_brier: number | null;
+  market_brier: number | null;
+  chance_brier: number | null;
+  winner: "oraqlo" | "mercado" | "empate" | null;
+}
+
+export interface DuelSummary {
+  resolved: number;
+  open: number;
+  won: number;
+  lost: number;
+  tied: number;
+  oraqlo_brier: number | null;
+  market_brier: number | null;
+  chance_brier: number | null;
+}
+
+/** La pregunta sin la etiqueta interna del mercado («[polymarket:123] …»). */
+export function displayQuestion(question: string): string {
+  return question.replace(/^\[polymarket:[^\]]*\]\s*/, "");
 }
 
 export interface RunSummary {

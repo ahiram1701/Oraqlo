@@ -7,6 +7,7 @@ import { Badge, Button, Card, Empty, ErrorNote, SectionTitle, Skeleton, cx, inpu
 import {
   FORECAST_KIND_LABEL,
   api,
+  displayQuestion,
   fmtDate,
   forecastKind,
   pct,
@@ -313,14 +314,14 @@ export function OpenForecast({ f }: { f: Forecast }) {
   if (pendingOutcome)
     return (
       <div className="rounded-xl border border-dashed border-line p-3 text-sm text-muted" aria-live="polite">
-        «{f.question}» → <b className="text-fg">{pendingOutcome}</b>
+        «{displayQuestion(f.question)}» → <b className="text-fg">{pendingOutcome}</b>
       </div>
     );
 
   return (
     <div className="rounded-xl border border-line bg-surface-2">
       <button type="button" aria-expanded={open} className="w-full p-3 text-left" onClick={() => setOpen(!open)}>
-        <p className="text-sm font-medium">{f.question}</p>
+        <p className="text-sm font-medium">{displayQuestion(f.question)}</p>
         <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
           <span>{top ? `Previó: ${top[0]} (${pct(top[1])})` : "Intervalo numérico"}</span>
           <span aria-hidden>·</span>
@@ -399,7 +400,7 @@ function ResolvedRow({ r }: { r: ResolvedForecast }) {
     <li className="py-2">
       <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex w-full items-start justify-between gap-3 py-1 text-left">
         <span className="min-w-0">
-          <span className={cx("block text-sm", !open && "line-clamp-2")}>{r.question}</span>
+          <span className={cx("block text-sm", !open && "line-clamp-2")}>{displayQuestion(r.question)}</span>
           <span className="text-xs text-muted">
             Pasó: <b className="text-fg">{r.actual_outcome}</b> · le daba {pct(r.outcomes[r.actual_outcome] ?? 0)}
           </span>

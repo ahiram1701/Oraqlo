@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { DuelsCard, duelHeadline } from "../components/Duels";
 import { JobTimeline } from "../components/JobView";
 import { ChipGroup, FilteredEmpty, countLabel } from "../components/listControls";
 import { Button, Card, ErrorNote, Notice, SectionTitle, StatusBadge, Toggle, cx, inputClass } from "../components/ui";
@@ -26,28 +27,26 @@ export default function Practice() {
     onSuccess: (r) => setJobId(r.job_id),
   });
 
-  const o = s?.reliability_oraqlo;
-  const m = s?.reliability_market;
-  const verdict =
-    o == null || m == null
-      ? null
-      : o < m
-        ? "Oraqlo acierta más que el mercado en las mismas preguntas."
-        : "El mercado va por delante: Oraqlo aún está aprendiendo.";
+  const summary = s?.duels?.summary;
+  const o = summary?.oraqlo_brier ?? s?.reliability_oraqlo;
+  const m = summary?.market_brier ?? s?.reliability_market;
+  const chance = summary?.chance_brier;
 
   return (
     <div className="space-y-4">
       <ErrorNote error={error} />
       <Card>
         <SectionTitle>Oraqlo contra el mercado</SectionTitle>
-        <p className="-mt-1 mb-3 text-xs text-muted">
-          Puntuación de error (Brier): 0 es perfecto, 0,25 es lo que sacaría tirar una moneda. Menos es mejor.
-        </p>
+        <p className="mb-3 text-base font-medium">{duelHeadline(summary)}</p>
         <div className="grid grid-cols-2 gap-3">
           <Stat label="Oraqlo" value={o} better={o != null && m != null && o < m} />
           <Stat label="Polymarket" value={m} better={o != null && m != null && m <= o} />
         </div>
-        {verdict && <p className="mt-3 text-sm">{verdict}</p>}
+        <p className="mt-3 text-xs text-muted">
+          Error medio (Brier) en las preguntas ya resueltas: 0 es perfecto y menos es mejor.
+          {chance != null && ` Repartir la probabilidad por igual sacaría ${chance.toFixed(3)}.`}
+          {o != null && chance != null && o >= chance - 0.01 && " Oraqlo aún no supera al azar en estas preguntas."}
+        </p>
         {s?.advice && (
           <Notice tone="info" className="mt-3">
             Consejo: {s.advice}
@@ -93,6 +92,8 @@ export default function Practice() {
           </div>
         )}
       </Card>
+
+      {s?.duels && <DuelsCard items={s.duels.items} />}
 
       {s && s.recent.length > 0 && (
         <Card>
