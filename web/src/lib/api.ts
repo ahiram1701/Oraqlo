@@ -389,10 +389,12 @@ export const fmtDate = (iso: string | null | undefined) =>
 /** Tipo de predicción según su fuente: qué la produjo y quién la resuelve. */
 export type ForecastKind = "prevision" | "objetivo" | "panel" | "practica";
 
-export function forecastKind(source: string): ForecastKind {
-  if (source.startsWith("polymarket:")) return "practica";
+export function forecastKind(source: string, question = ""): ForecastKind {
+  // La Práctica se reconoce por la etiqueta del mercado: antes de la 0.7 todas las
+  // previsiones eran `llm:<modelo>`, sin tipo, y no son de Práctica.
+  if (source.startsWith("polymarket:") || question.startsWith("[polymarket:")) return "practica";
   for (const kind of ["prevision", "objetivo", "panel"] as const) if (source.endsWith(`:${kind}`)) return kind;
-  return source.startsWith("llm:") ? "practica" : "prevision";
+  return "prevision";
 }
 
 export const FORECAST_KIND_LABEL: Record<ForecastKind, string> = {

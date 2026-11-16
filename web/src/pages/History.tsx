@@ -15,6 +15,7 @@ const KIND: Record<string, string> = { forecast: "Previsión", cycle: "Análisis
 const MODE_FOR_KIND: Record<string, string> = { forecast: "forecast", cycle: "full", goal: "goal" };
 
 const PAGE = 100;
+const MAX_RUNS = 2000; // límite de /api/runs
 type RunKind = "all" | "forecast" | "cycle" | "goal";
 type RunSort = "recientes" | "antiguos" | "az";
 const RUN_SORTS: Option<RunSort>[] = [
@@ -46,7 +47,7 @@ export function HistoryList() {
     () => sortRuns((data ?? []).filter((r) => (kind === "all" || r.kind === kind) && includesText(r.title, query)), sort),
     [data, query, kind, sort],
   );
-  const more = (data?.length ?? 0) >= limit;
+  const more = (data?.length ?? 0) >= limit && limit < MAX_RUNS;
 
   return (
     <Card>
@@ -109,7 +110,7 @@ export function HistoryList() {
         ))}
       </ul>
       {more && (
-        <Button variant="secondary" className="mt-3 w-full" disabled={isFetching} onClick={() => setLimit(limit + PAGE)}>
+        <Button variant="secondary" className="mt-3 w-full" disabled={isFetching} onClick={() => setLimit(Math.min(limit + PAGE, MAX_RUNS))}>
           {isFetching ? "Cargando…" : "Cargar más antiguos"}
         </Button>
       )}

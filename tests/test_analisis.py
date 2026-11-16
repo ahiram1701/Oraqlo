@@ -84,14 +84,17 @@ def test_la_probabilidad_del_panel_queda_en_predicciones(env, monkeypatch):
 def test_fuentes_que_resuelve_el_usuario():
     assert user_resolvable("llm:m:prevision")
     assert user_resolvable("llm:qwen3:8b:panel")
-    assert not user_resolvable("llm:m")  # Práctica: se resuelve sola
+    assert not user_resolvable("llm:m", "[polymarket:1] ¿X?")  # Práctica: se resuelve sola
+    assert user_resolvable("llm:m", "¿X?")  # previsión de antes de la 0.7
     assert not user_resolvable("polymarket:mercado")
 
 
 def _forecast(fid: str, source: str, days_ago: float, horizon: float = 1.0) -> Forecast:
+    # La Práctica lleva la etiqueta del mercado en la pregunta, como en autopractice.
+    tag = "[polymarket:1] " if fid == "practica" else ""
     return Forecast(
         id=fid,
-        question=f"¿{fid}?",
+        question=f"{tag}¿{fid}?",
         distribution=Distribution(outcomes={"sí": 0.6, "no": 0.4}),
         horizon=timedelta(days=horizon),
         assumptions=[],

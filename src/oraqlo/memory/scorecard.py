@@ -20,7 +20,7 @@ from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 
 from oraqlo.memory.calibration import ResolvedForecast, multiclass_brier
-from oraqlo.memory.recalibration import SOURCE_KINDS, model_of
+from oraqlo.memory.recalibration import SOURCE_KINDS, is_practice, model_of
 
 KINDS = ("prevision", "objetivo", "panel", "practica")
 HORIZONS = (
@@ -31,14 +31,15 @@ HORIZONS = (
 LOG_EPS = 1e-3  # un 0% que ocurre no es infinitamente malo en el resumen
 
 
-def forecast_kind(source: str) -> str:
-    """Qué produjo la previsión (mismo criterio que la interfaz)."""
-    if source.startswith("polymarket:"):
+def forecast_kind(source: str, question: str = "") -> str:
+    """Qué produjo la previsión (mismo criterio que la interfaz). Una `llm:<modelo>`
+    sin tipo y sin etiqueta de mercado es una previsión de antes de la 0.7."""
+    if is_practice(source, question):
         return "practica"
     for kind in SOURCE_KINDS:
         if source.endswith(f":{kind}"):
             return kind
-    return "practica" if source.startswith("llm:") else "prevision"
+    return "prevision"
 
 
 def chance_brier(r: ResolvedForecast) -> float:
@@ -93,7 +94,7 @@ def select(
     since = (now or datetime.now(UTC)) - timedelta(days=days) if days else None
     out = []
     for r in resolved:
-        if kind and forecast_kind(r.forecast.source) != kind:
+        if kind and forecast_kind(r.forecast.source, r.forecast.question) != kind:
             continue
         if model and model_of(r.forecast.source) != model:
             continue
@@ -134,7 +135,7 @@ def scorecard(items: list[ResolvedForecast], bins: int = 10, worst: int = 5) -> 
     by_kind = [
         {"kind": k, **_stats(g)}
         for k, g in sorted(
-            _group(items, lambda r: forecast_kind(r.forecast.source)).items(),
+            _group(items, lambda r: forecast_kind(r.forecast.source, r.forecast.question)).items(),
             key=lambda kv: KINDS.index(kv[0]),
         )
     ]
