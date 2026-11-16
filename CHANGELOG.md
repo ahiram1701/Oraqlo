@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.7](https://github.com/ahiram1701/Oraqlo/compare/v0.5.6...v0.5.7) (2026-11-16)
+
+
+### Correcciones
+
+* el servidor arranca en prioridad normal de verdad ([#40](https://github.com/ahiram1701/Oraqlo/issues/40)) ([d4096cb](https://github.com/ahiram1701/Oraqlo/commit/d4096cb7b30cdde57b60cf68579baf1f60d07978))
+
 ## [0.5.6](https://github.com/ahiram1701/Oraqlo/compare/v0.5.5...v0.5.6) (2026-11-16)
 
 
