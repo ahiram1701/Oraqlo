@@ -95,7 +95,7 @@ def sse(text: str) -> list[tuple[str | None, str, dict]]:
 def test_health_y_me_local(env):
     client, *_ = env
     h = client.get("/api/health").json()
-    assert h["status"] == "ok" and h["db_version"] >= 1
+    assert h["app"] == "oraqlo" and h["status"] == "ok" and h["db_version"] >= 1
     assert client.get("/api/me").json() == {"login": None, "name": None, "via": "local"}
 
 

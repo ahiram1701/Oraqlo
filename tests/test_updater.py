@@ -294,3 +294,13 @@ def test_release_tag_formats(tag):
 
 def test_release_tag_without_version_is_ignored():
     assert up._release_from(_release("0.3.0") | {"tag_name": "nightly"}) is None
+
+
+def test_launcher_only_trusts_oraqlo_health():
+    from oraqlo.launcher import is_oraqlo_health
+
+    assert is_oraqlo_health(b'{"app": "oraqlo", "status": "ok", "version": "0.2.1"}')
+    # Otra app en el mismo puerto con su propio /api/health no cuenta como sana.
+    assert not is_oraqlo_health(b'{"status": "ok", "version": "0.7.0"}')
+    assert not is_oraqlo_health(b"<html>")
+    assert not is_oraqlo_health(b"[]")
