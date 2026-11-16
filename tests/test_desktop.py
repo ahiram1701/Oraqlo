@@ -147,3 +147,66 @@ def test_notificador_fuera_de_windows_no_hace_nada(tmp_path, monkeypatch):
 
     monkeypatch.setattr(notify.os, "name", "posix")
     assert notify.DesktopNotifier(tmp_path).send("a", "b") is False
+
+
+def test_utilidades_de_version_y_recarga():
+    assert desktop.needs_restart("0.7.0", "0.8.0")
+    assert not desktop.needs_restart("0.8.0", "0.8.0")
+    assert not desktop.needs_restart("0.7.0", None)  # servidor caído: no es una versión nueva
+    assert not desktop.needs_restart("0.0.0+unknown", "0.8.0")  # desde el árbol de fuentes
+    # Recargar conserva la pantalla y sigue al servidor si cambió de puerto.
+    assert desktop.reload_url("http://127.0.0.1:8766/ajustes?x=1#busqueda-web", 8770) == (
+        "http://127.0.0.1:8770/ajustes?x=1#busqueda-web"
+    )
+    assert desktop.reload_url(None, 8766) == "http://127.0.0.1:8766/"
+
+
+def test_abrir_otra_vez_recarga_la_pagina(tmp_path, monkeypatch):
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "port.txt").write_text("8766", encoding="utf-8")
+    app = desktop.DesktopApp(tmp_path, hidden=True)
+    loaded: list[str] = []
+
+    class Window:
+        def get_current_url(self):
+            return "http://127.0.0.1:8766/objetivos"
+
+        def load_url(self, url):
+            loaded.append(url)
+            app.quitting = True  # una sola vuelta del bucle
+
+        def show(self):
+            pass
+
+        def restore(self):
+            pass
+
+    app.window = Window()
+    (tmp_path / "app" / "open-path.txt").write_text("", encoding="utf-8")
+    monkeypatch.setattr(desktop.time, "sleep", lambda s: None)
+    app.watch_open_requests()
+    assert loaded == ["http://127.0.0.1:8766/objetivos"]
+    assert app.hidden is False
+
+
+def test_si_el_servidor_ya_es_otra_version_relanza_la_ventana(tmp_path, monkeypatch):
+    launcher = _install(tmp_path, version="9.9.9")
+    app = desktop.DesktopApp(tmp_path, hidden=True)
+    spawned: list[list[str]] = []
+    monkeypatch.setattr(desktop, "server_version", lambda port: "9.9.9")
+    monkeypatch.setattr(desktop, "__version__", "0.7.0")
+    monkeypatch.setattr(desktop.DesktopApp, "quit", lambda self: setattr(self, "quitting", True))
+
+    assert app.check_version(spawn=lambda cmd, **kw: spawned.append(cmd)) is True
+    cmd = spawned[0]
+    assert str(launcher.python("9.9.9")) == cmd[0]
+    assert cmd[-2:] == ["--after-update", "--hidden"]  # sigue en la bandeja si lo estaba
+    assert app.quitting
+
+    # Misma versión instalada que la ventana: no hay nada a lo que relanzar.
+    spawned.clear()
+    monkeypatch.setattr(desktop, "__version__", "9.9.9")
+    assert (
+        desktop.DesktopApp(tmp_path).check_version(spawn=lambda c, **k: spawned.append(c)) is False
+    )
+    assert spawned == []
