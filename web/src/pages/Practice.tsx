@@ -85,7 +85,7 @@ export default function Practice() {
         <ErrorNote error={save.error ?? run.error} />
         {jobId && (
           <div className="mt-4">
-            <JobTimeline job={job} />
+            <JobTimeline job={job} jobId={jobId} onRetried={setJobId} />
           </div>
         )}
       </Card>

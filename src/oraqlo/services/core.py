@@ -191,7 +191,7 @@ class OraqloService:
         agent = OraqloAgent(
             connectors=[],
             world_model=world,
-            forecaster=self._oracle(r.model, provider),
+            forecaster=self._oracle(r.model, provider, self.config.forecast.samples, emit),
             simulator=TreeSearchEngine(spec.outcome_model(), spec.utility_fn()),
             planner=ExpectedUtilityPlanner(),
             panel=self._panel(),

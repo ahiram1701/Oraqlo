@@ -858,6 +858,14 @@ def create_app(
             raise HTTPException(404, "Trabajo no encontrado")
         return job
 
+    @app.post("/api/jobs/{job_id}/retry", status_code=202)
+    def jobs_retry(job_id: str) -> dict:
+        job_or_404(job_id)
+        new_id = runner.retry(job_id)
+        if new_id is None:
+            raise HTTPException(409, "Solo se puede reintentar un trabajo que falló o se canceló.")
+        return {"job_id": new_id}
+
     @app.get("/api/jobs/{job_id}/events")
     async def jobs_events(job_id: str, request: Request, after: int = 0) -> StreamingResponse:
         job_or_404(job_id)

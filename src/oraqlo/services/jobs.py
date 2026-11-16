@@ -33,6 +33,10 @@ log = logging.getLogger(__name__)
 
 TERMINAL = ("done", "failed", "cancelled")
 CANCELLED_MSG = "Cancelado a petición del usuario."
+INTERRUPTED_MSG = (
+    "Se interrumpió porque Oraqlo se reinició mientras corría (por ejemplo, al "
+    "actualizarse). Puedes reintentarlo."
+)
 
 
 class JobCancelled(BaseException):
@@ -70,10 +74,9 @@ class JobRunner:
         """Marca como fallidos los jobs interrumpidos por un reinicio."""
         with self.db.tx() as conn:
             cur = conn.execute(
-                "UPDATE jobs SET status = 'failed', finished_at = ?, "
-                "error = 'Interrumpido: Oraqlo se reinició mientras corría.' "
+                "UPDATE jobs SET status = 'failed', finished_at = ?, error = ? "
                 "WHERE status IN ('queued', 'running')",
-                (_now(),),
+                (_now(), INTERRUPTED_MSG),
             )
             return cur.rowcount
 
@@ -94,6 +97,13 @@ class JobRunner:
             )
         self.pool.submit(self._run, job_id, kind, params)
         return job_id
+
+    def retry(self, job_id: str) -> str | None:
+        """Relanza un job fallido o cancelado con el mismo tipo y parámetros."""
+        job = self.get(job_id)
+        if job is None or job["status"] not in ("failed", "cancelled"):
+            return None
+        return self.submit(job["kind"], job["params"])
 
     def cancel(self, job_id: str) -> dict | None:
         """Pide parar un job. Si aún no empezó, queda cancelado al instante."""
