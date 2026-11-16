@@ -45,7 +45,11 @@ class DesktopNotifier:
         if not self.available:
             return False
         try:
-            from windows_toasts import Toast, ToastDisplayImage, WindowsToaster
+            from windows_toasts import (  # pyright: ignore[reportMissingImports]
+                Toast,
+                ToastDisplayImage,
+                WindowsToaster,
+            )
 
             if self._toaster is None:
                 self._toaster = WindowsToaster("Oraqlo")

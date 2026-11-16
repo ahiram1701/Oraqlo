@@ -107,7 +107,8 @@ def _focus_existing(path: str | None, home: Path) -> None:
     es visible, y la bandeja crea su propia ventana oculta."""
     import ctypes
 
-    ctypes.windll.user32.AllowSetForegroundWindow(-1)  # ASFW_ANY: que pueda pasar al frente
+    # ASFW_ANY: que la ventana existente pueda pasar al frente.
+    ctypes.windll.user32.AllowSetForegroundWindow(-1)  # pyright: ignore[reportAttributeAccessIssue]
     (home / "app" / "open-path.txt").write_text(path or "", encoding="utf-8")
 
 
@@ -227,8 +228,8 @@ class DesktopApp:
     # bandeja
 
     def start_tray(self) -> None:
-        import pystray
-        from PIL import Image
+        import pystray  # pyright: ignore[reportMissingImports]
+        from PIL import Image  # pyright: ignore[reportMissingImports]
 
         def open_browser(_icon=None, _item=None):
             webbrowser.open(app_url(read_port(self.home)))
@@ -253,7 +254,7 @@ class DesktopApp:
         self.tray.run_detached()
 
     def run(self) -> int:
-        import webview
+        import webview  # pyright: ignore[reportMissingImports]
 
         port = self.ensure_server()
         webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
