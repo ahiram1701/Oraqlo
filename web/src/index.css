@@ -69,3 +69,19 @@ body {
     padding-bottom: 2rem;
   }
 }
+
+/* Informes en Markdown (Historial): legibles sin depender de un plugin de tipografía. */
+.prose-report h1 { font-size: 1.25rem; font-weight: 600; margin: 1rem 0 0.5rem; }
+.prose-report h2 { font-size: 1.05rem; font-weight: 600; margin: 1rem 0 0.4rem; }
+.prose-report h3 { font-weight: 600; margin: 0.8rem 0 0.3rem; }
+.prose-report p { margin: 0.4rem 0; line-height: 1.55; }
+.prose-report ul, .prose-report ol { margin: 0.4rem 0; padding-left: 1.25rem; }
+.prose-report ul { list-style: disc; }
+.prose-report ol { list-style: decimal; }
+.prose-report li { margin: 0.15rem 0; }
+.prose-report strong { font-weight: 600; color: var(--color-fg); }
+.prose-report code { font-size: 0.85em; padding: 0.1rem 0.3rem; border-radius: 0.3rem; background: var(--color-surface-2); }
+.prose-report blockquote { border-left: 3px solid var(--color-line); padding-left: 0.75rem; color: var(--color-muted); }
+.prose-report table { width: 100%; border-collapse: collapse; margin: 0.5rem 0; display: block; overflow-x: auto; }
+.prose-report th, .prose-report td { border: 1px solid var(--color-line); padding: 0.3rem 0.5rem; text-align: left; }
+.prose-report hr { border-color: var(--color-line); margin: 1rem 0; }

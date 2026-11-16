@@ -13,14 +13,14 @@ export default function Ledger() {
       <ErrorNote error={error} />
       <Card>
         <SectionTitle aside={<Badge>{data?.open.length ?? 0}</Badge>}>Abiertas</SectionTitle>
-        {data && data.open.length === 0 && <Empty>No hay predicciones abiertas.</Empty>}
+        {data && data.open.length === 0 && <Empty>No hay predicciones pendientes. Cada previsión que hagas en Preguntar queda aquí hasta que sepas qué pasó.</Empty>}
         <div className="space-y-3">
           {data?.open.map((f) => <OpenForecast key={f.id} f={f} />)}
         </div>
       </Card>
       <Card>
         <SectionTitle aside={<Badge>{data?.resolved.length ?? 0}</Badge>}>Resueltas</SectionTitle>
-        {data && data.resolved.length === 0 && <Empty>Cuando resuelvas predicciones verás aquí su Brier.</Empty>}
+        {data && data.resolved.length === 0 && <Empty>Cuando marques cómo acabó una predicción, aparecerá aquí con su puntuación (Brier: 0 es perfecto; menos es mejor). Así Oraqlo aprende.</Empty>}
         <ul className="divide-y divide-line">
           {data?.resolved.map((r) => <ResolvedRow key={r.id} r={r} />)}
         </ul>

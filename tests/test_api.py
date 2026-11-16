@@ -182,7 +182,8 @@ def test_job_fallido_reporta_error(env):
     )
     assert job["status"] == "failed" and "caído" in job["error"]
     kinds = [k for _, k, _ in sse(client.get(f"/api/jobs/{job['id']}/events").text)]
-    assert kinds[-2:] == ["error", "end"]
+    # "job_error", no "error": ese nombre es el evento nativo de EventSource.
+    assert kinds[-2:] == ["job_error", "end"]
 
 
 def test_recover_marca_interrumpidos(env):
@@ -539,3 +540,94 @@ def test_cambiar_puerto_en_copia_no_gestionada(env):
     client, *_ = env
     r = client.put("/api/server/port", json={"port": 8770})
     assert r.status_code == 409 and "desarrollo" in r.json()["detail"]
+
+
+def test_push_real_firma_y_cifra_sin_mock_de_webpush(tmp_path, monkeypatch):
+    """Regresión: la clave VAPID se pasaba como texto PEM y TODOS los envíos fallaban
+    ("Could not deserialize key data"). Aquí corre el webpush real; solo se
+    intercepta la llamada HTTP final al servicio de push."""
+    import base64
+    import os
+    import types
+
+    import pywebpush
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from oraqlo.services.push import PushService
+    from oraqlo.store import Store
+
+    store = Store(tmp_path / "o.db")
+    push = PushService(store.db, store.settings)
+    device = ec.generate_private_key(ec.SECP256R1())
+    raw = device.public_key().public_bytes(
+        serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint
+    )
+    b64 = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+    push.subscribe(
+        {
+            "endpoint": "https://web.push.apple.com/abc",
+            "keys": {"p256dh": b64(raw), "auth": b64(os.urandom(16))},
+        },
+        "yo@github",
+    )
+    posted: list[dict] = []
+
+    class Ok:
+        status_code = 201
+        headers = types.MappingProxyType({})
+        text = ""
+
+    def fake_post(url, data=None, headers=None, timeout=None, **kw):
+        posted.append({"url": url, "headers": headers, "data": data})
+        return Ok()
+
+    monkeypatch.setattr(pywebpush.requests, "post", fake_post)
+    assert push.send_web("Hola", "prueba", "/ajustes") == (1, None)
+    sent = posted[0]
+    assert sent["url"] == "https://web.push.apple.com/abc"
+    assert sent["headers"]["Authorization"].startswith("vapid t=")  # JWT firmado
+    assert sent["headers"]["Content-Encoding"] == "aes128gcm" and sent["data"]
+
+
+def test_prueba_de_push_dice_la_verdad(env, monkeypatch):
+    client, _service, app, _fake = env
+
+    class Toast:
+        available = True
+
+        def send(self, *a):
+            return True
+
+    app.state.push.desktop = Toast()  # el toast de Windows ya no cuenta como entregado
+    r = client.post("/api/push/test")
+    assert r.status_code == 409 and "No hay dispositivos" in r.json()["detail"]
+    status = client.get("/api/push/status", params={"endpoint": "x"}).json()
+    assert status == {"subscribed": False, "devices": 0, "last_error": None}
+
+
+def test_avisos_de_jobs_dicen_de_que_y_llevan_a_su_pantalla():
+    from oraqlo.services.push import job_notification, practice_alert
+
+    failed_checkin = {
+        "kind": "checkin",
+        "status": "failed",
+        "error": "sin clave",
+        "params": {"goal_id": "g1", "note": "corrí 5 km"},
+    }
+    _title, body, url = job_notification(failed_checkin)
+    assert url == "/objetivos/g1" and body.startswith("corrí 5 km — sin clave")
+    case = {
+        "kind": "case",
+        "status": "failed",
+        "error": "x",
+        "params": {"case": {"question": "¿Abro tienda?"}},
+    }
+    assert (
+        job_notification(case)[1].startswith("¿Abro tienda?")
+        and job_notification(case)[2] == "/caso"
+    )
+    failed = {"kind": "practice", "status": "failed", "error": "Polymarket caído"}
+    assert practice_alert(failed, 1) is None
+    assert practice_alert(failed, 2)[2] == "/practica"
+    assert practice_alert(failed, 3) is None  # una sola vez por racha

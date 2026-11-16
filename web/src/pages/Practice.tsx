@@ -4,6 +4,14 @@ import { Badge, Button, Card, ErrorNote, SectionTitle, Toggle, cx, inputClass } 
 import { api, fmtDate, type PracticeState } from "../lib/api";
 import { useJob, useStoredJob } from "../lib/useJob";
 
+const STATUS_LABELS: Record<string, string> = {
+  queued: "en cola",
+  running: "en curso",
+  done: "lista",
+  failed: "falló",
+  cancelled: "cancelada",
+};
+
 export default function Practice() {
   const qc = useQueryClient();
   const { data: s, error } = useQuery({
@@ -12,7 +20,7 @@ export default function Practice() {
     refetchInterval: 30_000,
   });
   const [jobId, setJobId] = useStoredJob("practice");
-  const job = useJob(jobId);
+  const job = useJob(jobId, () => setJobId(null));
   const save = useMutation({
     mutationFn: (body: Partial<Pick<PracticeState, "auto" | "interval_min">>) => api.put<PracticeState>("/practice", body),
     onSuccess: (data) => qc.setQueryData(["practice"], data),
@@ -83,9 +91,14 @@ export default function Practice() {
           <SectionTitle>Pasadas recientes</SectionTitle>
           <ul className="divide-y divide-line text-sm">
             {s.recent.map((j) => (
-              <li key={j.id} className="flex justify-between py-2">
-                <span>{fmtDate(j.created_at)}</span>
-                <Badge tone={j.status === "done" ? "good" : j.status === "failed" ? "bad" : "accent"}>{j.status}</Badge>
+              <li key={j.id} className="py-2">
+                <div className="flex justify-between gap-2">
+                  <span>{fmtDate(j.created_at)}</span>
+                  <Badge tone={j.status === "done" ? "good" : j.status === "failed" ? "bad" : "accent"}>
+                    {STATUS_LABELS[j.status] ?? j.status}
+                  </Badge>
+                </div>
+                {j.error && <p className="mt-1 text-xs text-bad">{j.error}</p>}
               </li>
             ))}
           </ul>

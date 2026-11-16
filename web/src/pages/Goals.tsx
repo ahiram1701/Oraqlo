@@ -67,7 +67,7 @@ export function GoalDetail() {
   const { data: g, error } = useQuery({ queryKey: ["goals", id], queryFn: () => api.get<Goal>(`/goals/${id}`) });
   const [note, setNote] = useState("");
   const [jobId, setJobId] = useStoredJob(`goal.${id}`);
-  const job = useJob(jobId);
+  const job = useJob(jobId, () => setJobId(null));
   const refresh = () => qc.invalidateQueries({ queryKey: ["goals"] });
 
   const checkin = useMutation({
@@ -149,6 +149,7 @@ export function GoalDetail() {
               className={cx(inputClass, "min-h-20")}
               placeholder="¿Cómo vas? Ej.: semana 3 — 3 entrenamientos, 28 km, rodilla bien"
               value={note}
+              maxLength={2000}
               onChange={(e) => setNote(e.target.value)}
             />
             <div className="flex flex-wrap gap-2">

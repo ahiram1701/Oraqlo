@@ -106,23 +106,41 @@ class OllamaProvider(LLMProvider):
             except urllib.error.HTTPError as e:
                 detail = e.read().decode("utf-8", errors="replace")[:500]
                 if e.code in (401, 403):
+                    if self.config.api_key_env:
+                        hint = f"Revisa la clave de Ollama ({self.config.api_key_env}) en Ajustes."
+                    else:  # Ollama local con un modelo *-cloud sin sesión iniciada
+                        hint = "Inicia sesión en Ollama: abre la app de Ollama → Sign in."
                     raise OllamaUnavailableError(
-                        f"Autenticación rechazada por {self.config.host} (HTTP {e.code}). "
-                        f"Revisa la API key en {self.config.api_key_env}."
+                        f"Ollama rechazó la petición (HTTP {e.code}). {hint}"
                     ) from e
                 error = OllamaUnavailableError(
                     f"Error HTTP {e.code} de {self.config.host}: {detail}"
                 )
-                if is_transient_status(e.code):
+                # Un 500 del Ollama local (no pudo cargar el modelo, p. ej. sin memoria) no se
+                # arregla reintentando: falla a la primera con su mensaje.
+                local_failure = not self.config.api_key_env and e.code == 500
+                if is_transient_status(e.code) and not local_failure:
                     retry_after = e.headers.get("Retry-After") if e.headers else None
                     raise TransientError(
                         str(error),
                         float(retry_after) if retry_after and retry_after.isdigit() else None,
                     ) from error
                 raise error from e
-            except (urllib.error.URLError, TimeoutError, OSError) as e:
+            except TimeoutError as e:
+                # El modelo tardó más de lo permitido: reintentar repetiría la misma
+                # espera (hasta 15 min). Se falla una vez con un mensaje claro.
+                raise OllamaUnavailableError(
+                    f"El modelo tardó más de {self.config.timeout_s:.0f} s en responder. "
+                    "Prueba un modelo más pequeño o más rápido en Ajustes."
+                ) from e
+            except (urllib.error.URLError, OSError) as e:
+                if isinstance(getattr(e, "reason", None), TimeoutError):
+                    raise OllamaUnavailableError(
+                        f"El modelo tardó más de {self.config.timeout_s:.0f} s en responder. "
+                        "Prueba un modelo más pequeño o más rápido en Ajustes."
+                    ) from e
                 error = OllamaUnavailableError(
-                    f"No se pudo conectar con {self.config.host}. ¿Está Ollama corriendo? ({e})"
+                    f"No se pudo conectar con {self.config.host}. ¿Está Ollama abierto? ({e})"
                 )
                 raise TransientError(str(error)) from error
 

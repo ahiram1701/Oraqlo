@@ -41,6 +41,10 @@ log = logging.getLogger(__name__)
 Emit = Callable[[str, dict[str, Any]], None]
 
 
+class PracticeFailed(RuntimeError):
+    """La pasada de práctica no logró ni predecir ni resolver nada."""
+
+
 def _noop(kind: str, data: dict[str, Any]) -> None:
     pass
 
@@ -283,6 +287,11 @@ class OraqloService:
         report = engine.run_once(
             research=researcher is not None, on_progress=lambda msg: emit("log", {"msg": msg})
         )
+        if report.errors and not report.predicted and not report.resolved:
+            # Nada salió bien: es un fallo (rojo y con aviso), no un "listo" engañoso.
+            raise PracticeFailed("; ".join(dict.fromkeys(report.errors))[:400])
+        for error in report.errors:
+            emit("log", {"msg": f"Aviso: {error}"})
         result = {
             "kind": "practice",
             "predicted": [

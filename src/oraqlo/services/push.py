@@ -18,7 +18,9 @@ from oraqlo.store.settings import SettingsStore
 log = logging.getLogger(__name__)
 
 # Identificador del emisor exigido por los servicios de push (no es un dato personal).
-VAPID_SUBJECT = "https://github.com/ahiram1701/Oraqlo"
+# Debe ser un mailto: o un https:// SIN ruta: py_vapid rechaza "https://host/ruta" y
+# entonces ningún aviso salía (estaba así hasta la 0.5.2).
+VAPID_SUBJECT = "https://github.com"
 
 
 class PushService:
@@ -27,6 +29,7 @@ class PushService:
         self.desktop: Any = desktop
         self.db = db
         self.settings = settings
+        self._vapid: Any = None
 
     # ── claves ────────────────────────────────────────────────────────────
 
@@ -81,26 +84,42 @@ class PushService:
 
     # ── envío ─────────────────────────────────────────────────────────────
 
-    def send(self, title: str, body: str, url: str = "/", tag: str | None = None) -> int:
-        """Envía a todos los dispositivos (y a Windows). Devuelve cuántos lo recibieron."""
-        from pywebpush import WebPushException, webpush
+    def _signer(self) -> Any:
+        """Clave VAPID como objeto: pywebpush NO acepta el texto PEM (lo trataría
+        como base64 y fallaría con "Could not deserialize key data")."""
+        if self._vapid is None:
+            from py_vapid import Vapid02  # RFC 8292 ("vapid t=…, k=…"), junto con aes128gcm
 
+            self._vapid = Vapid02.from_pem(self._keys()[0].encode())
+        return self._vapid
+
+    def send(self, title: str, body: str, url: str = "/", tag: str | None = None) -> int:
+        """Envía a Windows y a todos los dispositivos. Devuelve cuántos lo recibieron."""
         delivered = 0
         if self.desktop_enabled() and self.desktop.send(title, body, url):
             delivered += 1
+        return delivered + self.send_web(title, body, url, tag)[0]
+
+    def send_web(
+        self, title: str, body: str, url: str = "/", tag: str | None = None
+    ) -> tuple[int, str | None]:
+        """Solo Web Push. Devuelve (entregados, último error) para poder explicarlo."""
+        from pywebpush import WebPushException, webpush
+
         rows = self.db.query("SELECT endpoint, data FROM push_subscriptions")
         if not rows:
-            return delivered
-        private_pem, _ = self._keys()
-        payload = json.dumps(
-            {"title": title, "body": body, "url": url, "tag": tag}, ensure_ascii=False
-        )
+            return 0, "No hay dispositivos suscritos."
+        message: dict[str, Any] = {"title": title, "body": body, "url": url}
+        if tag:  # un tag nulo se volvería "null" y unos avisos taparían a otros
+            message["tag"] = tag
+        payload = json.dumps(message, ensure_ascii=False)
+        delivered, error = 0, None
         for row in rows:
             try:
                 webpush(
                     subscription_info=loads(row["data"]),
                     data=payload,
-                    vapid_private_key=private_pem,
+                    vapid_private_key=self._signer(),
                     vapid_claims={"sub": VAPID_SUBJECT},
                     timeout=10,
                     ttl=24 * 3600,
@@ -110,11 +129,21 @@ class PushService:
                 status = getattr(e.response, "status_code", None)
                 if status in (404, 410):
                     self.unsubscribe(row["endpoint"])
+                    error = (
+                        "Una suscripción caducó y se borró: vuelve a activarlas en ese dispositivo."
+                    )
                 else:
+                    error = f"El servicio de push respondió {status}: {e}"[:300]
                     log.warning("Push fallido (%s): %s", status, e)
             except Exception as e:
+                error = f"No pude enviar el aviso: {e}"[:300]
                 log.warning("Push fallido: %s", e)
-        return delivered
+        self.settings.set("push.last_error", None if delivered else error)
+        return delivered, (None if delivered else error)
+
+    def is_subscribed(self, endpoint: str) -> bool:
+        rows = self.db.query("SELECT 1 FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
+        return bool(rows)
 
 
 JOB_TITLES = {
@@ -125,6 +154,26 @@ JOB_TITLES = {
     "checkin": "Check-in evaluado",
     "replan": "Plan re-diseñado",
 }
+KIND_NAMES = {**JOB_TITLES, "practice": "Práctica"}
+
+
+def _subject(job: dict) -> str:
+    params = job.get("params") or {}
+    raw_case = params.get("case")
+    case: dict = raw_case if isinstance(raw_case, dict) else {}
+    text = (
+        params.get("question") or params.get("goal") or case.get("question") or params.get("note")
+    )
+    return str(text or KIND_NAMES.get(str(job.get("kind")), "Análisis"))[:90]
+
+
+def _origin_url(job: dict) -> str:
+    """Pantalla desde la que se lanzó el job: ahí se ve el error."""
+    params = job.get("params") or {}
+    kind = job.get("kind")
+    if kind in ("checkin", "replan") and params.get("goal_id"):
+        return f"/objetivos/{params['goal_id']}"
+    return {"case": "/caso", "practice": "/practica", "goal": "/objetivos"}.get(str(kind), "/")
 
 
 def job_notification(job: dict) -> tuple[str, str, str] | None:
@@ -132,14 +181,14 @@ def job_notification(job: dict) -> tuple[str, str, str] | None:
     kind, status = job.get("kind"), job.get("status")
     if kind not in JOB_TITLES:
         return None
-    params = job.get("params") or {}
-    subject = str(params.get("question") or params.get("goal") or "")[:90]
+    subject = _subject(job)
     if status == "failed":
-        return "Oraqlo: algo falló", f"{subject} — {job.get('error') or 'error'}"[:180], "/"
+        error = job.get("error") or "error desconocido"
+        return "Oraqlo: algo falló", f"{subject} — {error}"[:180], _origin_url(job)
     if status != "done":
         return None
     result = job.get("result") or {}
-    url = f"/historial/{job['run_id']}" if job.get("run_id") else "/"
+    url = f"/historial/{job['run_id']}" if job.get("run_id") else _origin_url(job)
     if kind == "goal":
         url = f"/objetivos/{result.get('goal_id')}"
         up = result.get("uplift", 0.0)
@@ -156,3 +205,15 @@ def job_notification(job: dict) -> tuple[str, str, str] | None:
         verdict = result.get("verdict") or {}
         body = f"{subject}: {verdict.get('decision', '—')} ({verdict.get('confidence', 0):.0%})"
     return JOB_TITLES[kind], body, url
+
+
+def practice_alert(job: dict, failures: int) -> tuple[str, str, str] | None:
+    """La práctica corre sola cada hora: solo se avisa si falla dos veces seguidas."""
+    if job.get("kind") != "practice" or job.get("status") != "failed" or failures != 2:
+        return None
+    error = job.get("error") or "error desconocido"
+    return (
+        "La práctica automática está fallando",
+        f"Dos pasadas seguidas: {error}"[:180],
+        "/practica",
+    )

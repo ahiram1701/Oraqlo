@@ -11,7 +11,7 @@ export default function CaseEditor() {
   const [text, setText] = useState("");
   const [research, setResearch] = useState(false);
   const [jobId, setJobId] = useStoredJob("case");
-  const job = useJob(jobId);
+  const job = useJob(jobId, () => setJobId(null));
 
   useEffect(() => {
     if (template.data && !text) setText(JSON.stringify(template.data, null, 2));

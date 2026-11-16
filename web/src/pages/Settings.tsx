@@ -5,9 +5,9 @@ import ProvidersCard from "../components/ProvidersCard";
 import RolesCard from "../components/RolesCard";
 import { DoctorCard, ImportCard, UpdatesCard } from "../components/SystemCards";
 import { useSetup } from "../components/ProvidersCard";
-import { Button, Card, ErrorNote, SectionTitle, Toggle } from "../components/ui";
+import { Badge, Button, Card, ErrorNote, SectionTitle, Toggle } from "../components/ui";
 import { api } from "../lib/api";
-import { pushSupported, subscribePush, unsubscribePush } from "../lib/push";
+import { pushState, subscribePush, unsubscribePush } from "../lib/push";
 
 type NotifyWindows = { supported: boolean; enabled: boolean };
 
@@ -38,37 +38,61 @@ export function WindowsNotifications() {
 }
 
 function NotificationsCard() {
-  const [pushState, setPushState] = useState<string | null>(null);
+  const qc = useQueryClient();
+  const state = useQuery({ queryKey: ["push-state"], queryFn: pushState });
+  const [note, setNote] = useState<string | null>(null);
   const push = useMutation({
     mutationFn: async (on: boolean) => (on ? subscribePush() : unsubscribePush()),
-    onSuccess: (msg) => setPushState(msg),
+    onSuccess: (msg) => {
+      setNote(msg);
+      qc.invalidateQueries({ queryKey: ["push-state"] });
+    },
   });
-  const test = useMutation({ mutationFn: () => api.post("/push/test") });
+  const test = useMutation({
+    mutationFn: () => api.post<{ delivered: number }>("/push/test"),
+    onSuccess: () => setNote("Aviso de prueba enviado: debería llegarte en unos segundos."),
+  });
+  const s = state.data;
   return (
     <Card>
       <SectionTitle>Notificaciones</SectionTitle>
       <WindowsNotifications />
       <p className="mb-3 text-sm text-muted">
-        Avisos en este dispositivo (navegador o celular) cuando termina un análisis, vence un hito o Oraqlo se actualiza. En iPhone, primero
-        añade la app a la pantalla de inicio.
+        Avisos en este dispositivo cuando termina un análisis, vence un hito, falla la práctica o Oraqlo se actualiza.
       </p>
-      {pushSupported() ? (
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={() => push.mutate(true)} disabled={push.isPending}>
-            Activar en este dispositivo
-          </Button>
-          <Button variant="secondary" onClick={() => test.mutate()}>
-            Enviar prueba
-          </Button>
-          <Button variant="ghost" onClick={() => push.mutate(false)}>
-            Desactivar
-          </Button>
-        </div>
+      {!s ? null : s.kind === "unsupported" ? (
+        <p className="rounded-xl bg-warn/10 p-3 text-sm text-warn">{s.reason}</p>
+      ) : s.kind === "denied" ? (
+        <p className="rounded-xl bg-warn/10 p-3 text-sm text-warn">
+          Bloqueaste las notificaciones de Oraqlo. Permítelas en los ajustes del sistema (en iPhone: Ajustes → Notificaciones →
+          Oraqlo) y vuelve aquí.
+        </p>
       ) : (
-        <p className="text-sm text-warn">Este navegador no admite notificaciones push (o la app no está instalada).</p>
+        <>
+          <p className="mb-3 flex items-center gap-2 text-sm">
+            En este dispositivo:{" "}
+            {s.kind === "on" ? <Badge tone="good">activadas</Badge> : <Badge>desactivadas</Badge>}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {s.kind === "on" ? (
+              <>
+                <Button variant="secondary" disabled={test.isPending} onClick={() => test.mutate()}>
+                  {test.isPending ? "Enviando…" : "Enviar prueba"}
+                </Button>
+                <Button variant="ghost" disabled={push.isPending} onClick={() => push.mutate(false)}>
+                  Desactivar
+                </Button>
+              </>
+            ) : (
+              <Button onClick={() => push.mutate(true)} disabled={push.isPending}>
+                {push.isPending ? "Activando…" : "Activar en este dispositivo"}
+              </Button>
+            )}
+          </div>
+        </>
       )}
-      {pushState && <p className="mt-2 text-sm text-muted">{pushState}</p>}
-      <ErrorNote error={push.error ?? test.error} />
+      {note && <p className="mt-2 text-sm text-muted">{note}</p>}
+      <ErrorNote error={push.error ?? test.error ?? state.error} />
     </Card>
   );
 }

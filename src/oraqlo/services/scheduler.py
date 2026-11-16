@@ -17,6 +17,8 @@ from oraqlo.store.settings import SettingsStore
 
 log = logging.getLogger(__name__)
 
+RETRY_AFTER = timedelta(minutes=15)  # tras un fallo no se espera el intervalo completo
+
 
 @dataclass
 class PeriodicTask:
@@ -41,6 +43,18 @@ class Scheduler:
 
     def _key(self, name: str) -> str:
         return f"scheduler.last_run.{name}"
+
+    def _error_key(self, name: str) -> str:
+        return f"scheduler.error.{name}"
+
+    def errors(self) -> dict[str, dict]:
+        """Último fallo de cada tarea que no se ha recuperado ({nombre: {at, error}})."""
+        found = {}
+        for name in self.tasks:
+            value = self.settings.get(self._error_key(name))
+            if value:
+                found[name] = value
+        return found
 
     def last_run(self, name: str) -> datetime | None:
         value = self.settings.get(self._key(name))
@@ -67,11 +81,22 @@ class Scheduler:
                 if not self.due(task, now):
                     continue
                 self._running.add(task.name)
+                # Se marca antes de ejecutar: una tarea lenta no se lanza dos veces.
                 self.settings.set(self._key(task.name), now.isoformat())
                 task.action()
                 ran.append(task.name)
-            except Exception:
+                if self.settings.get(self._error_key(task.name)):
+                    self.settings.set(self._error_key(task.name), None)
+            except Exception as e:
                 log.exception("La tarea periódica %s falló", task.name)
+                # Reintento en RETRY_AFTER (no un día entero si es el backup diario)
+                # y el error queda guardado para mostrarlo en Diagnóstico.
+                interval = task.interval()
+                retry_at = now - interval + min(RETRY_AFTER, interval)
+                self.settings.set(self._key(task.name), retry_at.isoformat())
+                self.settings.set(
+                    self._error_key(task.name), {"at": now.isoformat(), "error": str(e)[:300]}
+                )
             finally:
                 self._running.discard(task.name)
         return ran

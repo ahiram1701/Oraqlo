@@ -22,3 +22,14 @@ test("detecta probabilidades que no suman 1 y utilidades que faltan", () => {
 test("pide pregunta y acciones", () => {
   expect(validateCase({})).toEqual(expect.arrayContaining(['Falta "question".', 'Define al menos una acción en "actions".']));
 });
+
+import { describeValidation } from "./api";
+
+test("los errores de validación del servidor se explican en español", () => {
+  expect(
+    describeValidation([{ loc: ["body", "question"], type: "string_too_long", msg: "String should have at most 2000 characters", ctx: { max_length: 2000 } }]),
+  ).toBe("La pregunta es demasiado larga: máximo 2000 caracteres.");
+  expect(describeValidation([{ loc: ["body", "port"], type: "greater_than_equal", ctx: { ge: 1024 } }])).toBe("El puerto debe ser al menos 1024.");
+  expect(describeValidation([{ loc: ["body", "note"], type: "string_too_short", ctx: { min_length: 1 } }])).toBe("La nota no puede estar vacía.");
+  expect(describeValidation("raro")).toBe("Hay datos que no son válidos.");
+});

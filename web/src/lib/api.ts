@@ -221,6 +221,53 @@ export class ApiError extends Error {
   }
 }
 
+const FIELD_NAMES: Record<string, string> = {
+  question: "La pregunta",
+  note: "La nota",
+  value: "La clave",
+  port: "El puerto",
+  name: "El nombre",
+  outcome: "El resultado",
+  horizon_days: "El horizonte",
+  interval_min: "El intervalo",
+  case: "El caso",
+};
+
+interface ValidationIssue {
+  loc?: (string | number)[];
+  msg?: string;
+  type?: string;
+  ctx?: Record<string, unknown>;
+}
+
+/** Los 422 de FastAPI traen una lista en inglés: se convierte en una frase en español. */
+export function describeValidation(detail: unknown): string {
+  if (!Array.isArray(detail) || detail.length === 0) return "Hay datos que no son válidos.";
+  const issue = detail[0] as ValidationIssue;
+  const field = String(issue.loc?.filter((x) => x !== "body").at(-1) ?? "");
+  const who = FIELD_NAMES[field] ?? (field ? `El campo «${field}»` : "Un dato");
+  const ctx = issue.ctx ?? {};
+  switch (issue.type) {
+    case "string_too_long":
+      return `${who} es demasiado larga: máximo ${ctx.max_length} caracteres.`;
+    case "string_too_short":
+      return ctx.min_length === 1 ? `${who} no puede estar vacía.` : `${who} es demasiado corta: mínimo ${ctx.min_length} caracteres.`;
+    case "missing":
+      return `${who} es obligatoria.`;
+    case "greater_than_equal":
+    case "greater_than":
+      return `${who} debe ser al menos ${ctx.ge ?? ctx.gt}.`;
+    case "less_than_equal":
+    case "less_than":
+      return `${who} debe ser como mucho ${ctx.le ?? ctx.lt}.`;
+    case "int_parsing":
+    case "float_parsing":
+      return `${who} debe ser un número.`;
+    default:
+      return `${who} no es válida.`;
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api${path}`, {
     method,
@@ -231,7 +278,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     let detail = res.statusText;
     try {
       const data = await res.json();
-      detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
+      detail = typeof data.detail === "string" ? data.detail : describeValidation(data.detail);
     } catch {
       /* respuesta sin JSON */
     }
