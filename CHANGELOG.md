@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.0](https://github.com/ahiram1701/Oraqlo/compare/v0.7.0...v0.8.0) (2026-11-16)
+
+
+### Novedades
+
+* análisis completo calibrado y predicciones que no se olvidan ([#50](https://github.com/ahiram1701/Oraqlo/issues/50)) ([fbd0d4c](https://github.com/ahiram1701/Oraqlo/commit/fbd0d4ca75f83cfdd6cb5c24095843ffcb540b11))
+
+
+### Correcciones
+
+* la ventana y la interfaz se ponen al día tras actualizar ([#48](https://github.com/ahiram1701/Oraqlo/issues/48)) ([44251a2](https://github.com/ahiram1701/Oraqlo/commit/44251a2222a2a7ec9a4439ea354c22bfdfd6d9e5))
+* no perder resoluciones y reintentar lo interrumpido ([#49](https://github.com/ahiram1701/Oraqlo/issues/49)) ([56f6115](https://github.com/ahiram1701/Oraqlo/commit/56f611590dfc331580133d5db0f2a1b9c93a3f13))
+
 ## [0.7.0](https://github.com/ahiram1701/Oraqlo/compare/v0.6.0...v0.7.0) (2026-11-16)
 
 
