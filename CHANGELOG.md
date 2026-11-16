@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/ahiram1701/Oraqlo/compare/v0.3.0...v0.4.0) (2026-11-16)
+
+
+### Novedades
+
+* instalador Oraqlo-Setup.exe y configuración completa desde la app ([#23](https://github.com/ahiram1701/Oraqlo/issues/23)) ([2a67904](https://github.com/ahiram1701/Oraqlo/commit/2a67904a215f18e7e9ae6e31714727ded00096e8))
+
 ## [0.3.0](https://github.com/ahiram1701/Oraqlo/compare/v0.2.2...v0.3.0) (2026-11-16)
 
 
