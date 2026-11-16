@@ -73,7 +73,7 @@ function sortedOutcomes(outcomes: Record<string, number>) {
 export default function Ledger() {
   const { data, error, isLoading } = useQuery({
     queryKey: ["ledger"],
-    queryFn: () => api.get<{ open: Forecast[]; resolved: ResolvedForecast[] }>("/ledger"),
+    queryFn: () => api.get<{ open: Forecast[]; resolved: ResolvedForecast[]; overdue?: number }>("/ledger"),
   });
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
@@ -93,7 +93,11 @@ export default function Ledger() {
       )}
       <Card>
         <SectionTitle aside={<Badge>{data?.open.length ?? 0}</Badge>}>Pendientes</SectionTitle>
-        <p className="-mt-1 mb-3 text-xs text-muted">Toca una cuando sepas qué pasó.</p>
+        <p className="-mt-1 mb-3 text-xs text-muted">
+          {data?.overdue
+            ? `${data.overdue} ya deberían saberse (salen primero). Toca una y marca qué pasó: así Oraqlo aprende.`
+            : "Toca una cuando sepas qué pasó."}
+        </p>
         {isLoading && <Skeleton className="h-16" />}
         {data && data.open.length === 0 && (
           <Empty>
@@ -112,6 +116,7 @@ export default function Ledger() {
       </Card>
       <Card>
         <SectionTitle aside={<Badge>{data?.resolved.length ?? 0}</Badge>}>Resueltas</SectionTitle>
+        {total > 0 && <ExportLink className="-mt-1 mb-3" />}
         {data && data.resolved.length === 0 && (
           <Empty>
             Cuando marques cómo acabó una predicción, aparecerá aquí con su puntuación (Brier: 0 es perfecto; menos es mejor). Así
@@ -297,5 +302,14 @@ function ResolvedRow({ r }: { r: ResolvedForecast }) {
         </div>
       )}
     </li>
+  );
+}
+
+/** Todas las predicciones como CSV, para una hoja de cálculo. */
+export function ExportLink({ className }: { className?: string }) {
+  return (
+    <a href="/api/ledger.csv" download className={cx("inline-flex items-center gap-1.5 text-sm text-accent underline", className)}>
+      <Icon name="download" className="size-4" /> Exportar todo (CSV)
+    </a>
   );
 }

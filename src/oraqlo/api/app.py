@@ -15,7 +15,7 @@ import threading
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta
 from html import escape
 from pathlib import Path
 from typing import Any, Literal
@@ -26,6 +26,7 @@ from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
     PlainTextResponse,
+    Response,
     StreamingResponse,
 )
 from pydantic import BaseModel, Field
@@ -52,7 +53,7 @@ from oraqlo.services.notify import DesktopNotifier
 from oraqlo.services.notify import supported as notify_supported
 from oraqlo.services.push import PushService, job_notification, practice_alert
 from oraqlo.services.scheduler import PeriodicTask, Scheduler
-from oraqlo.services.serialize import goal_json
+from oraqlo.services.serialize import goal_json, ledger_to_csv
 from oraqlo.services.userconfig import ConfigError, apply_changes, set_secret, toml_roles
 from oraqlo.store.db import dumps, loads
 from oraqlo.updater import UpdateError, Updater, is_managed, is_newer, refresh_launcher
@@ -228,6 +229,23 @@ def create_app(
             )
             notified.add(key)
         service.store.settings.set("push.notified_milestones", sorted(notified))
+
+        # Predicciones que ya deberían saberse: sin resolverlas, la calibración no
+        # aprende. Un aviso cuando aparecen nuevas, no uno por predicción.
+        told = set(service.store.settings.get("push.notified_forecasts", []))
+        due = [f for f in service.overdue_forecasts() if f.id not in told]
+        if due:
+            n = len(due)
+            push.send(
+                "Predicciones para resolver",
+                f"{n} predicción{'es' if n > 1 else ''} ya debería{'n' if n > 1 else ''} "
+                "saberse. Marca qué pasó para que Oraqlo aprenda.",
+                url="/predicciones",
+                tag="forecasts-due",
+            )
+            open_ids = {f.id for f in service.store.ledger.open_forecasts}
+            told = (told & open_ids) | {f.id for f in due}  # sin crecer para siempre
+            service.store.settings.set("push.notified_forecasts", sorted(told))
 
     scheduler.add(
         PeriodicTask(
@@ -447,6 +465,7 @@ def create_app(
     app.state.runner = runner
     app.state.scheduler = scheduler
     app.state.push = push
+    app.state.notify_overdue = notify_overdue  # para los tests
     app.state.updater = updater
     app.state.restart_requested = False
     app.state.request_restart = request_restart
@@ -948,6 +967,21 @@ def create_app(
     @app.get("/api/ledger")
     def ledger() -> dict:
         return service.ledger_view()
+
+    @app.get("/api/ledger/overdue")
+    def ledger_overdue() -> dict:
+        return {"count": len(service.overdue_forecasts())}
+
+    @app.get("/api/ledger.csv", include_in_schema=False)
+    def ledger_csv() -> Response:
+        stamp = datetime.now().strftime("%Y-%m-%d")
+        return Response(
+            ledger_to_csv(service.store.ledger),
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="oraqlo-predicciones-{stamp}.csv"'
+            },
+        )
 
     @app.post("/api/ledger/{forecast_id}/resolve")
     def ledger_resolve(forecast_id: str, body: ResolveIn) -> dict:
