@@ -1,0 +1,319 @@
+"""Oraqlo como app de escritorio de Windows: ventana propia + icono en la bandeja.
+
+    pythonw -m oraqlo.desktop --home <home> [--path /objetivos/x]
+
+La ventana es WebView2 (el motor de Edge que trae Windows) mostrando la misma
+app web que sirve el servidor local; no hay una segunda interfaz que mantener.
+El servidor lo sigue arrancando la tarea programada: cerrar la ventana no lo
+para (los análisis y avisos siguen), solo la esconde en la bandeja.
+
+Lo lanza `launcher.py --open` (accesos directos del menú Inicio, avisos). Si
+algo falla aquí (sin WebView2, dependencias rotas), sale con FALLBACK_EXIT_CODE
+y el lanzador abre el navegador como antes.
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import json
+import logging
+import os
+import sys
+import threading
+import time
+import urllib.request
+import webbrowser
+from pathlib import Path
+from typing import Any
+
+log = logging.getLogger(__name__)
+
+FALLBACK_EXIT_CODE = 3
+TITLE = "Oraqlo"
+APP_ID = "Oraqlo.Desktop"
+MUTEX = "Local\\Oraqlo.Desktop"
+BACKGROUND = "#0b0d12"  # mismo fondo que la app: sin destello al abrir
+LIGHT_BACKGROUND = "#f6f7fb"
+DEFAULT_SIZE = (1100, 780)
+MIN_SIZE = (400, 600)
+
+
+# ── utilidades puras (testeables) ─────────────────────────────────────────
+
+
+def read_port(home: Path, default: int = 8765) -> int:
+    try:
+        value = (home / "app" / "port.txt").read_text(encoding="utf-8-sig").strip()
+        return int(value)
+    except (OSError, ValueError):
+        return default
+
+
+def app_url(port: int, path: str | None = None) -> str:
+    path = path or "/"
+    if not path.startswith("/"):
+        path = "/" + path
+    return f"http://127.0.0.1:{port}{path}"
+
+
+def load_geometry(home: Path) -> dict:
+    try:
+        data = json.loads((home / "app" / "window.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"width": DEFAULT_SIZE[0], "height": DEFAULT_SIZE[1]}
+    geo = {
+        "width": max(int(data.get("width", DEFAULT_SIZE[0])), MIN_SIZE[0]),
+        "height": max(int(data.get("height", DEFAULT_SIZE[1])), MIN_SIZE[1]),
+    }
+    if isinstance(data.get("x"), int) and isinstance(data.get("y"), int):
+        geo["x"], geo["y"] = data["x"], data["y"]
+    return geo
+
+
+def save_geometry(home: Path, geometry: dict) -> None:
+    # Se guarda lo que llegó por los eventos resized/moved: leer window.width y
+    # compañía dentro de `closing` bloquea el hilo de la ventana (WinForms Invoke).
+    with contextlib.suppress(OSError):
+        (home / "app" / "window.json").write_text(json.dumps(geometry), encoding="utf-8")
+
+
+def healthy(port: int) -> bool:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=2) as r:
+            data = json.loads(r.read())
+        return data.get("app") == "oraqlo"
+    except (OSError, ValueError):
+        return False
+
+
+# ── Windows (ctypes) ──────────────────────────────────────────────────────
+
+
+def _single_instance() -> bool:
+    """True si somos la primera ventana. El mutex vive mientras viva el proceso."""
+    if os.name != "nt":
+        return True
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateMutexW(None, False, MUTEX)
+    return kernel32.GetLastError() != 183  # ERROR_ALREADY_EXISTS
+
+
+def _focus_existing(path: str | None, home: Path) -> None:
+    """Pide a la ventana que ya existe mostrarse (aunque esté en la bandeja) y abrir
+    `path`. Se hace por archivo y no buscando la ventana por título: escondida no
+    es visible, y la bandeja crea su propia ventana oculta."""
+    import ctypes
+
+    ctypes.windll.user32.AllowSetForegroundWindow(-1)  # ASFW_ANY: que pueda pasar al frente
+    (home / "app" / "open-path.txt").write_text(path or "", encoding="utf-8")
+
+
+def background() -> str:
+    """Fondo inicial según el tema de Windows (la app sigue el mismo)."""
+    if os.name == "nt":
+        try:
+            import winreg
+
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+            )
+            if winreg.QueryValueEx(key, "AppsUseLightTheme")[0]:
+                return LIGHT_BACKGROUND
+        except OSError:
+            pass
+    return BACKGROUND
+
+
+def _set_app_id() -> None:
+    """Agrupa la ventana en la barra de tareas como "Oraqlo", no como Python."""
+    if os.name == "nt":
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+
+
+def _set_icon(window, icon: Path) -> None:
+    """WinForms no toma el icono de `webview.start`: se fija en el Form nativo."""
+    try:
+        import clr  # type: ignore[import-not-found]  # noqa: F401
+        from System.Drawing import Icon  # type: ignore[import-not-found]
+
+        window.native.Icon = Icon(str(icon))
+    except Exception as e:
+        log.debug("Sin icono de ventana: %s", e)
+
+
+# ── app ───────────────────────────────────────────────────────────────────
+
+
+class DesktopApp:
+    def __init__(self, home: Path, path: str | None = None) -> None:
+        self.home = Path(home)
+        self.path = path
+        self.window: Any = None
+        self.tray: Any = None
+        self.quitting = False
+        self.hint_shown = False
+        self.geometry = load_geometry(self.home)
+
+    @property
+    def icon(self) -> Path:
+        return self.home / "setup" / "oraqlo.ico"
+
+    def ensure_server(self, timeout_s: float = 45.0) -> int:
+        """Puerto donde responde Oraqlo; arranca la tarea programada si hace falta."""
+        port = read_port(self.home)
+        if healthy(port):
+            return port
+        import subprocess
+
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        subprocess.run(
+            ["schtasks", "/Run", "/TN", "Oraqlo"], capture_output=True, creationflags=flags
+        )
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            port = read_port(self.home)
+            if healthy(port):
+                return port
+            time.sleep(1)
+        raise RuntimeError("Oraqlo no respondió")
+
+    # ventana
+
+    def show(self) -> None:
+        if self.window is not None:
+            self.window.show()
+            self.window.restore()
+
+    def on_resized(self, width: int, height: int) -> None:
+        self.geometry.update(width=width, height=height)
+
+    def on_moved(self, x: int, y: int) -> None:
+        self.geometry.update(x=x, y=y)
+
+    def on_closing(self) -> bool:
+        """La X esconde la ventana en la bandeja (el servidor sigue)."""
+        save_geometry(self.home, self.geometry)
+        if self.quitting or self.tray is None:
+            return True
+        # Este evento corre en el hilo de la ventana y hide() vuelve a él: llamarlo
+        # aquí mismo lo bloquea. Se esconde desde otro hilo al terminar el evento.
+        threading.Thread(target=self.window.hide, daemon=True).start()
+        if not self.hint_shown:
+            self.hint_shown = True
+            self.tray.notify("Oraqlo sigue en la bandeja. Ábrelo desde aquí.", TITLE)
+        return False
+
+    def watch_open_requests(self) -> None:
+        """Otra instancia pidió abrir una ruta (p. ej. desde un aviso)."""
+        request = self.home / "app" / "open-path.txt"
+        while not self.quitting:
+            if request.exists():
+                try:
+                    path = request.read_text(encoding="utf-8").strip()
+                    request.unlink(missing_ok=True)
+                    if path:
+                        self.window.load_url(app_url(read_port(self.home), path))
+                    self.show()
+                except Exception as e:
+                    log.debug("open-path: %s", e)
+            time.sleep(0.5)
+
+    # bandeja
+
+    def start_tray(self) -> None:
+        import pystray
+        from PIL import Image
+
+        def open_browser(_icon=None, _item=None):
+            webbrowser.open(app_url(read_port(self.home)))
+
+        def quit_app(_icon=None, _item=None):
+            self.quitting = True
+            self.tray.stop()
+            self.window.destroy()
+
+        image = Image.open(self.icon) if self.icon.exists() else Image.new("RGB", (64, 64))
+        self.tray = pystray.Icon(
+            "oraqlo-tray",  # nombre interno distinto del título de la ventana
+            image,
+            TITLE,
+            menu=pystray.Menu(
+                pystray.MenuItem("Abrir Oraqlo", lambda *_: self.show(), default=True),
+                pystray.MenuItem("Abrir en el navegador", open_browser),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Cerrar la ventana", quit_app),
+            ),
+        )
+        self.tray.run_detached()
+
+    def run(self) -> int:
+        import webview
+
+        port = self.ensure_server()
+        webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
+        self.window = webview.create_window(
+            TITLE,
+            app_url(port, self.path),
+            min_size=MIN_SIZE,
+            background_color=background(),
+            text_select=True,
+            **self.geometry,
+        )
+        self.window.events.closing += self.on_closing
+        self.window.events.resized += self.on_resized
+        self.window.events.moved += self.on_moved
+        if self.icon.exists():
+            # before_show corre en el hilo de la ventana: fijar el icono desde otro hilo
+            # (evento `shown`) junto con la bandeja dejaba la ventana colgada.
+            self.window.events.before_show += lambda: _set_icon(self.window, self.icon)
+        try:
+            self.start_tray()
+        except Exception as e:  # sin bandeja la ventana sigue siendo útil
+            log.warning("Sin icono en la bandeja: %s", e)
+            self.tray = None
+        threading.Thread(target=self.watch_open_requests, daemon=True).start()
+        webview.start(
+            private_mode=False,  # recuerda sesión/ajustes del navegador interno
+            storage_path=str(self.home / "app" / "webview"),
+        )
+        self.quitting = True
+        if self.tray is not None:
+            self.tray.stop()
+        return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Oraqlo en su propia ventana.")
+    parser.add_argument("--home", default=os.environ.get("ORAQLO_HOME"), required=False)
+    parser.add_argument("--path", default=None)
+    args = parser.parse_args(argv)
+    if not args.home:
+        from oraqlo.config import default_home
+
+        args.home = str(default_home())
+    home = Path(args.home)
+    (home / "app").mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        filename=home / "app" / "desktop.log",
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
+    if not _single_instance():
+        _focus_existing(args.path, home)
+        return 0
+    _set_app_id()
+    try:
+        return DesktopApp(home, args.path).run()
+    except Exception:
+        log.exception("La ventana de Oraqlo falló; se abrirá el navegador")
+        return FALLBACK_EXIT_CODE
+
+
+if __name__ == "__main__":
+    sys.exit(main())

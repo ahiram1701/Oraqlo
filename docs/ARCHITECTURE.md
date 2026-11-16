@@ -93,6 +93,11 @@ SQLite en modo WAL, con migraciones versionadas por `PRAGMA user_version` y back
 - **`installer/oraqlo.iss`** → **`Oraqlo-Setup.exe`** (Inno Setup, compilado en CI): instalación por usuario sin administrador. Empaqueta el wheel, `uv.exe` (con versión y hash fijados) y el script de instalación. Lo que hace es preguntar y mostrar el progreso; el trabajo lo delega en el script. También registra la desinstalación en "Aplicaciones instaladas".
 - **`scripts/install-windows.ps1`**: el único camino de instalación, tanto para el .exe como a mano. Instala la release en `versions/<X.Y.Z>` y registra la tarea programada. Con `-Uv`, descarga un Python propio en `app/python`, así que el PC no necesita Python. También crea el acceso directo del menú Inicio y, si Tailscale está listo, ejecuta `tailscale serve`.
 - **`launcher.py`**: solo stdlib, se copia fuera de las versiones. Arranca el servidor y reinicia con el código 75. Si la versión pendiente no supera `/api/health` en 60 s, hace **rollback**. Con `--open`, que es lo que usa el acceso directo, abre el navegador y arranca la tarea si hacía falta.
+- **App de escritorio** (`desktop.py`, Windows):
+  - Es una ventana **WebView2** (`pywebview`) que muestra la misma app web servida en 127.0.0.1, más un icono en la bandeja (`pystray`).
+  - Cerrar la ventana la esconde. Hay una sola instancia: una segunda apertura deja la ruta en `app/open-path.txt` y la ventana viva la atiende.
+  - Si no hay WebView2 o algo falla, sale con el código 3 y `launcher.py --open` abre el navegador.
+  - Los avisos nativos (`services/notify.py`, `windows-toasts`) los emite el servidor (`PushService.send`), así que llegan aunque la ventana esté cerrada. Al pulsarlos se ejecuta `launcher.py --open --path`.
 - **Configuración desde la app** (`services/userconfig.py`, `services/doctor.py`):
   - La bienvenida y Ajustes escriben `.env` (claves, de forma atómica) y `oraqlo.toml` (con tomlkit, que conserva los comentarios). Antes de guardar se valida con el cargador real.
   - Los cambios se recargan en caliente: `OraqloService.reload_config` actualiza el mismo objeto de config y vacía la caché de proveedores.

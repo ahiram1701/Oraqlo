@@ -39,6 +39,9 @@ from oraqlo.services.network import (
     tailscale_enabled,
     write_port_file,
 )
+from oraqlo.services.notify import SETTING as NOTIFY_SETTING
+from oraqlo.services.notify import DesktopNotifier
+from oraqlo.services.notify import supported as notify_supported
 from oraqlo.services.push import PushService, job_notification
 from oraqlo.services.scheduler import PeriodicTask, Scheduler
 from oraqlo.services.serialize import goal_json
@@ -128,6 +131,10 @@ class TailscaleIn(BaseModel):
     enabled: bool
 
 
+class ToggleIn(BaseModel):
+    enabled: bool
+
+
 LEGACY_FILES = ("oraqlo_ledger.json", "oraqlo_goals.json", "oraqlo_settings.json")
 LOCAL_ONLY = (
     "Esto solo se puede cambiar desde el PC donde corre Oraqlo. Ábrelo allí desde el menú Inicio."
@@ -181,7 +188,7 @@ def create_app(
         PeriodicTask(
             "milestones",
             lambda: timedelta(hours=6),
-            lambda: push.count() > 0,
+            lambda: push.count() > 0 or push.desktop_enabled(),
             notify_overdue,
             run_on_start=True,
         )
@@ -207,6 +214,8 @@ def create_app(
     cfg = service.config
     updater = Updater(cfg.home, cfg.updates.repo, cfg.updates.channel, db_path=cfg.db_path)
     managed = is_managed(updater.layout)
+    if push.desktop is None and notify_supported(managed):
+        push.desktop = DesktopNotifier(cfg.home)
     staging: dict[str, threading.Thread | None] = {"thread": None}
 
     def request_restart() -> None:
@@ -592,6 +601,32 @@ def create_app(
             raise HTTPException(400, str(e)) from e
         service.reload_config(new)
         return config_view()
+
+    # ── avisos de Windows ────────────────────────────────────────────────
+
+    def notify_view() -> dict:
+        return {
+            "supported": push.desktop is not None and push.desktop.available,
+            "enabled": push.desktop_enabled(),
+        }
+
+    @app.get("/api/notify/windows")
+    def get_notify_windows() -> dict:
+        return notify_view()
+
+    @app.put("/api/notify/windows", dependencies=[Depends(require_local)])
+    def put_notify_windows(body: ToggleIn) -> dict:
+        settings.set(NOTIFY_SETTING, body.enabled)
+        return notify_view()
+
+    @app.post("/api/notify/windows/test", dependencies=[Depends(require_local)])
+    def test_notify_windows() -> dict:
+        if not push.desktop_enabled():
+            raise HTTPException(409, "Los avisos de Windows están desactivados o no disponibles.")
+        ok = push.desktop.send("Oraqlo", "Así se verán los avisos en este PC.", "/ajustes")
+        if not ok:
+            raise HTTPException(502, "Windows no mostró el aviso.")
+        return {"ok": True}
 
     @app.get("/api/doctor")
     def doctor() -> dict:

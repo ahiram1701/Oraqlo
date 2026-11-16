@@ -22,7 +22,9 @@ VAPID_SUBJECT = "https://github.com/ahiram1701/Oraqlo"
 
 
 class PushService:
-    def __init__(self, db: Database, settings: SettingsStore) -> None:
+    def __init__(self, db: Database, settings: SettingsStore, desktop=None) -> None:
+        # Avisos nativos de Windows (services/notify.DesktopNotifier) además de Web Push.
+        self.desktop: Any = desktop
         self.db = db
         self.settings = settings
 
@@ -67,23 +69,32 @@ class PushService:
         with self.db.tx() as conn:
             conn.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
 
+    def desktop_enabled(self) -> bool:
+        from oraqlo.services.notify import SETTING
+
+        return bool(
+            self.desktop is not None and self.desktop.available and self.settings.get(SETTING, True)
+        )
+
     def count(self) -> int:
         return int(self.db.query("SELECT COUNT(*) FROM push_subscriptions")[0][0])
 
     # ── envío ─────────────────────────────────────────────────────────────
 
     def send(self, title: str, body: str, url: str = "/", tag: str | None = None) -> int:
-        """Envía a todos los dispositivos. Devuelve cuántos lo recibieron."""
+        """Envía a todos los dispositivos (y a Windows). Devuelve cuántos lo recibieron."""
         from pywebpush import WebPushException, webpush
 
+        delivered = 0
+        if self.desktop_enabled() and self.desktop.send(title, body, url):
+            delivered += 1
         rows = self.db.query("SELECT endpoint, data FROM push_subscriptions")
         if not rows:
-            return 0
+            return delivered
         private_pem, _ = self._keys()
         payload = json.dumps(
             {"title": title, "body": body, "url": url, "tag": tag}, ensure_ascii=False
         )
-        delivered = 0
         for row in rows:
             try:
                 webpush(

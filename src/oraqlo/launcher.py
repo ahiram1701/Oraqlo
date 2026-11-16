@@ -15,9 +15,9 @@ Bucle:
 3. Si el servidor sale con 75 → hay versión nueva: relanza. Con 0 → fin.
    Con otro código → reintenta con espera creciente (máx. 5 caídas en 10 min).
 
-Con `--open` (lo usan los accesos directos del menú Inicio) no hace nada de lo
-anterior: abre Oraqlo en el navegador y, si no estaba corriendo, arranca antes
-la tarea programada.
+Con `--open` (lo usan los accesos directos del menú Inicio y los avisos) no hace
+nada de lo anterior: abre Oraqlo en su ventana nativa (o en el navegador si la
+versión no la trae o falla) y, si no estaba corriendo, arranca antes la tarea.
 """
 
 from __future__ import annotations
@@ -221,6 +221,8 @@ class Launcher:
 
 TASK_NAME = "Oraqlo"
 OPEN_TIMEOUT_S = 45.0
+DESKTOP_FALLBACK_EXIT_CODE = 3  # oraqlo.desktop no pudo abrir su ventana
+DESKTOP_GRACE_S = 20.0
 
 
 def _start_task() -> None:
@@ -239,14 +241,39 @@ def _message(text: str) -> None:
         print(text, file=sys.stderr)
 
 
+def desktop_command(launcher: Launcher, path: str | None = None) -> list[str] | None:
+    """Comando de la ventana nativa, si la versión activa la trae (>= 0.5)."""
+    version = launcher.read("current.txt")
+    if not version:
+        return None
+    venv = launcher.root / "versions" / version
+    if next(venv.glob("**/site-packages/oraqlo/desktop.py"), None) is None:
+        return None
+    cmd = [str(launcher.python(version)), "-m", "oraqlo.desktop", "--home", str(launcher.home)]
+    return cmd + (["--path", path] if path else [])
+
+
+def _run_desktop(cmd: list[str]) -> bool:
+    """Lanza la ventana. False si avisó de que no puede (→ abrir el navegador)."""
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    proc = subprocess.Popen(cmd, creationflags=flags)
+    try:
+        code = proc.wait(timeout=DESKTOP_GRACE_S)
+    except subprocess.TimeoutExpired:
+        return True  # la ventana está abierta
+    return code != DESKTOP_FALLBACK_EXIT_CODE
+
+
 def open_app(
     launcher: Launcher,
     start: Callable[[], None] = _start_task,
     browse: Callable[[str], object] = webbrowser.open,
     notify: Callable[[str], None] = _message,
     timeout_s: float = OPEN_TIMEOUT_S,
+    path: str | None = None,
+    desktop: Callable[[list[str]], bool] = _run_desktop,
 ) -> int:
-    """Abre Oraqlo en el navegador; si no responde, arranca la tarea y espera."""
+    """Abre Oraqlo en su ventana (o en el navegador); si no responde, arranca la tarea."""
 
     def port() -> int:
         saved = launcher.read("port.txt")
@@ -264,7 +291,11 @@ def open_app(
                 return 1
             launcher.sleep(1.0)
             waited += 1.0
-    browse(f"http://127.0.0.1:{port()}/")
+    cmd = desktop_command(launcher, path)
+    if cmd is not None and desktop(cmd):
+        return 0
+    route = path if path and path.startswith("/") else "/"
+    browse(f"http://127.0.0.1:{port()}{route}")
     return 0
 
 
@@ -274,11 +305,12 @@ def main(argv: list[str] | None = None) -> int:
         "--home", default=os.environ.get("ORAQLO_HOME"), required="ORAQLO_HOME" not in os.environ
     )
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--open", action="store_true", help="abrir Oraqlo en el navegador")
+    parser.add_argument("--open", action="store_true", help="abrir Oraqlo (ventana o navegador)")
+    parser.add_argument("--path", default=None, help="con --open: pantalla a abrir")
     args = parser.parse_args(argv)
     launcher = Launcher(Path(args.home), port=args.port)
     if args.open:
-        return open_app(launcher)
+        return open_app(launcher, path=args.path)
     return launcher.run()
 
 
