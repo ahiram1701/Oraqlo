@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.0](https://github.com/ahiram1701/Oraqlo/compare/v0.6.0...v0.7.0) (2026-11-16)
+
+
+### Novedades
+
+* clave de búsqueda web en Ajustes, con cualquier modelo de IA ([#44](https://github.com/ahiram1701/Oraqlo/issues/44)) ([363be12](https://github.com/ahiram1701/Oraqlo/commit/363be1210b7d393e05adefdbe5ee36a498fc1f31))
+* previsiones más fiables, que aprenden de su historial ([#45](https://github.com/ahiram1701/Oraqlo/issues/45)) ([720af03](https://github.com/ahiram1701/Oraqlo/commit/720af0373accabbdd0d563da400d1a38d713d0dc))
+* resultados más claros, cancelar análisis y errores entendibles ([#46](https://github.com/ahiram1701/Oraqlo/issues/46)) ([3b1215b](https://github.com/ahiram1701/Oraqlo/commit/3b1215b34980f2b35ebd588d1c53ecbfb400a6ec))
+
 ## [0.6.0](https://github.com/ahiram1701/Oraqlo/compare/v0.5.7...v0.6.0) (2026-11-16)
 
 
