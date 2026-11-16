@@ -434,3 +434,22 @@ def test_attestation_que_no_responde_cuenta_como_no_comprobable(monkeypatch):
 
     monkeypatch.setattr(up.subprocess, "run", hang)
     assert up.verify_attestation(Path("x.whl"), "ahiram1701/Oraqlo") is None
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="prioridades de Windows")
+def test_el_servidor_sube_a_prioridad_normal():
+    """Regresión 0.5.6: sin argtypes, SetPriorityClass fallaba en silencio."""
+    code = (
+        "import ctypes; from ctypes import wintypes\n"
+        "k = ctypes.WinDLL('kernel32')\n"
+        "k.GetCurrentProcess.restype = wintypes.HANDLE\n"
+        "k.GetPriorityClass.argtypes = [wintypes.HANDLE]\n"
+        "from oraqlo.cli import _normal_priority\n"
+        "_normal_priority()\n"
+        "print(hex(k.GetPriorityClass(k.GetCurrentProcess())))\n"
+    )
+    below_normal = 0x00004000  # como la tarea programada
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, creationflags=below_normal
+    )
+    assert out.stdout.strip() == "0x20", out.stderr  # NORMAL_PRIORITY_CLASS
