@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.3](https://github.com/ahiram1701/Oraqlo/compare/v0.5.2...v0.5.3) (2026-11-16)
+
+
+### Correcciones
+
+* notificaciones que llegan de verdad, más seguridad, fiabilidad y UX ([#31](https://github.com/ahiram1701/Oraqlo/issues/31)) ([33b4ddc](https://github.com/ahiram1701/Oraqlo/commit/33b4ddc47bb7df6bf6ff4619edf4b9fb7f5ca8a1))
+
 ## [0.5.2](https://github.com/ahiram1701/Oraqlo/compare/v0.5.1...v0.5.2) (2026-11-16)
 
 
