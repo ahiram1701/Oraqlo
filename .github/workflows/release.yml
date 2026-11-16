@@ -26,12 +26,19 @@ jobs:
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+      # Los PRs que abre GITHUB_TOKEN no disparan workflows: lanzamos el CI a mano
+      # sobre la rama del PR de release para que tenga los checks requeridos.
       - name: Lanzar el CI sobre el PR de release
-        if: steps.rp.outputs.pr != ''
+        if: steps.rp.outputs.release_created != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          BRANCH: ${{ fromJSON(steps.rp.outputs.pr).headBranchName }}
-        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+        run: |
+          branch=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --label "autorelease: pending" --json headRefName --jq '.[0].headRefName // empty')
+          if [ -n "$branch" ]; then
+            gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
+          else
+            echo "No hay PR de release abierto."
+          fi
 
   publish:
     needs: release-please
