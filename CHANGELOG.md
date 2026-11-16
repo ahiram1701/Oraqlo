@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.9.0](https://github.com/ahiram1701/Oraqlo/compare/v0.8.0...v0.9.0) (2026-11-16)
+
+
+### Novedades
+
+* Calibración que se entiende ([#55](https://github.com/ahiram1701/Oraqlo/issues/55)) ([63b034f](https://github.com/ahiram1701/Oraqlo/commit/63b034f39242d84de222195eee8f37e8f5bb9dc8))
+* el análisis responde a la pregunta y el horizonte se elige libremente ([#53](https://github.com/ahiram1701/Oraqlo/issues/53)) ([63db931](https://github.com/ahiram1701/Oraqlo/commit/63db931d411634af7fd7ac805c0521d8e4a634ec))
+* filtrar y ordenar en todas las listas ([#54](https://github.com/ahiram1701/Oraqlo/issues/54)) ([b7f8044](https://github.com/ahiram1701/Oraqlo/commit/b7f804418057e7edae73a773512053b63bde0e22))
+
+
+### Correcciones
+
+* abrir la app en su raíz también pide la versión al servidor ([#57](https://github.com/ahiram1701/Oraqlo/issues/57)) ([0f0bfea](https://github.com/ahiram1701/Oraqlo/commit/0f0bfea85540a89370899b39e8c9a413deec89d3))
+* el aviso de actualización no se queda fijo ([#52](https://github.com/ahiram1701/Oraqlo/issues/52)) ([d79d788](https://github.com/ahiram1701/Oraqlo/commit/d79d7884dea7f0760fd88e341db007dcff6f69e8))
+
 ## [0.8.0](https://github.com/ahiram1701/Oraqlo/compare/v0.7.0...v0.8.0) (2026-11-16)
 
 
