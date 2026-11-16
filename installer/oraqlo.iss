@@ -82,6 +82,10 @@ Name: "{userdesktop}\Oraqlo"; Filename: "{code:PythonW}"; \
 Filename: "{code:PythonW}"; Parameters: """{app}\app\launcher.py"" --open --home ""{app}"""; \
   Description: "Abrir Oraqlo"; Flags: postinstall nowait skipifsilent; Check: not IsTest
 
+[UninstallDelete]
+; El registro de instalación no lo copió Inno; los datos (data\, .env, toml) se conservan.
+Type: files; Name: "{app}\setup\install.log"
+
 [UninstallRun]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
   Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\setup\install-windows.ps1"" -Uninstall -OraqloHome ""{app}"""; \
