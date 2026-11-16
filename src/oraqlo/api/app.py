@@ -31,7 +31,7 @@ from fastapi.responses import (
 )
 from pydantic import BaseModel, Field
 
-from oraqlo import __version__
+from oraqlo import __version__, windows_handover
 from oraqlo.api.auth import AuthError, check_request, identify
 from oraqlo.casefile import CaseError, case_to_dict, parse_case, template_json
 from oraqlo.goaltrack import MILESTONE_STATUSES, GoalTracker, GoalTrackError
@@ -443,6 +443,14 @@ def create_app(
             except Exception:
                 log.exception("No pude actualizar el lanzador")
 
+    def replace_old_windows() -> None:
+        # Tras actualizar, la ventana abierta puede ser de otra versión (y no saber
+        # relanzarse sola): el servidor nuevo la cambia por la de su versión.
+        time.sleep(5)  # que el servidor ya responda cuando la ventana nueva pregunte
+        windows_handover.replace_old_windows(
+            updater.layout.home, __version__, note=updater.layout.log
+        )
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         threading.Thread(target=sync_tailscale, name="oraqlo-tailscale", daemon=True).start()
@@ -456,6 +464,10 @@ def create_app(
             log.exception("Avisos de arranque fallidos")
         if background:
             scheduler.start()
+            if managed and windows_handover.supported():
+                threading.Thread(
+                    target=replace_old_windows, name="oraqlo-ventana", daemon=True
+                ).start()
         yield
         scheduler.stop()
         runner.shutdown(wait=False)
