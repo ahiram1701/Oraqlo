@@ -7,7 +7,7 @@ import threading
 
 from oraqlo.config import load_config
 from oraqlo.services.core import OraqloService
-from oraqlo.services.jobs import CANCELLED_MSG, JobRunner
+from oraqlo.services.jobs import CANCELLED_MSG, INTERRUPTED_MSG, JobRunner
 from oraqlo.store import Store
 from test_api import env  # noqa: F401  (fixture compartida)
 
@@ -113,3 +113,27 @@ def test_objetivo_anuncia_sus_pasos(env, monkeypatch):
         emit=lambda t, d: phases.append(d["name"]) if t == "phase" else None,
     )
     assert phases == ["linea_base", "palancas", "plan", "deliberar", "con_plan"]
+
+
+def test_reintentar_lo_interrumpido_por_un_reinicio(tmp_path, env):
+    runner = _runner(tmp_path)
+    seen: list[int] = []
+    runner.handlers["dato"] = lambda x, emit: (seen.append(x), {"ok": True})[1]
+    with runner.db.tx() as conn:  # como si el servidor se hubiera parado a mitad
+        conn.execute(
+            "INSERT INTO jobs (id, kind, status, params) VALUES ('j1', 'dato', 'running', ?)",
+            ('{"x": 7}',),
+        )
+    assert runner.recover() == 1
+    assert runner.get("j1")["error"] == INTERRUPTED_MSG
+
+    new_id = runner.retry("j1")
+    assert new_id and new_id != "j1"
+    _wait(runner, new_id, "done")
+    assert seen == [7]  # mismos parámetros
+    assert runner.retry(new_id) is None  # lo terminado no se reintenta
+    assert runner.retry("no-existe") is None
+    runner.shutdown(wait=True)
+
+    client, *_ = env
+    assert client.post("/api/jobs/no-existe/retry").status_code == 404

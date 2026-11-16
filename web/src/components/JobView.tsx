@@ -245,17 +245,34 @@ export function JobTimeline({
   kind,
   jobId,
   research = false,
+  onRetried,
 }: {
   job: JobState;
   kind?: string;
   /** Si se pasa, aparece el botón «Cancelar». */
   jobId?: string | null;
   research?: boolean;
+  /** Con jobId: si falló o se canceló, «Reintentar» lo relanza y avisa del job nuevo. */
+  onRetried?: (newJobId: string) => void;
 }) {
   const running = job.status === "running" || job.status === "connecting" || job.status === "queued";
   const elapsed = useElapsed(running);
   const expected = expectedPhases(kind, research);
   const [cancelling, setCancelling] = useState<"idle" | "pending" | "asked" | "error">("idle");
+  const [retrying, setRetrying] = useState<"idle" | "pending" | "error">("idle");
+
+  async function retry() {
+    if (!jobId || !onRetried) return;
+    setRetrying("pending");
+    try {
+      const r = await api.post<{ job_id: string }>(`/jobs/${jobId}/retry`);
+      setRetrying("idle");
+      setCancelling("idle");
+      onRetried(r.job_id);
+    } catch {
+      setRetrying("error");
+    }
+  }
 
   async function cancel() {
     if (!jobId) return;
@@ -299,6 +316,14 @@ export function JobTimeline({
     <div className="space-y-3">
       {job.status === "failed" && <ErrorNote error={job.error ?? "El trabajo falló"} />}
       {job.status === "cancelled" && <Notice>Cancelado. Lo que alcanzó a hacer queda abajo.</Notice>}
+      {(job.status === "failed" || job.status === "cancelled") && jobId && onRetried && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" disabled={retrying === "pending"} onClick={retry}>
+            <Icon name="repeat" className="size-4" /> {retrying === "pending" ? "Reintentando…" : "Reintentar"}
+          </Button>
+          {retrying === "error" && <span className="text-sm text-bad">No se pudo reintentar.</span>}
+        </div>
+      )}
       {hasProcess && (
         <details className="group rounded-xl border border-line p-3">
           <summary className="flex cursor-pointer list-none items-center justify-between text-sm text-muted">
