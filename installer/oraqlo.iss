@@ -58,18 +58,29 @@ es.FinishedLabel=Oraqlo quedó instalado y arrancará solo cada vez que inicies 
 Name: "desktopicon"; Description: "Crear un acceso directo en el escritorio"; Flags: unchecked
 
 [InstallDelete]
-; Wheels de instalaciones anteriores.
+; Restos de versiones anteriores del instalador.
 Type: files; Name: "{app}\setup\*.whl"
+Type: files; Name: "{app}\setup\uv.exe"
 
 [Files]
-Source: "{#Wheel}"; DestDir: "{app}\setup"; Flags: ignoreversion
+; El wheel y uv.exe solo se usan durante la instalación (se extraen a {tmp}).
+Source: "{#Wheel}"; Flags: dontcopy
+Source: "{#UvExe}"; Flags: dontcopy
+; El script se queda: lo usa la desinstalación.
 Source: "..\scripts\install-windows.ps1"; DestDir: "{app}\setup"; Flags: ignoreversion
-Source: "{#UvExe}"; DestDir: "{app}\setup"; Flags: ignoreversion
 Source: "oraqlo.ico"; DestDir: "{app}\setup"; Flags: ignoreversion
+
+[Icons]
+Name: "{userprograms}\Oraqlo"; Filename: "{code:PythonW}"; \
+  Parameters: """{app}\app\launcher.py"" --open --home ""{app}"""; WorkingDir: "{app}\app"; \
+  IconFilename: "{app}\setup\oraqlo.ico"; Comment: "Abrir Oraqlo"; Check: not IsTest
+Name: "{userdesktop}\Oraqlo"; Filename: "{code:PythonW}"; \
+  Parameters: """{app}\app\launcher.py"" --open --home ""{app}"""; WorkingDir: "{app}\app"; \
+  IconFilename: "{app}\setup\oraqlo.ico"; Comment: "Abrir Oraqlo"; Tasks: desktopicon; Check: not IsTest
 
 [Run]
 Filename: "{code:PythonW}"; Parameters: """{app}\app\launcher.py"" --open --home ""{app}"""; \
-  Description: "Abrir Oraqlo"; Flags: postinstall nowait skipifsilent; Check: CanOpen
+  Description: "Abrir Oraqlo"; Flags: postinstall nowait skipifsilent; Check: not IsTest
 
 [UninstallRun]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
@@ -77,9 +88,6 @@ Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
   Flags: runhidden waituntilterminated; RunOnceId: "OraqloUninstall"
 
 [Code]
-var
-  InstallOk: Boolean;
-
 function IsTest: Boolean;
 begin
   Result := ExpandConstant('{param:ORAQLOTEST|0}') = '1';
@@ -94,11 +102,6 @@ begin
     Result := Trim(String(S));
 end;
 
-function CanOpen: Boolean;
-begin
-  Result := InstallOk and not IsTest;
-end;
-
 function LogTail(Path: String): String;
 var
   Lines: TArrayOfString;
@@ -107,54 +110,48 @@ begin
   Result := '';
   if LoadStringsFromFile(Path, Lines) then
   begin
-    First := GetArrayLength(Lines) - 12;
+    First := GetArrayLength(Lines) - 10;
     if First < 0 then First := 0;
     for I := First to GetArrayLength(Lines) - 1 do
       Result := Result + Lines[I] + #13#10;
   end;
 end;
 
-procedure CurStepChanged(CurStep: TSetupStep);
+// El trabajo de verdad se hace aquí, ANTES de copiar nada: si falla, Setup se
+// detiene con el error y no queda registrada una instalación a medias.
+// (Ninguna línea puede empezar por "#": el preprocesador la tomaría por directiva.)
+function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
-  Args, Log: String;
+  App, Args, Log: String;
   Code: Integer;
 begin
-  if CurStep <> ssPostInstall then
-    Exit;
-  Log := ExpandConstant('{app}\setup\install.log');
+  Result := '';
+  App := WizardDirValue;
+  ExtractTemporaryFile('{#WheelName}');
+  ExtractTemporaryFile('uv.exe');
+  ExtractTemporaryFile('install-windows.ps1');
+  Log := App + '\setup\install.log';
   DeleteFile(Log);
   Args := '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' +
-    ExpandConstant('{app}\setup\install-windows.ps1') + '"' +
-    ' -Wheel "' + ExpandConstant('{app}\setup\{#WheelName}') + '"' +
-    ' -Uv "' + ExpandConstant('{app}\setup\uv.exe') + '"' +
-    ' -OraqloHome "' + ExpandConstant('{app}') + '"' +
+    ExpandConstant('{tmp}\install-windows.ps1') + '"' +
+    ' -Wheel "' + ExpandConstant('{tmp}\{#WheelName}') + '"' +
+    ' -Uv "' + ExpandConstant('{tmp}\uv.exe') + '"' +
+    ' -OraqloHome "' + App + '"' +
     ' -LogFile "' + Log + '"';
   if IsTest then
-    Args := Args + ' -NoTask -NoTailscale'
-  else
-  begin
-    Args := Args + ' -Shortcuts';
-    if WizardIsTaskSelected('desktopicon') then
-      Args := Args + ' -DesktopShortcut';
-  end;
-  WizardForm.StatusLabel.Caption :=
-    'Preparando Oraqlo. La primera vez descarga Python, puede tardar un par de minutos...';
-  WizardForm.ProgressGauge.Style := npbstMarquee;
-  try
-    InstallOk := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Args, '',
-      SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0);
-  finally
-    WizardForm.ProgressGauge.Style := npbstNormal;
-  end;
-  if not InstallOk then
-    SuppressibleMsgBox('No se pudo terminar de instalar Oraqlo.' + #13#10#13#10 +
-      LogTail(Log) + #13#10 + 'Registro completo: ' + Log, mbCriticalError, MB_OK, IDOK);
+    Args := Args + ' -NoTask -NoTailscale';
+  WizardForm.PreparingLabel.Caption :=
+    'Instalando Oraqlo. La primera vez descarga Python: puede tardar un par de minutos...';
+  WizardForm.PreparingLabel.Visible := True;
+  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Args, '',
+    SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) then
+    Result := 'No se pudo instalar Oraqlo.' + #13#10#13#10 + LogTail(Log) + #13#10 +
+      'Registro completo: ' + Log;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if (CurUninstallStep = usPostUninstall) and not UninstallSilent then
-    // (Ninguna línea puede empezar por "#": el preprocesador la tomaría por directiva.)
     if MsgBox('¿Borrar también tus datos de Oraqlo (historial, objetivos, claves y ajustes)?' + #13#10#13#10 +
       'Si los conservas, Oraqlo los recuperará si lo vuelves a instalar.',
       mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then

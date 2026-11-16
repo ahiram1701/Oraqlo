@@ -151,9 +151,16 @@ if ($Uv) {
     # --no-bin / --no-registry: nada fuera de la carpeta de Oraqlo (ni accesos en
     # ~/.local/bin ni registro de Windows); desinstalar lo borra todo.
     & $Uv python install 3.13 --managed-python --no-bin --no-registry
-    if ($LASTEXITCODE -ne 0) { throw "No se pudo descargar Python." }
-    $Python = (& $Uv python find 3.13 --managed-python | Select-Object -Last 1).Trim()
     Remove-Item -Recurse -Force $env:UV_CACHE_DIR -ErrorAction SilentlyContinue
+    # Se usa el python.exe de la carpeta de la versión concreta, no el enlace
+    # "cpython-3.13-..." que uv crea encima: Windows 11 puede bloquear ese enlace
+    # dentro de un instalador (error 448, RedirectionGuard) y uv sale con error
+    # aunque Python ya quedó completo.
+    $Python = Get-ChildItem (Join-Path $env:UV_PYTHON_INSTALL_DIR "cpython-3.13.*-windows-*") -Directory -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending |
+        ForEach-Object { Join-Path $_.FullName "python.exe" } |
+        Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $Python) { throw "No se pudo descargar Python (revisa tu conexión a internet)." }
 } else {
     Step "Buscando Python 3.12 o superior"
 }
