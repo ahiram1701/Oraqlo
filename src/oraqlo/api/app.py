@@ -263,6 +263,12 @@ def create_app(
             except UpdateError as e:
                 log.warning("Actualización abortada: %s", e)
                 settings.set("update.last_result", {"status": "error", "detail": str(e)})
+            except Exception as e:  # cualquier otro fallo debe verse, no matar el hilo en silencio
+                log.exception("Actualización abortada por un error inesperado")
+                settings.set(
+                    "update.last_result",
+                    {"status": "error", "detail": f"Error inesperado: {e}"[:300]},
+                )
 
         thread = threading.Thread(target=work, name="oraqlo-update", daemon=True)
         staging["thread"] = thread
