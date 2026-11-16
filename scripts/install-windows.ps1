@@ -85,13 +85,30 @@ $Probe = "oraqlo-probe-" + [guid]::NewGuid()
 [IO.File]::WriteAllText((Join-Path $env:LOCALAPPDATA $Probe), "")
 $Virtual = Get-ChildItem (Join-Path $env:LOCALAPPDATA "Packages\*\LocalCache\Local\$Probe") -ErrorAction SilentlyContinue
 Remove-Item (Join-Path $env:LOCALAPPDATA $Probe) -Force -ErrorAction SilentlyContinue
-if ($Virtual) {
+if ($Virtual -and $OraqloHome.StartsWith($env:LOCALAPPDATA, [StringComparison]::OrdinalIgnoreCase)) {
     throw "Esta PowerShell corre dentro de una app empaquetada y Windows redirigiría la instalación a $(Split-Path $Virtual[0].FullName). Ejecuta el instalador desde una PowerShell normal (Win+X > Terminal)."
 }
-if (-not $NoStart -and -not $NoTask -and -not (Test-OraqloHealth $Port)) {
+
+# ── Puerto ───────────────────────────────────────────────────────────────
+# Sin -Port explícito se conserva el de una instalación anterior. Si otra
+# aplicación ocupa el puerto, se usa el siguiente libre: no hace falta elegir.
+# (Luego se cambia desde Ajustes en la app; el lanzador también salta solo.)
+function Test-PortBusy([int]$P) {
     $tcp = New-Object System.Net.Sockets.TcpClient
-    try { $tcp.Connect("127.0.0.1", $Port); $inUse = $true } catch { $inUse = $false } finally { $tcp.Dispose() }
-    if ($inUse) { throw "El puerto $Port lo usa otra aplicación. Elige otro, por ejemplo: -Port 8770" }
+    try { return $tcp.ConnectAsync("127.0.0.1", $P).Wait(300) } catch { return $false } finally { $tcp.Dispose() }
+}
+$PortFile = Join-Path $App "port.txt"
+if (-not $PSBoundParameters.ContainsKey("Port") -and (Test-Path $PortFile)) {
+    $saved = (Get-Content $PortFile -Raw).Trim().TrimStart([char]0xFEFF)
+    if ($saved -match '^\d+$') { $Port = [int]$saved }
+}
+if (-not (Test-OraqloHealth $Port)) {
+    $Wanted = $Port
+    while (Test-PortBusy $Port) {
+        $Port++
+        if ($Port -gt $Wanted + 100) { throw "No encontré un puerto libre entre $Wanted y $Port." }
+    }
+    if ($Port -ne $Wanted) { Warn "El puerto $Wanted lo usa otra aplicación: Oraqlo usará el $Port (puedes cambiarlo en Ajustes)." }
 }
 
 # ── Python 3.12+ ─────────────────────────────────────────────────────────
@@ -167,6 +184,7 @@ try {
     }
     # Sin BOM: Set-Content -Encoding UTF8 de PowerShell 5.1 lo añadiría.
     [IO.File]::WriteAllText($CurrentFile, $NewVersion)
+    [IO.File]::WriteAllText($PortFile, "$Port")
     Add-Content -Path (Join-Path $App "update.log") -Value "$(Get-Date -Format s) [instalador] instalada $NewVersion"
 
     $env:ORAQLO_HOME = $OraqloHome
@@ -207,6 +225,8 @@ if (-not $NoTask) {
         Start-ScheduledTask -TaskName $TaskName
         $healthy = $false
         foreach ($i in 1..60) {
+            # El lanzador puede haber saltado de puerto si otra app lo ocupó entretanto.
+            if (Test-Path $PortFile) { $Port = [int](Get-Content $PortFile -Raw).Trim().TrimStart([char]0xFEFF) }
             $h = Test-OraqloHealth $Port
             if ($h) { $healthy = $true; break }
             Start-Sleep -Seconds 1
@@ -224,6 +244,8 @@ if (-not $NoTailscale) {
     } else {
         Step "Publicando Oraqlo en tu tailnet (tailscale serve, HTTPS)"
         & $ts serve --bg $Port
+        # Marca para que Oraqlo mantenga la publicación si alguna vez cambia de puerto.
+        [IO.File]::WriteAllText((Join-Path $App "tailscale.txt"), "on")
         try {
             $status = & $ts status --json | ConvertFrom-Json
             $dns = $status.Self.DNSName.TrimEnd(".")
@@ -237,5 +259,6 @@ if (-not $NoTailscale) {
 }
 
 Write-Host ""
-Write-Host "Listo. Datos: $OraqloHome  ·  Registro: $App\update.log" -ForegroundColor Green
+Write-Host "Listo. En este PC: http://127.0.0.1:$Port  ·  Datos: $OraqloHome" -ForegroundColor Green
+Write-Host "El puerto se cambia en Ajustes > Conexión. Registro: $App\update.log"
 Write-Host "Las actualizaciones se instalan solas (updates.mode en oraqlo.toml: auto | notify | off)."

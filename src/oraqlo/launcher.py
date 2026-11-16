@@ -8,7 +8,8 @@ de Windows al iniciar sesión:
     pythonw.exe <home>\\app\\launcher.py --home <home> --port 8765
 
 Bucle:
-1. Lee current.txt y arranca `versions/<v>/.../python -m oraqlo.cli serve`.
+1. Lee current.txt y el puerto (port.txt; si otra aplicación lo ocupa, salta al
+   siguiente libre y lo guarda) y arranca `versions/<v>/.../python -m oraqlo.cli serve`.
 2. Si la versión está "pendiente" (recién actualizada), exige /api/health en 60 s;
    si no responde, la mata y vuelve a previous.txt (rollback automático).
 3. Si el servidor sale con 75 → hay versión nueva: relanza. Con 0 → fin.
@@ -20,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -30,6 +32,22 @@ from pathlib import Path
 
 RESTART_EXIT_CODE = 75
 HEALTH_TIMEOUT_S = 60.0
+PORT_SCAN = 100  # puertos que se prueban tras el elegido si está ocupado
+
+
+def port_busy(port: int) -> bool:
+    """¿Algo escucha en 127.0.0.1:<port>, o no se puede ocupar?"""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.3):
+            return True
+    except OSError:
+        pass
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("127.0.0.1", port))
+        except OSError:
+            return True
+    return False
 
 
 def is_oraqlo_health(body: bytes) -> bool:
@@ -49,6 +67,7 @@ class Launcher:
         healthy: Callable[[int], bool] | None = None,
         sleep: Callable[[float], None] = time.sleep,
         health_timeout_s: float = HEALTH_TIMEOUT_S,
+        busy: Callable[[int], bool] = port_busy,
     ) -> None:
         self.home = Path(home)
         self.root = self.home / "app"
@@ -57,6 +76,7 @@ class Launcher:
         self.healthy = healthy or self._healthy
         self.sleep = sleep
         self.health_timeout_s = health_timeout_s
+        self.busy = busy
         self.crashes: list[float] = []
 
     # ── archivos de estado ────────────────────────────────────────────────
@@ -79,6 +99,30 @@ class Launcher:
         stamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
         with (self.root / "update.log").open("a", encoding="utf-8") as fh:
             fh.write(f"{stamp} [lanzador] {message}\n")
+
+    # ── puerto ────────────────────────────────────────────────────────────
+
+    def resolve_port(self) -> int:
+        """Puerto de port.txt (o --port). Si otra app lo ocupa, el siguiente libre."""
+        saved = self.read("port.txt")
+        preferred = int(saved) if saved and saved.isdigit() else self.port
+        # Unos segundos de gracia: tras un reinicio, el proceso anterior suelta el puerto.
+        for _ in range(5):
+            if not self.busy(preferred):
+                break
+            self.sleep(1.0)
+        else:
+            for candidate in range(preferred + 1, min(preferred + PORT_SCAN, 65535) + 1):
+                if not self.busy(candidate):
+                    self.log(f"el puerto {preferred} lo usa otra aplicación; uso {candidate}")
+                    preferred = candidate
+                    break
+            else:
+                self.log(f"no encontré puerto libre tras {preferred}; lo intento igualmente")
+        if saved != str(preferred):
+            self.write("port.txt", str(preferred))
+        self.port = preferred
+        return preferred
 
     # ── procesos ──────────────────────────────────────────────────────────
 
@@ -139,6 +183,7 @@ class Launcher:
         if not version:
             raise SystemExit("No hay current.txt: reinstala Oraqlo.")
         pending = self.read("pending.txt") == version
+        self.resolve_port()
         proc = self.spawn(self.command(version))
         if pending:
             if not self.wait_healthy(proc):

@@ -39,7 +39,7 @@ irm https://github.com/ahiram1701/Oraqlo/releases/latest/download/install-window
 powershell -ExecutionPolicy Bypass -File $env:TEMP\install-oraqlo.ps1
 ```
 
-Si el puerto 8765 ya lo usa otra aplicación, el instalador se detiene y te lo dice; elige otro con `-Port 8770`.
+No tienes que elegir puerto. Oraqlo usa el 8765 y, si otra aplicación lo ocupa, toma el siguiente libre. Lo hace al instalar y también cada vez que arranca. La dirección del celular no cambia, porque Oraqlo mantiene `tailscale serve` apuntando al puerto real. Si prefieres otro puerto, cámbialo en **Ajustes → Conexión**.
 
 El instalador hace lo siguiente:
 

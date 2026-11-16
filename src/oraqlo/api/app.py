@@ -29,6 +29,14 @@ from oraqlo.casefile import CaseError, case_to_dict, parse_case, template_json
 from oraqlo.goaltrack import MILESTONE_STATUSES, GoalTracker
 from oraqlo.services.core import OraqloService
 from oraqlo.services.jobs import TERMINAL, JobRunner
+from oraqlo.services.network import (
+    MAX_PORT,
+    MIN_PORT,
+    TailscaleServe,
+    port_in_use,
+    tailscale_enabled,
+    write_port_file,
+)
 from oraqlo.services.push import PushService, job_notification
 from oraqlo.services.scheduler import PeriodicTask, Scheduler
 from oraqlo.services.serialize import goal_json
@@ -93,7 +101,15 @@ class PracticeIn(BaseModel):
 # ── fábrica ──────────────────────────────────────────────────────────────
 
 
-def create_app(service: OraqloService | None = None, background: bool = True) -> FastAPI:
+class PortChange(BaseModel):
+    port: int = Field(ge=MIN_PORT, le=MAX_PORT)
+
+
+def create_app(
+    service: OraqloService | None = None,
+    background: bool = True,
+    tailscale: TailscaleServe | None = None,
+) -> FastAPI:
     """`background=False` (tests): sin scheduler; los jobs siguen corriendo en hilos."""
     service = service or OraqloService()
     runner = JobRunner(service)
@@ -275,8 +291,22 @@ def create_app(service: OraqloService | None = None, background: bool = True) ->
             )
             marker.unlink(missing_ok=True)
 
+    # ── puerto y tailnet ──────────────────────────────────────────────────
+    ts = tailscale or TailscaleServe()
+    app_dir = updater.layout.root
+
+    def sync_tailscale() -> None:
+        """Si el lanzador movió el puerto, `tailscale serve` debe seguirlo (la URL no cambia)."""
+        port = getattr(app.state, "port", None)
+        if managed and port and tailscale_enabled(app_dir):
+            try:
+                ts.ensure(port)
+            except Exception:
+                log.exception("No pude sincronizar tailscale serve")
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        threading.Thread(target=sync_tailscale, name="oraqlo-tailscale", daemon=True).start()
         recovered = runner.recover()
         if recovered:
             log.warning("%d job(s) interrumpidos por reinicio marcados como fallidos", recovered)
@@ -357,6 +387,47 @@ def create_app(service: OraqloService | None = None, background: bool = True) ->
         return {
             **result,
             "detail": result["detail"] + " Se activará cuando no haya análisis en curso.",
+        }
+
+    @app.get("/api/server")
+    def server_info() -> dict:
+        port = getattr(app.state, "port", None)
+        return {
+            "port": port,
+            "local_url": f"http://127.0.0.1:{port}" if port else None,
+            "managed": managed,
+            "tailscale": {
+                "installed": ts.installed,
+                "enabled": tailscale_enabled(app_dir),
+                "url": ts.url() if ts.installed else None,
+                "serving_port": ts.serving_port() if ts.installed else None,
+            },
+        }
+
+    @app.put("/api/server/port")
+    def change_port(body: PortChange) -> dict:
+        """Guarda el puerto nuevo y reinicia: el lanzador arranca Oraqlo en él."""
+        if not managed:
+            raise HTTPException(
+                409,
+                "Esta copia no es una instalación gestionada: arráncala con `oraqlo serve --port N`.",
+            )
+        current = getattr(app.state, "port", None)
+        if body.port == current:
+            return {"port": current, "restarting": False, "detail": "Oraqlo ya usa ese puerto."}
+        if port_in_use(body.port):
+            raise HTTPException(
+                409, f"El puerto {body.port} ya lo usa otra aplicación. Elige otro."
+            )
+        if runner.active():
+            raise HTTPException(409, "Hay análisis en curso: cambia el puerto cuando terminen.")
+        write_port_file(app_dir, body.port)
+        request_restart()
+        return {
+            "port": body.port,
+            "restarting": True,
+            "local_url": f"http://127.0.0.1:{body.port}",
+            "detail": f"Oraqlo se reinicia en el puerto {body.port}.",
         }
 
     @app.get("/api/me")
