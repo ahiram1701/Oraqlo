@@ -33,7 +33,7 @@ from oraqlo.services.push import PushService, job_notification
 from oraqlo.services.scheduler import PeriodicTask, Scheduler
 from oraqlo.services.serialize import goal_json
 from oraqlo.store.db import dumps, loads
-from oraqlo.updater import UpdateError, Updater, is_managed
+from oraqlo.updater import UpdateError, Updater, is_managed, is_newer
 
 log = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
@@ -317,6 +317,11 @@ def create_app(service: OraqloService | None = None, background: bool = True) ->
 
     # ── sistema ───────────────────────────────────────────────────────────
 
+    def _pending(key: str) -> str | None:
+        # Tras actualizarse, lo guardado puede ser la versión que ya corre: no es novedad.
+        value = settings.get(key)
+        return value if isinstance(value, str) and is_newer(value, __version__) else None
+
     @app.get("/api/health")
     def health() -> dict:
         return {
@@ -327,8 +332,8 @@ def create_app(service: OraqloService | None = None, background: bool = True) ->
             "uptime_s": round(time.time() - started),
             "active_jobs": runner.active(),
             "update": {
-                "available": settings.get("update.available"),
-                "staged": settings.get("update.staged"),
+                "available": _pending("update.available"),
+                "staged": _pending("update.staged"),
                 "mode": cfg.updates.mode,
                 "managed": managed,
                 "last_check": settings.get("update.last_check"),
