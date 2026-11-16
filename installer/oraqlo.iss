@@ -154,8 +154,9 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if (CurUninstallStep = usPostUninstall) and not UninstallSilent then
-    if MsgBox('¿Borrar también tus datos de Oraqlo (historial, objetivos, claves y ajustes)?' +
-      #13#10#13#10 + 'Si los conservas, Oraqlo los recuperará si lo vuelves a instalar.',
+    // (Ninguna línea puede empezar por "#": el preprocesador la tomaría por directiva.)
+    if MsgBox('¿Borrar también tus datos de Oraqlo (historial, objetivos, claves y ajustes)?' + #13#10#13#10 +
+      'Si los conservas, Oraqlo los recuperará si lo vuelves a instalar.',
       mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
       DelTree(ExpandConstant('{app}'), True, True, True);
 end;
