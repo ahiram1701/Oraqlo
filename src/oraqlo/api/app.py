@@ -31,12 +31,13 @@ from oraqlo.services.core import OraqloService
 from oraqlo.services.doctor import probe_provider, run_checks
 from oraqlo.services.jobs import TERMINAL, JobRunner
 from oraqlo.services.network import (
+    HTTPS_PORT,
     MAX_PORT,
     MIN_PORT,
     TailscaleServe,
     port_in_use,
-    set_tailscale_enabled,
-    tailscale_enabled,
+    published_https,
+    set_published_https,
     write_port_file,
 )
 from oraqlo.services.notify import SETTING as NOTIFY_SETTING
@@ -47,7 +48,7 @@ from oraqlo.services.scheduler import PeriodicTask, Scheduler
 from oraqlo.services.serialize import goal_json
 from oraqlo.services.userconfig import ConfigError, apply_changes, set_secret, toml_roles
 from oraqlo.store.db import dumps, loads
-from oraqlo.updater import UpdateError, Updater, is_managed, is_newer
+from oraqlo.updater import UpdateError, Updater, is_managed, is_newer, refresh_launcher
 
 log = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
@@ -340,17 +341,30 @@ def create_app(
     app_dir = updater.layout.root
 
     def sync_tailscale() -> None:
-        """Si el lanzador movió el puerto, `tailscale serve` debe seguirlo (la URL no cambia)."""
+        """Si el lanzador movió el puerto, `tailscale serve` debe seguirlo (la URL no
+        cambia). Antes, deja la raíz de la tailnet si una versión vieja la ocupó."""
         port = getattr(app.state, "port", None)
-        if managed and port and tailscale_enabled(app_dir):
+        if not (managed and port and published_https(app_dir) is not None):
+            return
+        try:
+            ts.migrate_from_root(app_dir, port)
+            https = published_https(app_dir)
+            if https is not None and https != 443:
+                ts.ensure(port, https)
+        except Exception:
+            log.exception("No pude sincronizar tailscale serve")
+
+    def refresh_launcher_file() -> None:
+        if managed:
             try:
-                ts.ensure(port)
+                refresh_launcher(updater.layout)
             except Exception:
-                log.exception("No pude sincronizar tailscale serve")
+                log.exception("No pude actualizar el lanzador")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         threading.Thread(target=sync_tailscale, name="oraqlo-tailscale", daemon=True).start()
+        refresh_launcher_file()
         recovered = runner.recover()
         if recovered:
             log.warning("%d job(s) interrumpidos por reinicio marcados como fallidos", recovered)
@@ -451,12 +465,15 @@ def create_app(
 
     def tailscale_info() -> dict:
         status = ts.status() if ts.installed else {}
+        published = published_https(app_dir)
+        https = published or HTTPS_PORT
         return {
             "installed": ts.installed,
             "state": ts.state(status),
-            "enabled": tailscale_enabled(app_dir),
-            "url": ts.url(status) if ts.installed else None,
-            "serving_port": ts.serving_port() if ts.installed else None,
+            "enabled": published is not None,
+            "https_port": https,
+            "url": ts.url(status, https) if ts.installed else None,
+            "serving_port": ts.serving_port(https) if ts.installed else None,
         }
 
     @app.get("/api/server")
@@ -481,14 +498,19 @@ def create_app(
                 raise HTTPException(409, "Abre Tailscale en este PC e inicia sesión.")
             if not port:
                 raise HTTPException(409, "No sé en qué puerto corre Oraqlo.")
-            ts.ensure(port)
-            if ts.serving_port() != port:
+            if published_https(app_dir) == 443:
+                ts.migrate_from_root(app_dir, port)
+            https = published_https(app_dir) or ts.free_https_port(port)
+            ts.ensure(port, https)
+            if ts.serving_port(https) != port:
                 raise HTTPException(502, "Tailscale no aceptó la publicación. Inténtalo de nuevo.")
-            set_tailscale_enabled(app_dir, True)
+            set_published_https(app_dir, https)
         else:
-            if tailscale_enabled(app_dir) or (port and ts.serving_port() == port):
-                ts.disable()
-            set_tailscale_enabled(app_dir, False)
+            https = published_https(app_dir)
+            # Solo se retira lo que apunta a Oraqlo: la raíz u otros puertos son de otras apps.
+            if https is not None and ts.serving_port(https) == port:
+                ts.disable(https)
+            set_published_https(app_dir, None)
         return tailscale_info()
 
     @app.put("/api/server/port")

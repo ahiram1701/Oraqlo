@@ -375,3 +375,34 @@ def test_abrir_avisa_si_no_arranca(tmp_path):
         launcher, start=lambda: None, browse=lambda u: None, notify=notes.append, timeout_s=3
     )
     assert code == 1 and "server.log" in notes[0]
+
+
+def test_el_lanzador_se_actualiza_al_arrancar_la_version_nueva(tmp_path):
+    layout = Layout(tmp_path)
+    layout.root.mkdir(parents=True)
+    (layout.root / "launcher.py").write_text("print('viejo')\n", encoding="utf-8")
+    new = tmp_path / "pkg_launcher.py"
+    new.write_text("print('nuevo')\n", encoding="utf-8")
+
+    assert up.refresh_launcher(layout, new) is True
+    assert (layout.root / "launcher.py").read_text(encoding="utf-8") == "print('nuevo')\n"
+    assert (layout.root / "launcher.prev.py").read_text(encoding="utf-8") == "print('viejo')\n"
+    assert "lanzador actualizado" in (layout.root / "update.log").read_text(encoding="utf-8")
+    assert up.refresh_launcher(layout, new) is False  # ya igual: no toca nada
+
+
+def test_lanzador_roto_no_reemplaza_al_bueno(tmp_path):
+    layout = Layout(tmp_path)
+    layout.root.mkdir(parents=True)
+    (layout.root / "launcher.py").write_text("print('bueno')\n", encoding="utf-8")
+    broken = tmp_path / "roto.py"
+    broken.write_text("def (:\n", encoding="utf-8")
+    assert up.refresh_launcher(layout, broken) is False
+    assert (layout.root / "launcher.py").read_text(encoding="utf-8") == "print('bueno')\n"
+
+
+def test_sin_instalacion_gestionada_no_hace_nada(tmp_path):
+    from oraqlo import launcher
+
+    assert up.refresh_launcher(Layout(tmp_path), Path(launcher.__file__)) is False
+    assert not (tmp_path / "app" / "launcher.py").exists()

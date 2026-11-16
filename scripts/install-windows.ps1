@@ -62,6 +62,20 @@ function Find-Tailscale {
     return $null
 }
 
+# Puerto HTTPS de la tailnet -> puerto local al que apunta su raíz "/".
+function Get-ServeMap([string]$Ts) {
+    $map = @{}
+    try {
+        $cfg = & $Ts serve status --json | ConvertFrom-Json
+        foreach ($entry in $cfg.Web.PSObject.Properties) {
+            $https = ($entry.Name -split ":")[-1]
+            $proxy = $entry.Value.Handlers."/".Proxy
+            if ($https -match '^\d+$' -and $proxy -match '127\.0\.0\.1:(\d+)') { $map[[int]$https] = [int]$Matches[1] }
+        }
+    } catch { }
+    return $map
+}
+
 # Para los procesos de esta instalación y espera a que suelten sus archivos
 # (Windows no deja borrar un python.exe en marcha).
 function Stop-OraqloProcesses {
@@ -91,9 +105,18 @@ if ($Uninstall) {
     }
     Stop-OraqloProcesses
     $ts = if ($NoTailscale) { $null } else { Find-Tailscale }
-    if ($ts -and (Test-Path (Join-Path $App "tailscale.txt"))) {
-        Step "Retirando la publicación de tailscale serve"
-        & $ts serve --https=443 off 2>$null
+    $tsFile = Join-Path $App "tailscale.txt"
+    $portTxt = Join-Path $App "port.txt"
+    if ($ts -and (Test-Path $tsFile) -and (Test-Path $portTxt)) {
+        # Solo se retira lo que apunta a ESTE Oraqlo: la raíz u otros puertos pueden
+        # ser de otras apps. "on" = versiones antiguas, publicadas en la raíz (443).
+        $saved = (Get-Content $tsFile -Raw).Trim().TrimStart([char]0xFEFF)
+        $https = if ($saved -eq "on") { 443 } elseif ($saved -match '^\d+$') { [int]$saved } else { 0 }
+        $ours = [int](Get-Content $portTxt -Raw).Trim().TrimStart([char]0xFEFF)
+        if ($https -and (Get-ServeMap $ts)[$https] -eq $ours) {
+            Step "Retirando la publicación de Oraqlo en la tailnet (:$https)"
+            & $ts serve "--https=$https" off 2>$null
+        }
     }
     foreach ($link in @($StartMenuLink, $DesktopLink)) {
         if (-not (Test-Path $link)) { continue }
@@ -330,11 +353,19 @@ if (-not $NoTailscale) {
     if (-not $ts) {
         Warn "Tailscale no está instalado. Para usar Oraqlo en el celular, ve a Ajustes > Conexión."
     } else {
-        Step "Publicando Oraqlo en tu tailnet (tailscale serve, HTTPS)"
-        & $ts serve --bg $Port | Out-Host
+        # Puerto HTTPS propio (8443, o el siguiente libre): nunca la raíz, que puede
+        # ser de otra app. Si una versión vieja ocupó la raíz con ESTE puerto, se libera.
+        $map = Get-ServeMap $ts
+        $tsFile = Join-Path $App "tailscale.txt"
+        $saved = if (Test-Path $tsFile) { (Get-Content $tsFile -Raw).Trim().TrimStart([char]0xFEFF) } else { "" }
+        if ($saved -eq "on" -and $map[443] -eq $Port) { & $ts serve --https=443 off 2>$null; $map.Remove(443) }
+        $Https = 8443
+        while ($map.ContainsKey($Https) -and $map[$Https] -ne $Port) { $Https++ }
+        Step "Publicando Oraqlo en tu tailnet (HTTPS :$Https)"
+        & $ts serve --bg "--https=$Https" "http://127.0.0.1:$Port" | Out-Host
         if ($LASTEXITCODE -eq 0) {
-            # Marca para que Oraqlo mantenga la publicación si alguna vez cambia de puerto.
-            [IO.File]::WriteAllText((Join-Path $App "tailscale.txt"), "on")
+            # Oraqlo mantiene la publicación si alguna vez cambia de puerto local.
+            [IO.File]::WriteAllText($tsFile, "$Https")
         } else {
             Warn "Tailscale no pudo publicar Oraqlo (¿sesión iniciada?). Hazlo luego desde Ajustes > Conexión."
         }
@@ -342,7 +373,7 @@ if (-not $NoTailscale) {
             $status = & $ts status --json | ConvertFrom-Json
             $dns = $status.Self.DNSName.TrimEnd(".")
             Write-Host ""
-            Write-Host "    Desde tu celular (con Tailscale activo): https://$dns" -ForegroundColor Green
+            Write-Host "    Desde tu celular (con Tailscale activo): https://${dns}:$Https" -ForegroundColor Green
             Write-Host "    Ábrela en Safari/Chrome y elige 'Añadir a pantalla de inicio' para instalarla."
         } catch {
             Warn "No pude leer tu nombre en el tailnet: míralo en Ajustes > Conexión."

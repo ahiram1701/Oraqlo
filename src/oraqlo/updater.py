@@ -274,6 +274,46 @@ def verify_attestation(path: Path, repo: str) -> bool | None:
     return False
 
 
+# ── lanzador ──────────────────────────────────────────────────────────────
+
+
+def refresh_launcher(layout: Layout, source: Path | None = None) -> bool:
+    """Copia a app/launcher.py el lanzador de la versión que está corriendo.
+
+    El instalador copia el lanzador una vez y el auto-update solo cambia de
+    versión, así que sin esto las mejoras del lanzador (p. ej. la ventana nativa)
+    nunca llegarían. Se llama al ARRANCAR el servidor: así lo hace el código de la
+    versión nueva, no el de la vieja que aplicó la actualización. True si cambió.
+    """
+    import py_compile
+    import tempfile
+
+    target = layout.root / "launcher.py"
+    if not target.exists():
+        return False  # no es una instalación gestionada
+    if source is None:
+        from oraqlo import launcher
+
+        source = Path(launcher.__file__)
+    new = source.read_bytes()
+    if new == target.read_bytes():
+        return False
+    with tempfile.TemporaryDirectory() as tmp:
+        probe = Path(tmp) / "launcher.py"
+        probe.write_bytes(new)
+        try:
+            py_compile.compile(str(probe), cfile=str(Path(tmp) / "launcher.pyc"), doraise=True)
+        except py_compile.PyCompileError as e:
+            layout.log(f"lanzador nuevo inválido, se conserva el actual: {e.msg}")
+            return False
+    shutil.copy2(target, layout.root / "launcher.prev.py")
+    staging = layout.root / "launcher.py.new"
+    staging.write_bytes(new)
+    os.replace(staging, target)
+    layout.log("lanzador actualizado desde la versión activa")
+    return True
+
+
 # ── instalación de una versión ────────────────────────────────────────────
 
 
