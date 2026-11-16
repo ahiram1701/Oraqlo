@@ -210,3 +210,79 @@ def test_si_el_servidor_ya_es_otra_version_relanza_la_ventana(tmp_path, monkeypa
         desktop.DesktopApp(tmp_path).check_version(spawn=lambda c, **k: spawned.append(c)) is False
     )
     assert spawned == []
+
+
+# ── el servidor nuevo reemplaza la ventana vieja ─────────────────────────
+
+
+def _rows(home, version="0.5.1", pid=100, child=101, extra=()):
+    exe = str(home / "app" / "versions" / version / "Scripts" / "pythonw.exe")
+    cmd = f"{exe} -m oraqlo.desktop --home {home}"
+    return [
+        {"ProcessId": pid, "ParentProcessId": 7, "CommandLine": cmd},
+        {"ProcessId": child, "ParentProcessId": pid, "CommandLine": cmd},  # intérprete real
+        {
+            "ProcessId": 300,
+            "ParentProcessId": 7,
+            "CommandLine": f"{exe} -m oraqlo.cli serve --port 8766",
+        },
+        *extra,
+    ]
+
+
+def test_detecta_las_ventanas_de_este_home_y_su_version(tmp_path):
+    from oraqlo.windows_handover import find_windows
+
+    other_home = tmp_path / "otro"
+    rows = _rows(tmp_path) + _rows(other_home, version="0.9.0", pid=200, child=201)
+    rows.append({"ProcessId": 400, "ParentProcessId": 1, "CommandLine": None})
+    windows = find_windows(rows, tmp_path)
+    assert len(windows) == 1
+    w = windows[0]
+    assert (w.root, set(w.pids), w.version) == (100, {100, 101}, "0.5.1")
+
+
+def _handover(tmp_path, rows, visible=False, current="0.10.0"):
+    from oraqlo.windows_handover import replace_old_windows
+
+    _install(tmp_path, version=current)  # current.txt y la ventana de la versión activa
+    killed, launched, notes = [], [], []
+    replaced = replace_old_windows(
+        tmp_path,
+        current,
+        processes=lambda: rows,
+        visible=lambda pids: visible,
+        kill=killed.append,
+        launch=launched.append,
+        note=notes.append,
+    )
+    return replaced, killed, launched, notes
+
+
+def test_cierra_la_vieja_y_abre_la_nueva_escondida_si_estaba_en_la_bandeja(tmp_path):
+    replaced, killed, launched, notes = _handover(tmp_path, _rows(tmp_path), visible=False)
+    assert replaced == ["0.5.1"] and killed == [100]  # el árbol, desde el lanzador
+    cmd = launched[0]
+    assert cmd[1:3] == ["-m", "oraqlo.desktop"] and cmd[-2:] == ["--after-update", "--hidden"]
+    assert "0.10.0" in cmd[0]
+    assert "ventana 0.5.1 reemplazada por 0.10.0 (en la bandeja)" in notes
+
+
+def test_si_estaba_a_la_vista_la_nueva_tambien(tmp_path):
+    _replaced, _killed, launched, _notes = _handover(tmp_path, _rows(tmp_path), visible=True)
+    assert launched[0][-1] == "--after-update"
+
+
+def test_nada_que_hacer_con_la_misma_version_o_sin_ventana(tmp_path):
+    rows = _rows(tmp_path, version="0.10.0")
+    assert _handover(tmp_path, rows) == ([], [], [], [])
+    assert _handover(tmp_path / "b", []) == ([], [], [], [])
+
+
+def test_si_falla_la_consulta_no_tumba_nada(tmp_path):
+    from oraqlo.windows_handover import replace_old_windows
+
+    def boom():
+        raise OSError("powershell no disponible")
+
+    assert replace_old_windows(tmp_path, "0.10.0", processes=boom) == []
