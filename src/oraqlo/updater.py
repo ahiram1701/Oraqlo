@@ -135,9 +135,22 @@ class Layout:
     def prune(self) -> list[str]:
         """Borra las versiones viejas: se conservan solo la actual y la anterior (rollback)."""
         protected = {self.current, self.previous}
-        removed = [v for v in self.installed_versions() if v not in protected]
-        for version in removed:
-            shutil.rmtree(self.venv(version), ignore_errors=True)
+        removed: list[str] = []
+        for version in self.installed_versions():
+            if version in protected:
+                continue
+            locked: list[str] = []
+            shutil.rmtree(
+                self.venv(version), onexc=lambda _f, path, _e, seen=locked: seen.append(path)
+            )
+            if locked:
+                # Algún proceso de esa versión sigue vivo (p. ej. una ventana abierta
+                # desde antes de actualizar): se reintenta en la próxima poda.
+                self.log(
+                    f"No se pudo borrar {version} del todo ({len(locked)} en uso); se reintentará"
+                )
+            else:
+                removed.append(version)
         return removed
 
 

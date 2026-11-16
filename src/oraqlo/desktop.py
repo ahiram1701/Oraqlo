@@ -19,13 +19,17 @@ import contextlib
 import json
 import logging
 import os
+import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
 import webbrowser
 from pathlib import Path
 from typing import Any
+
+from oraqlo import __version__
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +41,8 @@ BACKGROUND = "#0b0d12"  # mismo fondo que la app: sin destello al abrir
 LIGHT_BACKGROUND = "#f6f7fb"
 DEFAULT_SIZE = (1100, 780)
 MIN_SIZE = (400, 600)
+VERSION_CHECK_S = 120.0  # cada cuánto mira si el servidor ya es otra versión
+MUTEX_WAIT_S = 30.0  # la ventana nueva espera a que la vieja suelte el mutex
 
 
 # ── utilidades puras (testeables) ─────────────────────────────────────────
@@ -78,13 +84,48 @@ def save_geometry(home: Path, geometry: dict) -> None:
         (home / "app" / "window.json").write_text(json.dumps(geometry), encoding="utf-8")
 
 
-def healthy(port: int) -> bool:
+def _health(port: int) -> dict | None:
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=2) as r:
             data = json.loads(r.read())
-        return data.get("app") == "oraqlo"
     except (OSError, ValueError):
-        return False
+        return None
+    return data if isinstance(data, dict) and data.get("app") == "oraqlo" else None
+
+
+def healthy(port: int) -> bool:
+    return _health(port) is not None
+
+
+def server_version(port: int) -> str | None:
+    data = _health(port)
+    version = data.get("version") if data else None
+    return version if isinstance(version, str) else None
+
+
+def needs_restart(mine: str, served: str | None) -> bool:
+    """La ventana es de otra versión que el servidor: tras una actualización."""
+    return bool(served) and served != mine and "unknown" not in mine
+
+
+def reload_url(current: str | None, port: int) -> str:
+    """La misma pantalla, recargada desde el servidor (que pudo cambiar de puerto)."""
+    parts = urllib.parse.urlsplit(current or "")
+    path = parts.path or "/"
+    return urllib.parse.urlunsplit(("http", f"127.0.0.1:{port}", path, parts.query, parts.fragment))
+
+
+def relaunch_command(home: Path, hidden: bool) -> list[str] | None:
+    """La ventana de la versión activa (current.txt), que espera a que esta se cierre."""
+    from oraqlo.launcher import Launcher, desktop_command
+
+    launcher = Launcher(home)
+    if launcher.read("current.txt") in (None, __version__):
+        return None  # nada nuevo instalado: relanzar daría la misma ventana
+    cmd = desktop_command(launcher)
+    if cmd is None:
+        return None
+    return [*cmd, "--after-update"] + (["--hidden"] if hidden else [])
 
 
 # ── Windows (ctypes) ──────────────────────────────────────────────────────
@@ -97,8 +138,22 @@ def _single_instance() -> bool:
     import ctypes
 
     kernel32 = ctypes.windll.kernel32
-    kernel32.CreateMutexW(None, False, MUTEX)
-    return kernel32.GetLastError() != 183  # ERROR_ALREADY_EXISTS
+    handle = kernel32.CreateMutexW(None, False, MUTEX)
+    if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+        # Soltar el handle: si no, mantendría vivo el mutex aunque la otra ventana se
+        # cierre, y esperar a que quede libre (tras actualizar) no acabaría nunca.
+        kernel32.CloseHandle(handle)
+        return False
+    return True
+
+
+def _wait_single_instance(timeout_s: float = MUTEX_WAIT_S) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while not _single_instance():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.5)
+    return True
 
 
 def _focus_existing(path: str | None, home: Path) -> None:
@@ -152,9 +207,10 @@ def _set_icon(window, icon: Path) -> None:
 
 
 class DesktopApp:
-    def __init__(self, home: Path, path: str | None = None) -> None:
+    def __init__(self, home: Path, path: str | None = None, hidden: bool = False) -> None:
         self.home = Path(home)
         self.path = path
+        self.hidden = hidden  # escondida en la bandeja
         self.window: Any = None
         self.tray: Any = None
         self.quitting = False
@@ -187,6 +243,7 @@ class DesktopApp:
     # ventana
 
     def show(self) -> None:
+        self.hidden = False
         if self.window is not None:
             self.window.show()
             self.window.restore()
@@ -204,6 +261,7 @@ class DesktopApp:
             return True
         # Este evento corre en el hilo de la ventana y hide() vuelve a él: llamarlo
         # aquí mismo lo bloquea. Se esconde desde otro hilo al terminar el evento.
+        self.hidden = True
         threading.Thread(target=self.window.hide, daemon=True).start()
         if not self.hint_shown:
             self.hint_shown = True
@@ -218,12 +276,49 @@ class DesktopApp:
                 try:
                     path = request.read_text(encoding="utf-8").strip()
                     request.unlink(missing_ok=True)
+                    port = read_port(self.home)
                     if path:
-                        self.window.load_url(app_url(read_port(self.home), path))
+                        self.window.load_url(app_url(port, path))
+                    else:
+                        # Abrir Oraqlo otra vez también trae la interfaz al día: tras
+                        # actualizar, la página guardada en caché sería la vieja.
+                        self.window.load_url(reload_url(self.window.get_current_url(), port))
                     self.show()
                 except Exception as e:
                     log.debug("open-path: %s", e)
             time.sleep(0.5)
+
+    def check_version(self, spawn=subprocess.Popen) -> bool:
+        """Si el servidor ya es otra versión, abre la ventana nueva y cierra esta.
+
+        La ventana es un proceso aparte que no reinicia nadie: sin esto seguiría con
+        el código (y la interfaz) de la versión con que se abrió, actualización tras
+        actualización."""
+        if not needs_restart(__version__, server_version(read_port(self.home))):
+            return False
+        cmd = relaunch_command(self.home, self.hidden)
+        if cmd is None:
+            return False
+        log.info("El servidor ya es otra versión: se reabre la ventana (%s)", cmd[0])
+        spawn(cmd, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        self.quit()
+        return True
+
+    def watch_version(self) -> None:
+        while not self.quitting:
+            time.sleep(VERSION_CHECK_S)
+            try:
+                if self.check_version():
+                    return
+            except Exception as e:
+                log.debug("version: %s", e)
+
+    def quit(self) -> None:
+        self.quitting = True
+        if self.tray is not None:
+            self.tray.stop()
+        if self.window is not None:
+            self.window.destroy()
 
     # bandeja
 
@@ -235,9 +330,7 @@ class DesktopApp:
             webbrowser.open(app_url(read_port(self.home)))
 
         def quit_app(_icon=None, _item=None):
-            self.quitting = True
-            self.tray.stop()
-            self.window.destroy()
+            self.quit()
 
         image = Image.open(self.icon) if self.icon.exists() else Image.new("RGB", (64, 64))
         self.tray = pystray.Icon(
@@ -264,6 +357,7 @@ class DesktopApp:
             min_size=MIN_SIZE,
             background_color=background(),
             text_select=True,
+            hidden=self.hidden,
             **self.geometry,
         )
         self.window.events.closing += self.on_closing
@@ -279,6 +373,7 @@ class DesktopApp:
             log.warning("Sin icono en la bandeja: %s", e)
             self.tray = None
         threading.Thread(target=self.watch_open_requests, daemon=True).start()
+        threading.Thread(target=self.watch_version, daemon=True).start()
         webview.start(
             private_mode=False,  # recuerda sesión/ajustes del navegador interno
             storage_path=str(self.home / "app" / "webview"),
@@ -293,6 +388,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Oraqlo en su propia ventana.")
     parser.add_argument("--home", default=os.environ.get("ORAQLO_HOME"), required=False)
     parser.add_argument("--path", default=None)
+    parser.add_argument("--hidden", action="store_true", help="empezar en la bandeja")
+    parser.add_argument(
+        "--after-update", action="store_true", help="relevo tras actualizar: esperar a la vieja"
+    )
     args = parser.parse_args(argv)
     if not args.home:
         from oraqlo.config import default_home
@@ -305,12 +404,13 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
-    if not _single_instance():
+    first = _wait_single_instance() if args.after_update else _single_instance()
+    if not first:
         _focus_existing(args.path, home)
         return 0
     _set_app_id()
     try:
-        return DesktopApp(home, args.path).run()
+        return DesktopApp(home, args.path, hidden=args.hidden).run()
     except Exception:
         log.exception("La ventana de Oraqlo falló; se abrirá el navegador")
         return FALLBACK_EXIT_CODE

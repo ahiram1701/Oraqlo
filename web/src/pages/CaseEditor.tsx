@@ -71,7 +71,7 @@ export default function CaseEditor() {
         <Card className="overflow-hidden">
           {done && <ResultCard result={job.result} />}
           <div className={cx(done && "mt-4")}>
-            <JobTimeline job={job} kind="case" />
+            <JobTimeline job={job} jobId={jobId} onRetried={setJobId} kind="case" />
           </div>
         </Card>
       )}

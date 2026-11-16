@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -453,3 +455,23 @@ def test_el_servidor_sube_a_prioridad_normal():
         [sys.executable, "-c", code], capture_output=True, text=True, creationflags=below_normal
     )
     assert out.stdout.strip() == "0x20", out.stderr  # NORMAL_PRIORITY_CLASS
+
+
+def test_prune_reintenta_si_una_version_sigue_en_uso(tmp_path, monkeypatch):
+    layout = Layout(tmp_path)
+    _install_fake(layout, "0.1.0", "0.2.0", "0.3.0")
+    layout.switch_to("0.2.0")
+    layout.switch_to("0.3.0")
+    real = shutil.rmtree
+
+    def rmtree_bloqueado(path, onexc=None, **kw):
+        # Como en Windows con la ventana vieja abierta: un archivo no se puede borrar.
+        assert onexc is not None
+        onexc(os.unlink, str(path) + "/pythonw.exe", PermissionError("en uso"))
+
+    monkeypatch.setattr(shutil, "rmtree", rmtree_bloqueado)
+    assert layout.prune() == []  # no la da por borrada
+    assert "0.1.0" in layout.installed_versions()
+    assert "se reintentará" in (layout.root / "update.log").read_text(encoding="utf-8")
+    monkeypatch.setattr(shutil, "rmtree", real)
+    assert layout.prune() == ["0.1.0"]

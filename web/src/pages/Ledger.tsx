@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Icon } from "../components/icons";
 import { Badge, Button, Card, Empty, ErrorNote, SectionTitle, Skeleton, cx, inputClass, useFeedback } from "../components/ui";
@@ -21,6 +21,49 @@ function sourceLabel(source: string) {
 /** El Brier en palabras: el color solo no basta. */
 function brierWords(b: number) {
   return b < 0.1 ? "acierto muy bueno" : b < 0.25 ? "acierto bueno" : b < 0.5 ? "acierto flojo" : "fallo";
+}
+
+/**
+ * Resoluciones esperando los 5 s de «Deshacer». Viven fuera de la fila: si la fila
+ * desaparece (cambiar de página, filtrar con la búsqueda), el envío sigue en pie.
+ * Antes el temporizador se cancelaba al desmontar y la resolución se perdía.
+ */
+const pendingResolutions = new Map<string, { outcome: string; timer: ReturnType<typeof setTimeout> }>();
+export const UNDO_MS = 5000;
+const RESOLUTION_FAILED = "oraqlo:resolution-failed";
+
+function postResolution(id: string, outcome: string, keepalive = false) {
+  return fetch(`/api/ledger/${id}/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ outcome }),
+    keepalive, // al cerrar la app, el envío sobrevive a la página
+  });
+}
+
+/** Cerrar la ventana o la pestaña durante el plazo: se envía ya, sin esperar. */
+function flushPendingResolutions() {
+  for (const [id, { outcome, timer }] of pendingResolutions) {
+    clearTimeout(timer);
+    void postResolution(id, outcome, true).catch(() => undefined);
+  }
+  pendingResolutions.clear();
+}
+if (typeof window !== "undefined") window.addEventListener("pagehide", flushPendingResolutions);
+
+export function scheduleResolution(id: string, outcome: string, send: () => void) {
+  cancelResolution(id);
+  const timer = setTimeout(() => {
+    pendingResolutions.delete(id);
+    send();
+  }, UNDO_MS);
+  pendingResolutions.set(id, { outcome, timer });
+}
+
+export function cancelResolution(id: string) {
+  const entry = pendingResolutions.get(id);
+  if (entry) clearTimeout(entry.timer);
+  pendingResolutions.delete(id);
 }
 
 function sortedOutcomes(outcomes: Record<string, number>) {
@@ -95,27 +138,36 @@ export function OpenForecast({ f }: { f: Forecast }) {
   const { confirm, toast } = useFeedback();
   const [open, setOpen] = useState(false);
   const [other, setOther] = useState("");
-  const [pendingOutcome, setPendingOutcome] = useState<string | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Si se volvió a la página durante el plazo, la fila sigue marcada.
+  const [pendingOutcome, setPendingOutcome] = useState<string | null>(() => pendingResolutions.get(f.id)?.outcome ?? null);
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["ledger"] });
     qc.invalidateQueries({ queryKey: ["calibration"] });
   };
-  const resolve = useMutation({
-    mutationFn: (outcome: string) => api.post(`/ledger/${f.id}/resolve`, { outcome }),
-    onSuccess: refresh,
-    onError: () => setPendingOutcome(null),
-  });
   const discard = useMutation({ mutationFn: () => api.del(`/ledger/open/${f.id}`), onSuccess: refresh });
-  useEffect(() => () => clearTimeout(timer.current), []);
+  useEffect(() => {
+    const onFail = (e: Event) => (e as CustomEvent<string>).detail === f.id && setPendingOutcome(null);
+    window.addEventListener(RESOLUTION_FAILED, onFail);
+    return () => window.removeEventListener(RESOLUTION_FAILED, onFail);
+  }, [f.id]);
 
   /** Resolver afecta a la calibración: 5 s para deshacer antes de enviarlo. */
   function choose(outcome: string) {
     setPendingOutcome(outcome);
-    timer.current = setTimeout(() => resolve.mutate(outcome), 5000);
+    // Fuera del ciclo de vida de la fila (sin setState aquí: puede ya no existir).
+    scheduleResolution(f.id, outcome, () => {
+      api
+        .post(`/ledger/${f.id}/resolve`, { outcome })
+        .then(refresh)
+        .catch((e: unknown) => {
+          window.dispatchEvent(new CustomEvent(RESOLUTION_FAILED, { detail: f.id }));
+          refresh();
+          toast(`No se pudo guardar «${outcome}»: ${e instanceof Error ? e.message : "error"}`);
+        });
+    });
     toast(`Marcada: «${outcome}»`, {
       undo: () => {
-        clearTimeout(timer.current);
+        cancelResolution(f.id);
         setPendingOutcome(null);
       },
     });
@@ -151,7 +203,7 @@ export function OpenForecast({ f }: { f: Forecast }) {
           <p className="text-sm font-medium">¿Qué pasó?</p>
           <div className="flex flex-wrap gap-2">
             {outcomes.map(([label, p]) => (
-              <Button key={label} variant="secondary" disabled={resolve.isPending} onClick={() => choose(label)}>
+              <Button key={label} variant="secondary" onClick={() => choose(label)}>
                 {label} <span className="text-muted">{pct(p)}</span>
               </Button>
             ))}
@@ -191,7 +243,7 @@ export function OpenForecast({ f }: { f: Forecast }) {
           >
             Descartar sin puntuar
           </Button>
-          <ErrorNote error={resolve.error ?? discard.error} />
+          <ErrorNote error={discard.error} />
         </div>
       )}
     </div>

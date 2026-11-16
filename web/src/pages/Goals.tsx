@@ -338,7 +338,7 @@ export function GoalDetail() {
                   {job.result.checkin.replan_recommended && <p className="mt-1 text-warn">Conviene rehacer el plan.</p>}
                 </div>
               )}
-              <JobTimeline job={job} />
+              <JobTimeline job={job} jobId={jobId} onRetried={setJobId} />
             </div>
           )}
         </Card>

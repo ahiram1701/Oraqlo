@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Icon, type IconName } from "./components/icons";
+import UpdateBanner from "./components/UpdateBanner";
 import { cx, PageSkeleton } from "./components/ui";
 import { api, type Goal } from "./lib/api";
 import { useSetup } from "./lib/setup";
@@ -288,6 +289,7 @@ export default function App() {
     <div className="flex min-h-dvh">
       {!welcome && <SideNav />}
       <main className="safe-bottom mx-auto w-full max-w-3xl px-4 pt-[calc(env(safe-area-inset-top)+1rem)] sm:px-6">
+        <UpdateBanner />
         <Header title={title} />
         <Suspense fallback={<PageSkeleton />}>
           <Routes>
