@@ -26,6 +26,7 @@ const PATHS: Record<string, ReactNode> = {
   moon: <path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z" />,
   device: <path d="M7 3h10a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm4 15h2" />,
   spark: <path d="M12 3v4m0 10v4M3 12h4m10 0h4M6.3 6.3l2.8 2.8m5.8 5.8 2.8 2.8M6.3 17.7l2.8-2.8m5.8-5.8 2.8-2.8" />,
+  calendar: <path d="M5 5h14v15H5zM5 10h14M9 3v4m6-4v4" />,
 };
 
 export type IconName = keyof typeof PATHS;

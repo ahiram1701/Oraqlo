@@ -167,7 +167,7 @@ export const providerLabel = (name: string) => PROVIDER_INFO[name]?.label ?? nam
 export const ROLE_LABELS: Record<string, string> = {
   default: "Todos (por defecto)",
   estratega: "Estratega",
-  red_team: "Red Team",
+  red_team: "Abogado del diablo",
   oraculo: "Oráculo",
   juez: "Juez",
   investigador: "Investigador",
@@ -268,12 +268,28 @@ export function describeValidation(detail: unknown): string {
   }
 }
 
+/** Mensaje claro según el código: el detalle del servidor solo cuando ayuda. */
+export function friendlyError(status: number, detail: string): string {
+  if (status === 502 || status === 503 || status === 504)
+    return "Oraqlo no responde ahora mismo (puede estar reiniciándose). Espera unos segundos y reintenta.";
+  if (status === 401 || status === 403) return detail || "No tienes permiso para hacer esto desde aquí.";
+  if (status === 404) return detail && detail !== "Not Found" ? detail : "No se encontró: puede que ya no exista.";
+  if (status === 429) return "Demasiadas peticiones seguidas. Espera un momento y reintenta.";
+  if (status >= 500) return `Algo falló dentro de Oraqlo${detail && detail !== "Internal Server Error" ? `: ${detail}` : "."}`;
+  return detail;
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`/api${path}`, {
+  let res: Response;
+  try {
+    res = await fetch(`/api${path}`, {
     method,
     headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+    });
+  } catch {
+    throw new ApiError(0, "No se pudo conectar con Oraqlo. Comprueba que el PC esté encendido y con conexión.");
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try {
@@ -282,7 +298,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     } catch {
       /* respuesta sin JSON */
     }
-    throw new ApiError(res.status, detail);
+    throw new ApiError(res.status, friendlyError(res.status, detail));
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;

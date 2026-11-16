@@ -51,7 +51,7 @@ export function GoalsList() {
               </div>
               <div className="shrink-0 text-right">
                 <p className="text-2xl font-semibold tabular-nums">{pct(g.current_p)}</p>
-                <p className="text-[11px] text-muted">prob. de lograrlo</p>
+                <p className="text-xs text-muted">prob. de lograrlo</p>
               </div>
             </div>
             <Sparkline values={g.trajectory} />

@@ -88,7 +88,7 @@ function SideNav() {
       </div>
       {NAV.map((group) => (
         <div key={group.group} className="mb-3">
-          <p className="mb-1 px-3 text-[11px] font-semibold tracking-wider text-muted uppercase">{group.group}</p>
+          <p className="mb-1 px-3 text-xs font-semibold tracking-wider text-muted uppercase">{group.group}</p>
           {group.items.map((item) => (
             <NavLink
               key={item.to}

@@ -35,12 +35,30 @@ export default function Calibration() {
         {!data ? null : data.n === 0 ? (
           <Empty>Aún no hay datos. Cuando sepas cómo acabó una previsión, márcalo en Predicciones y aquí verás qué tan acertado es Oraqlo.</Empty>
         ) : (
-          <div className="h-64">
+          <div className="h-64" role="img" aria-label={`Diagrama de fiabilidad. ${summary}`}>
             <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={{ top: 8, right: 12, bottom: 4, left: -16 }}>
+              <ScatterChart margin={{ top: 8, right: 12, bottom: 14, left: 0 }}>
                 <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
-                <XAxis type="number" dataKey="x" domain={[0, 100]} unit="%" stroke="var(--muted)" fontSize={11} name="Predicho" />
-                <YAxis type="number" dataKey="y" domain={[0, 100]} unit="%" stroke="var(--muted)" fontSize={11} name="Observado" />
+                <XAxis
+                  type="number"
+                  dataKey="x"
+                  domain={[0, 100]}
+                  unit="%"
+                  stroke="var(--muted)"
+                  fontSize={12}
+                  name="Predicho"
+                  label={{ value: "Lo que dijo", position: "insideBottom", offset: -2, fill: "var(--muted)", fontSize: 12 }}
+                />
+                <YAxis
+                  type="number"
+                  dataKey="y"
+                  domain={[0, 100]}
+                  unit="%"
+                  stroke="var(--muted)"
+                  fontSize={12}
+                  name="Observado"
+                  label={{ value: "Lo que pasó", angle: -90, position: "insideLeft", offset: 22, fill: "var(--muted)", fontSize: 12 }}
+                />
                 <ZAxis dataKey="n" range={[40, 400]} name="n" />
                 <ReferenceLine segment={[{ x: 0, y: 0 }, { x: 100, y: 100 }]} stroke="var(--muted)" strokeDasharray="4 4" />
                 <Tooltip contentStyle={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 12 }} />

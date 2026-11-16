@@ -9,6 +9,24 @@ function topOutcome(outcomes: Record<string, number>): [string, number] | null {
   return sorted[0] ?? null;
 }
 
+/** Cuándo se sabrá: fecha de la previsión + horizonte. */
+export function resolvesOn(forecast: any): string | null {
+  const days = Number(forecast?.horizon_days);
+  if (!Number.isFinite(days) || days <= 0) return null;
+  const start = forecast?.created_at ? new Date(forecast.created_at) : new Date();
+  if (Number.isNaN(start.getTime())) return null;
+  const end = new Date(start.getTime() + days * 86_400_000);
+  return end.toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric" });
+}
+
+/** Lo que más explica la previsión primero: tasa base y razonamiento. */
+export function rankAssumptions(assumptions: string[]): string[] {
+  const weight = (a: string) => (a.startsWith("Tasa base") ? 0 : a.startsWith("Razonamiento") ? 1 : 2);
+  return [...assumptions].sort((a, b) => weight(a) - weight(b));
+}
+
+const num = (x: number) => x.toLocaleString("es", { maximumFractionDigits: 2 });
+
 function confidenceWords(c: number) {
   return c >= 0.8 ? "alta" : c >= 0.6 ? "media" : "baja";
 }
@@ -68,7 +86,7 @@ export function ResultCard({ result }: { result: any }) {
   }
 
   if (result?.kind === "cycle") {
-    const v = result.verdict;
+    const v = result.verdict ?? {};
     const info = verdictInfo(v.decision);
     return (
       <div className="result-glow -mx-4 -mt-4 space-y-3 rounded-t-2xl px-4 pt-5 pb-1 sm:-mx-5 sm:-mt-5 sm:px-5">
@@ -76,7 +94,9 @@ export function ResultCard({ result }: { result: any }) {
           <VerdictBadge decision={v.decision} />
           <span className="text-sm text-muted">confianza {confidenceWords(v.confidence)} ({pct(v.confidence)})</span>
         </div>
-        <p className="text-xl leading-snug font-semibold">{result.recommendation.action.description}</p>
+        <p className="text-xl leading-snug font-semibold">
+          {result.recommendation?.action?.description ?? "El panel no llegó a una recomendación."}
+        </p>
         {info.meaning && <p className="text-sm text-muted">{info.meaning}</p>}
         {v.rationale && <p className="text-sm">{v.rationale}</p>}
         {v.review_triggers?.length > 0 && (
@@ -93,8 +113,14 @@ export function ResultCard({ result }: { result: any }) {
     );
   }
 
-  const outcomes = result?.forecast?.outcomes ?? {};
+  const forecast = result?.forecast ?? {};
+  const outcomes = forecast.outcomes ?? {};
   const top = topOutcome(outcomes);
+  const interval: [number, number] | null = Array.isArray(forecast.interval) ? forecast.interval : null;
+  const when = resolvesOn(forecast);
+  const assumptions = rankAssumptions(forecast.assumptions ?? []);
+  const shown = assumptions.slice(0, 3);
+  const folded = assumptions.slice(3);
   return (
     <div className="result-glow -mx-4 -mt-4 space-y-4 rounded-t-2xl px-4 pt-5 pb-1 sm:-mx-5 sm:-mt-5 sm:px-5">
       {top && (
@@ -107,16 +133,44 @@ export function ResultCard({ result }: { result: any }) {
           </div>
         </div>
       )}
-      <ProbBars outcomes={outcomes} />
-      {result.forecast.assumptions?.length > 0 && (
-        <details className="text-sm">
-          <summary className="cursor-pointer text-muted">En qué se basa ({result.forecast.assumptions.length})</summary>
-          <ul className="mt-2 list-disc space-y-1 pl-5 text-muted">
-            {result.forecast.assumptions.map((a: string) => (
+      {!top && (forecast.point != null || interval) && (
+        <div>
+          <p className="text-sm text-muted">Estimación</p>
+          {forecast.point != null && <span className="display-number brand-text">{num(forecast.point)}</span>}
+          {interval && (
+            <p className="mt-1 text-sm">
+              Entre <b>{num(interval[0])}</b> y <b>{num(interval[1])}</b>
+              <span className="text-muted"> con un {Math.round((forecast.interval_level ?? 0.9) * 100)}% de probabilidad</span>
+            </p>
+          )}
+        </div>
+      )}
+      {top && <ProbBars outcomes={outcomes} />}
+      {when && (
+        <p className="flex items-center gap-1.5 text-sm text-muted">
+          <Icon name="calendar" className="size-4" />
+          Se sabrá hacia el {when}.
+        </p>
+      )}
+      {shown.length > 0 && (
+        <div className="text-sm">
+          <p className="mb-1 text-xs font-semibold tracking-wide text-muted uppercase">En qué se basa</p>
+          <ul className="list-disc space-y-1 pl-5">
+            {shown.map((a) => (
               <li key={a}>{a}</li>
             ))}
           </ul>
-        </details>
+          {folded.length > 0 && (
+            <details className="mt-1">
+              <summary className="cursor-pointer text-muted">Ver {folded.length} supuesto(s) más</summary>
+              <ul className="mt-1 list-disc space-y-1 pl-5 text-muted">
+                {folded.map((a) => (
+                  <li key={a}>{a}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
       )}
       <p className="text-xs text-muted">
         Guardada en{" "}

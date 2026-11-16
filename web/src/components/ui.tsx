@@ -81,15 +81,17 @@ export function Badge({ children, tone = "muted" }: { children: ReactNode; tone?
   );
 }
 
-export function Spinner({ className }: { className?: string }) {
+/** `decorative`: dentro de un texto que ya anuncia el estado (evita leerlo dos veces). */
+export function Spinner({ className, decorative = false }: { className?: string; decorative?: boolean }) {
   return (
     <span
-      role="status"
+      role={decorative ? undefined : "status"}
+      aria-hidden={decorative || undefined}
       className={cx(
         "inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent motion-reduce:animate-none",
         className,
       )}
-      aria-label="cargando"
+      aria-label={decorative ? undefined : "cargando"}
     />
   );
 }
@@ -131,10 +133,19 @@ export function Notice({ tone = "info", children, className }: { tone?: keyof ty
   );
 }
 
-export function ErrorNote({ error }: { error: unknown }) {
+export function ErrorNote({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
   if (!error) return null;
   const message = error instanceof Error ? error.message : String(error);
-  return <Notice tone="bad">{message}</Notice>;
+  return (
+    <Notice tone="bad">
+      <span>{message}</span>
+      {onRetry && (
+        <button type="button" onClick={onRetry} className="ml-2 inline-flex min-h-9 items-center font-medium underline">
+          Reintentar
+        </button>
+      )}
+    </Notice>
+  );
 }
 
 export const inputClass =
@@ -223,6 +234,8 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
   const [toastState, setToast] = useState<{ id: number; message: string; undo?: () => void } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const confirmButton = useRef<HTMLButtonElement>(null);
+  const dialog = useRef<HTMLDivElement>(null);
+  const returnFocus = useRef<HTMLElement | null>(null);
 
   const confirm = useCallback<ConfirmFn>((options) => new Promise((resolve) => setAsk({ ...options, resolve })), []);
   const toast = useCallback<ToastFn>((message, options) => {
@@ -234,12 +247,30 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!ask) return;
+    returnFocus.current = document.activeElement as HTMLElement | null;
     confirmButton.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") close(false);
+      // El foco no se escapa del diálogo: Tab da la vuelta entre sus botones.
+      if (e.key === "Tab" && dialog.current) {
+        const items = Array.from(dialog.current.querySelectorAll<HTMLElement>("button, [href], input, select, textarea"));
+        if (items.length === 0) return;
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      returnFocus.current?.focus?.(); // al cerrar, el foco vuelve a donde estaba
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ask]);
 
@@ -254,6 +285,7 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
       {ask && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center" onClick={() => close(false)}>
           <div
+            ref={dialog}
             role="alertdialog"
             aria-modal="true"
             aria-labelledby="confirm-title"
@@ -280,8 +312,7 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
         <div
           role="status"
           aria-live="polite"
-          className="fixed inset-x-0 z-40 mx-auto flex w-[calc(100%-2rem)] max-w-md items-center gap-3 rounded-xl border border-line bg-surface-2 p-3 text-sm shadow-xl md:bottom-6"
-          style={{ bottom: "calc(env(safe-area-inset-bottom) + 5rem)" }}
+          className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5rem)] z-40 mx-auto flex w-[calc(100%-2rem)] max-w-md items-center gap-3 rounded-xl border border-line bg-surface-2 p-3 text-sm shadow-xl md:bottom-6"
         >
           <span className="flex-1">{toastState.message}</span>
           {toastState.undo && (

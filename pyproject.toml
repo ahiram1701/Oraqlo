@@ -87,6 +87,7 @@ ignore = [
 "tests/test_userconfig.py" = ["F811"]
 "tests/test_desktop.py" = ["F811"]
 "tests/test_goals_edit.py" = ["F811"]
+"tests/test_jobs_cancel.py" = ["F811"]
 
 # --- tipos ---
 [tool.pyright]

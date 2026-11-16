@@ -9,6 +9,10 @@ conexión se corta. Por eso todo flujo largo es un *job*:
 
 Al arrancar, los jobs que quedaron a medias (el proceso murió) se marcan como
 fallidos con un motivo claro, en vez de quedarse "corriendo" para siempre.
+
+Cancelar es cooperativo: se marca el job y el siguiente evento de progreso que
+emita el flujo lanza `JobCancelled`. Una llamada al modelo que ya está en curso
+termina antes de que el job se detenga.
 """
 
 from __future__ import annotations
@@ -28,6 +32,13 @@ from oraqlo.store.db import dumps, loads
 log = logging.getLogger(__name__)
 
 TERMINAL = ("done", "failed", "cancelled")
+CANCELLED_MSG = "Cancelado a petición del usuario."
+
+
+class JobCancelled(BaseException):
+    """Detiene un flujo cancelado. Hereda de BaseException a propósito: los flujos
+    capturan `Exception` para degradar con aviso (p. ej. la investigación), y una
+    cancelación no debe tratarse como un fallo recuperable."""
 
 
 def _now() -> str:
@@ -40,6 +51,7 @@ class JobRunner:
         self.db = service.store.db
         self.pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="oraqlo-job")
         self._seq: dict[str, int] = {}
+        self._cancel: set[str] = set()
         self._lock = threading.Lock()
         self.listeners: list[Callable[[dict], None]] = []  # se llaman al terminar un job
         self.handlers: dict[str, Callable[..., dict]] = {
@@ -82,6 +94,21 @@ class JobRunner:
             )
         self.pool.submit(self._run, job_id, kind, params)
         return job_id
+
+    def cancel(self, job_id: str) -> dict | None:
+        """Pide parar un job. Si aún no empezó, queda cancelado al instante."""
+        job = self.get(job_id)
+        if job is None or job["status"] in TERMINAL:
+            return job
+        with self._lock:
+            self._cancel.add(job_id)
+        with self.db.tx() as conn:
+            conn.execute(
+                "UPDATE jobs SET status = 'cancelled', error = ?, finished_at = ? "
+                "WHERE id = ? AND status = 'queued'",
+                (CANCELLED_MSG, _now(), job_id),
+            )
+        return self.get(job_id)
 
     def get(self, job_id: str) -> dict | None:
         rows = self.db.query("SELECT * FROM jobs WHERE id = ?", (job_id,))
@@ -135,6 +162,8 @@ class JobRunner:
 
     def _emit(self, job_id: str, kind: str, data: dict[str, Any]) -> None:
         with self._lock:
+            if job_id in self._cancel and kind != "error":  # el error final siempre se guarda
+                raise JobCancelled(job_id)
             seq = self._seq.get(job_id, 0) + 1
             self._seq[job_id] = seq
         with self.db.tx() as conn:
@@ -152,12 +181,24 @@ class JobRunner:
 
     def _execute(self, job_id: str, kind: str, params: dict[str, Any]) -> None:
         with self.db.tx() as conn:
-            conn.execute(
-                "UPDATE jobs SET status = 'running', started_at = ? WHERE id = ?", (_now(), job_id)
-            )
+            started = conn.execute(
+                "UPDATE jobs SET status = 'running', started_at = ? "
+                "WHERE id = ? AND status = 'queued'",
+                (_now(), job_id),
+            ).rowcount
+        if not started:  # se canceló mientras esperaba turno
+            with self._lock:
+                self._cancel.discard(job_id)
+            return
         emit = lambda k, d: self._emit(job_id, k, d)
         try:
             result = self.handlers[kind](**params, emit=emit)
+        except JobCancelled:
+            with self.db.tx() as conn:
+                conn.execute(
+                    "UPDATE jobs SET status = 'cancelled', error = ?, finished_at = ? WHERE id = ?",
+                    (CANCELLED_MSG, _now(), job_id),
+                )
         except Exception as e:  # el fallo de un job se reporta, nunca tumba el servidor
             log.exception("Job %s (%s) falló", job_id, kind)
             message = f"{type(e).__name__}: {e}" if not str(e) else str(e)
@@ -177,6 +218,7 @@ class JobRunner:
         finally:
             with self._lock:
                 self._seq.pop(job_id, None)
+                self._cancel.discard(job_id)
         job = self.get(job_id)
         for listener in self.listeners:
             try:

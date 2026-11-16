@@ -839,6 +839,13 @@ def create_app(
     def jobs_get(job_id: str) -> dict:
         return job_or_404(job_id)
 
+    @app.post("/api/jobs/{job_id}/cancel")
+    def jobs_cancel(job_id: str) -> dict:
+        job = runner.cancel(job_id)
+        if job is None:
+            raise HTTPException(404, "Trabajo no encontrado")
+        return job
+
     @app.get("/api/jobs/{job_id}/events")
     async def jobs_events(job_id: str, request: Request, after: int = 0) -> StreamingResponse:
         job_or_404(job_id)

@@ -11,7 +11,15 @@ export function ProbBars({ outcomes, highlight }: { outcomes: Outcomes; highligh
             <span className={label === highlight ? "font-semibold text-good" : ""}>{label}</span>
             <span className="tabular-nums text-muted">{(p * 100).toFixed(0)}%</span>
           </div>
-          <div className="h-2 overflow-hidden rounded-full bg-surface-2">
+          <div
+            className="h-2 overflow-hidden rounded-full bg-surface-2"
+            role="meter"
+            aria-label={label}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(p * 100)}
+            aria-valuetext={`${Math.round(p * 100)}%`}
+          >
             <div
               className="h-full rounded-full bg-gradient-to-r from-accent to-accent-2"
               style={{ width: `${Math.max(p * 100, 1.5)}%` }}

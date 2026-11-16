@@ -75,7 +75,8 @@ export default function Ask() {
       }
     },
   });
-  const busy = submit.isPending || job.status === "running" || job.status === "connecting";
+  const busy =
+    submit.isPending || job.status === "running" || job.status === "connecting" || job.status === "queued";
   const days = mode === "goal" ? daysUntil(deadline) : horizon;
 
   function send(params?: LastAsk) {
@@ -125,7 +126,7 @@ export default function Ask() {
           {done && <ResultCard result={job.result} />}
           {!done && last?.question && <p className="mb-3 text-sm text-muted">«{last.question}»</p>}
           <div className={cx(done && "mt-4")}>
-            <JobTimeline job={job} kind={last?.mode} />
+            <JobTimeline job={job} kind={last?.mode} jobId={jobId} research={last?.research} />
           </div>
           {!busy && (
             <div className="mt-3 flex flex-wrap gap-2 border-t border-line pt-3">

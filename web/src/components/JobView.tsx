@@ -1,20 +1,16 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import type { JobEvent } from "../lib/api";
-import { pct } from "../lib/api";
+import { ROLE_LABELS, api, pct } from "../lib/api";
 import type { JobState } from "../lib/useJob";
 import { Icon } from "./icons";
 import { ProbBars } from "./ProbBars";
-import { Card, ErrorNote, Spinner, VerdictBadge, cx, verdictInfo } from "./ui";
+import { Button, ErrorNote, Notice, Spinner, VerdictBadge, cx, verdictInfo } from "./ui";
 
 const MarkdownText = lazy(() => import("./MarkdownText"));
 
-export const ROLE_LABEL: Record<string, string> = {
-  estratega: "Estratega",
-  red_team: "Abogado del diablo",
-  oraculo: "Oráculo",
-  juez: "Juez",
-};
+/** Los mismos nombres que en Ajustes → Modelos del panel. */
+export const ROLE_LABEL: Record<string, string> = ROLE_LABELS;
 
 const ROLE_HINT: Record<string, string> = {
   estratega: "propone la jugada",
@@ -38,6 +34,10 @@ export const PHASE_LABEL: Record<string, string> = {
   simular: "Simulando futuros",
   planificar: "Comparando riesgos y beneficios",
   deliberar: "Debate del panel",
+  linea_base: "Estimando tus probabilidades hoy",
+  palancas: "Viendo qué controlas y qué no",
+  plan: "Diseñando el plan",
+  con_plan: "Estimando con el plan",
 };
 
 /** Fases que se esperan según el tipo de trabajo (para mostrar lo que falta). */
@@ -45,8 +45,14 @@ export const EXPECTED_PHASES: Record<string, string[]> = {
   forecast: ["prever"],
   full: ["redactar", "observar", "prever", "simular", "planificar", "deliberar"],
   case: ["observar", "prever", "simular", "planificar", "deliberar"],
-  goal: [],
+  goal: ["linea_base", "palancas", "plan", "deliberar", "con_plan"],
 };
+
+/** Con investigación activa, «Investigando» aparece como primer paso esperado. */
+export function expectedPhases(kind: string | undefined, research = false): string[] {
+  const base = EXPECTED_PHASES[kind ?? ""] ?? [];
+  return research && ["forecast", "full", "goal"].includes(kind ?? "") ? ["investigar", ...base] : base;
+}
 
 export function prettyTurn(role: string, text: string): string {
   try {
@@ -125,7 +131,7 @@ function Stepper({ events, expected, running }: { events: JobEvent[]; expected: 
           <li key={name} className={cx("flex items-center gap-2 text-sm", active ? "text-fg" : done ? "text-muted" : "text-muted/60")}>
             <span className="flex size-5 items-center justify-center">
               {active ? (
-                <Spinner className="size-3.5 text-accent" />
+                <Spinner decorative className="size-3.5 text-accent" />
               ) : done ? (
                 <Icon name="check" className="size-4 text-good" />
               ) : (
@@ -217,21 +223,59 @@ function Process({ job, showForecast }: { job: JobState; showForecast: boolean }
  * saliendo. Al terminar, todo eso se pliega en "Cómo llegó a esto" (el resultado
  * lo muestra la pantalla que lanzó el trabajo).
  */
-export function JobTimeline({ job, kind }: { job: JobState; kind?: string }) {
+const STATUS_TEXT: Record<string, string> = {
+  connecting: "Conectando…",
+  queued: "En cola: empieza cuando termine lo anterior…",
+  running: "Pensando…",
+};
+
+export function JobTimeline({
+  job,
+  kind,
+  jobId,
+  research = false,
+}: {
+  job: JobState;
+  kind?: string;
+  /** Si se pasa, aparece el botón «Cancelar». */
+  jobId?: string | null;
+  research?: boolean;
+}) {
   const running = job.status === "running" || job.status === "connecting" || job.status === "queued";
   const elapsed = useElapsed(running);
-  const expected = EXPECTED_PHASES[kind ?? ""] ?? [];
+  const expected = expectedPhases(kind, research);
+  const [cancelling, setCancelling] = useState<"idle" | "pending" | "asked" | "error">("idle");
+
+  async function cancel() {
+    if (!jobId) return;
+    setCancelling("pending");
+    try {
+      await api.post(`/jobs/${jobId}/cancel`);
+      setCancelling("asked");
+    } catch {
+      setCancelling("error");
+    }
+  }
 
   if (running) {
+    const stopping = cancelling === "pending" || cancelling === "asked";
     return (
       <div className="space-y-4">
-        <div className="flex items-center justify-between gap-2" aria-live="polite">
-          <p className="flex items-center gap-2 text-sm font-medium text-accent">
-            <Spinner />
-            {job.status === "connecting" ? "Conectando…" : "Pensando…"}
+        <div className="flex items-center justify-between gap-2">
+          <p className="flex items-center gap-2 text-sm font-medium text-accent" aria-live="polite">
+            <Spinner decorative />
+            {stopping ? "Cancelando: termina el paso en curso…" : STATUS_TEXT[job.status] ?? "Pensando…"}
           </p>
-          {elapsed && <span className="text-xs tabular-nums text-muted">{elapsed}</span>}
+          <span className="flex items-center gap-2">
+            {elapsed && <span className="text-xs tabular-nums text-muted">{elapsed}</span>}
+            {jobId && (
+              <Button variant="ghost" className="min-h-9 px-2" disabled={stopping} onClick={cancel}>
+                Cancelar
+              </Button>
+            )}
+          </span>
         </div>
+        {cancelling === "error" && <Notice tone="bad">No se pudo cancelar. Vuelve a intentarlo.</Notice>}
         <Stepper events={job.events} expected={expected} running />
         <p className="text-xs text-muted">Puedes bloquear el celular o cerrar la app: sigue en el servidor y te avisa al terminar.</p>
         <Process job={job} showForecast />
@@ -243,6 +287,7 @@ export function JobTimeline({ job, kind }: { job: JobState; kind?: string }) {
   return (
     <div className="space-y-3">
       {job.status === "failed" && <ErrorNote error={job.error ?? "El trabajo falló"} />}
+      {job.status === "cancelled" && <Notice>Cancelado. Lo que alcanzó a hacer queda abajo.</Notice>}
       {hasProcess && (
         <details className="group rounded-xl border border-line p-3">
           <summary className="flex cursor-pointer list-none items-center justify-between text-sm text-muted">
@@ -264,11 +309,3 @@ export function JobTimeline({ job, kind }: { job: JobState; kind?: string }) {
   );
 }
 
-export function JobCard({ title, job, kind }: { title: string; job: JobState; kind?: string }) {
-  return (
-    <Card>
-      <h3 className="mb-3 font-semibold">{title}</h3>
-      <JobTimeline job={job} kind={kind} />
-    </Card>
-  );
-}
