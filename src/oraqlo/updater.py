@@ -28,6 +28,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -188,7 +189,11 @@ def _get_json(url: str, timeout: float = 15.0) -> object:
 
 def _release_from(data: dict) -> ReleaseInfo | None:
     tag = str(data.get("tag_name", ""))
-    version = tag.removeprefix("v")
+    # Tolera "v1.2.3" y "oraqlo-v1.2.3" (etiquetas con componente de release-please).
+    match = re.search(r"v?(\d+\.\d+\.\d+\S*)$", tag)
+    if not match:
+        return None
+    version = match.group(1)
     assets = {a["name"]: a["browser_download_url"] for a in data.get("assets", [])}
     wheel = next((n for n in assets if n.endswith(".whl")), None)
     if not wheel or data.get("draft"):

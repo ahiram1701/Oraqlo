@@ -283,3 +283,14 @@ def test_punteros_con_bom_de_powershell(tmp_path):
     assert layout.current == "0.3.0"
     launcher = Launcher(tmp_path)
     assert launcher.read("current.txt") == "0.3.0"
+
+
+@pytest.mark.parametrize("tag", ["v0.3.0", "oraqlo-v0.3.0", "0.3.0"])
+def test_release_tag_formats(tag):
+    data = _release("0.3.0") | {"tag_name": tag}
+    info = up._release_from(data)
+    assert info is not None and info.version == "0.3.0"
+
+
+def test_release_tag_without_version_is_ignored():
+    assert up._release_from(_release("0.3.0") | {"tag_name": "nightly"}) is None
