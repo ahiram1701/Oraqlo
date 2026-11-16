@@ -81,8 +81,11 @@ function Remove-Tree([string]$Path) {
 
 # ── Desinstalar ──────────────────────────────────────────────────────────
 if ($Uninstall) {
-    Step "Quitando la tarea programada"
-    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+    # Solo se toca lo que pertenece a ESTA carpeta: podría haber otra instalación
+    # de Oraqlo (con la misma tarea y el mismo acceso directo) que no es nuestra.
+    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($task -and ($task.Actions | Where-Object { "$($_.Arguments)" -like "*$OraqloHome*" })) {
+        Step "Quitando la tarea programada"
         Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
     }
@@ -92,7 +95,13 @@ if ($Uninstall) {
         Step "Retirando la publicación de tailscale serve"
         & $ts serve --https=443 off 2>$null
     }
-    Remove-Item $StartMenuLink, $DesktopLink -Force -ErrorAction SilentlyContinue
+    foreach ($link in @($StartMenuLink, $DesktopLink)) {
+        if (-not (Test-Path $link)) { continue }
+        $target = (New-Object -ComObject WScript.Shell).CreateShortcut($link)
+        if ("$($target.Arguments) $($target.TargetPath)" -like "*$OraqloHome*") {
+            Remove-Item $link -Force -ErrorAction SilentlyContinue
+        }
+    }
     Remove-Tree $App
     Write-Host "Oraqlo desinstalado. Tus datos siguen en $OraqloHome (bórralos a mano si quieres)."
     exit 0

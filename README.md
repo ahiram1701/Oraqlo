@@ -38,7 +38,8 @@ Windows puede mostrar el aviso azul *"Windows protegió tu PC"*, porque el insta
 
 Después:
 
-- **Para abrirlo**, busca **Oraqlo** en el menú Inicio. Arranca solo al iniciar sesión en Windows.
+- **Para abrirlo**, busca **Oraqlo** en el menú Inicio: se abre en **su propia ventana**, como cualquier programa, con su icono en la barra de tareas. El servidor arranca solo al iniciar sesión en Windows.
+- **Al cerrar la ventana**, Oraqlo sigue en la **bandeja del sistema** (junto al reloj): los análisis continúan y te avisa con **notificaciones de Windows** cuando terminan o vence un hito. Desde el icono de la bandeja la vuelves a abrir o la abres en el navegador.
 - **Para usarlo en el celular**, ve a **Ajustes → Conexión**. Te guía para instalar [Tailscale](https://tailscale.com/download), publica Oraqlo en tu red privada con un botón y te muestra un código QR. Ábrelo en el teléfono y elige **"Añadir a pantalla de inicio"**.
 - **Para desinstalarlo**, ve a **Configuración de Windows → Aplicaciones → Oraqlo → Desinstalar**. Te pregunta si quieres conservar tus datos.
 
@@ -51,6 +52,7 @@ No tienes que elegir puerto. Oraqlo usa el 8765 y, si otra aplicación lo ocupa,
 | Claves de API (se guardan solo en tu PC) | Ajustes → Proveedores y claves |
 | Proveedor y modelo de cada rol del debate | Ajustes → Modelos del panel |
 | Celular (Tailscale), puerto, quién puede entrar | Ajustes → Conexión |
+| Avisos de Windows en este PC | Ajustes → Notificaciones |
 | Actualizaciones automáticas / avisar / desactivadas; volver a la versión anterior | Ajustes → Sistema |
 | Comprobar que todo funciona | Ajustes → Diagnóstico |
 | Importar el historial de la versión de terminal | Ajustes → Importar historial antiguo |

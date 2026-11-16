@@ -14,12 +14,16 @@ dependencies = [
     "fastapi>=0.163.1",
     "openai>=3.51.0",
     "packaging>=26.3",
+    "pillow>=11 ; sys_platform == 'win32'",
     "platformdirs>=4.14.5",
     "pydantic>=2.14.3",
+    "pystray>=0.19 ; sys_platform == 'win32'",
     "python-dotenv>=1.2.4",
     "pywebpush>=2.5.0",
+    "pywebview>=5 ; sys_platform == 'win32'",
     "tomlkit>=0.13",
     "uvicorn[standard]>=0.54.0",
+    "windows-toasts>=1.3 ; sys_platform == 'win32'",
 ]
 
 [project.scripts]
@@ -81,6 +85,7 @@ ignore = [
 "tests/**" = ["B011"]
 # Fixtures compartidas importadas desde otro módulo de tests.
 "tests/test_userconfig.py" = ["F811"]
+"tests/test_desktop.py" = ["F811"]
 
 # --- tipos ---
 [tool.pyright]
