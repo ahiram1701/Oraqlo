@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/ahiram1701/Oraqlo/compare/v0.5.1...v0.5.2) (2026-11-16)
+
+
+### Correcciones
+
+* **pwa:** el service worker se retira solo si otra app ocupa su dirección ([#29](https://github.com/ahiram1701/Oraqlo/issues/29)) ([06338dd](https://github.com/ahiram1701/Oraqlo/commit/06338dd561cf1641e39f94fd517f957872a1bf22))
+
 ## [0.5.1](https://github.com/ahiram1701/Oraqlo/compare/v0.5.0...v0.5.1) (2026-11-16)
 
 
