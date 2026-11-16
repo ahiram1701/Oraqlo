@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.0](https://github.com/ahiram1701/Oraqlo/compare/v0.9.0...v0.10.0) (2026-11-16)
+
+
+### Novedades
+
+* Práctica, duelo a duelo contra el mercado ([#60](https://github.com/ahiram1701/Oraqlo/issues/60)) ([33d7b3b](https://github.com/ahiram1701/Oraqlo/commit/33d7b3b3c7d2579c48b46ce7a297b9eff0daf7a5))
+
+
+### Correcciones
+
+* pulido de lo añadido en la 0.8 y la 0.9 ([#59](https://github.com/ahiram1701/Oraqlo/issues/59)) ([6690182](https://github.com/ahiram1701/Oraqlo/commit/6690182dbf71e0bdb1ef4466c5c14dfc7b2df7f3))
+* tras actualizar, la ventana vieja se reemplaza sola ([#58](https://github.com/ahiram1701/Oraqlo/issues/58)) ([9b5c537](https://github.com/ahiram1701/Oraqlo/commit/9b5c537cbcf30a0f5c91c8f6546114254fa0a127))
+
 ## [0.9.0](https://github.com/ahiram1701/Oraqlo/compare/v0.8.0...v0.9.0) (2026-11-16)
 
 
