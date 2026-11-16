@@ -180,22 +180,22 @@ def test_publicar_en_tailscale_desde_la_app(tmp_path, monkeypatch):
     from test_api import _managed_app
     from test_network import fake_tailscale
 
-    ts, calls = fake_tailscale(serve={})  # Tailscale corriendo, nada publicado
+    ts, calls = fake_tailscale(web={}, frozen=True)  # Tailscale no acepta cambios
     app = _managed_app(tmp_path, monkeypatch, ts)
     with TestClient(app) as client:
         on = client.put("/api/server/tailscale", json={"enabled": True})
-        # El fake no cambia su "serve status" tras publicar: la API lo detecta.
-        assert on.status_code == 502
-        assert ["serve", "--bg", "8765"] in calls
+        assert on.status_code == 502  # la API comprueba que de verdad quedó publicado
+        assert ["serve", "--bg", "--https=8443", "http://127.0.0.1:8765"] in calls
 
-    ts, calls = fake_tailscale()  # ya publica 8765
+    ts, calls = fake_tailscale(web={443: 9000})  # otra app en la raíz
     app = _managed_app(tmp_path, monkeypatch, ts)
     with TestClient(app) as client:
         on = client.put("/api/server/tailscale", json={"enabled": True}).json()
-        assert on["enabled"] is True and on["url"] == "https://pc.tail1.ts.net"
+        assert on["enabled"] is True and on["url"] == "https://pc.tail1.ts.net:8443"
+        assert ts.web == {443: 9000, 8443: 8765}
         off = client.put("/api/server/tailscale", json={"enabled": False}).json()
         assert off["enabled"] is False
-        assert ["serve", "--https=443", "off"] in calls
+        assert ts.web == {443: 9000}  # la raíz de la otra app sigue intacta
 
 
 def test_volver_a_la_version_anterior(tmp_path, monkeypatch):

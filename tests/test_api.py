@@ -479,7 +479,7 @@ def test_server_info_y_cambio_de_puerto(tmp_path, monkeypatch):
     ts, _calls = fake_tailscale()
     app = _managed_app(tmp_path, monkeypatch, ts)
     (tmp_path / "app").mkdir(exist_ok=True)
-    (tmp_path / "app" / "tailscale.txt").write_text("on", encoding="utf-8")
+    (tmp_path / "app" / "tailscale.txt").write_text("8443", encoding="utf-8")
     with TestClient(app) as client:
         info = client.get("/api/server").json()
         assert info["port"] == 8765 and info["managed"] is True
@@ -487,7 +487,8 @@ def test_server_info_y_cambio_de_puerto(tmp_path, monkeypatch):
             "installed": True,
             "state": "running",
             "enabled": True,
-            "url": "https://pc.tail1.ts.net",
+            "https_port": 8443,
+            "url": "https://pc.tail1.ts.net:8443",
             "serving_port": 8765,
         }
         assert client.put("/api/server/port", json={"port": 80}).status_code == 422
@@ -507,16 +508,31 @@ def test_server_info_y_cambio_de_puerto(tmp_path, monkeypatch):
 def test_al_arrancar_tailscale_sigue_al_puerto_real(tmp_path, monkeypatch):
     from test_network import fake_tailscale
 
-    ts, calls = fake_tailscale()  # publica 8765
+    ts, _calls = fake_tailscale()  # publica 8765 en :8443
     app = _managed_app(tmp_path, monkeypatch, ts)
     app.state.port = 8767  # el lanzador saltó de puerto
+    (tmp_path / "app").mkdir(exist_ok=True)
+    (tmp_path / "app" / "tailscale.txt").write_text("8443", encoding="utf-8")
+    with TestClient(app):
+        deadline = time.monotonic() + 5
+        while ts.web != {8443: 8767} and time.monotonic() < deadline:
+            time.sleep(0.05)
+    assert ts.web == {8443: 8767}
+
+
+def test_al_arrancar_deja_la_raiz_que_ocupaba_una_version_vieja(tmp_path, monkeypatch):
+    from test_network import fake_tailscale
+
+    ts, _calls = fake_tailscale(web={443: 8765})  # 0.5 y anteriores: en la raíz
+    app = _managed_app(tmp_path, monkeypatch, ts)
     (tmp_path / "app").mkdir(exist_ok=True)
     (tmp_path / "app" / "tailscale.txt").write_text("on", encoding="utf-8")
     with TestClient(app):
         deadline = time.monotonic() + 5
-        while ["serve", "--bg", "8767"] not in calls and time.monotonic() < deadline:
+        while ts.web != {8443: 8765} and time.monotonic() < deadline:
             time.sleep(0.05)
-    assert ["serve", "--bg", "8767"] in calls
+    assert ts.web == {8443: 8765}
+    assert (tmp_path / "app" / "tailscale.txt").read_text() == "8443"
 
 
 def test_cambiar_puerto_en_copia_no_gestionada(env):

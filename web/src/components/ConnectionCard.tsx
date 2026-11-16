@@ -91,6 +91,10 @@ function PhoneAccess({ info, local }: { info: ServerInfo; local: boolean }) {
         <p className="text-muted">
           Escanea el código con el celular (con Tailscale activo) y elige «Añadir a pantalla de inicio» para instalarla.
         </p>
+        <p className="text-xs text-muted">
+          Oraqlo usa su propio puerto (:{ts.https_port ?? 8443}) para no ocupar la dirección principal de tu PC, que puede ser
+          de otra app. Si lo tenías en la pantalla de inicio con la dirección sin puerto, ábrelo desde esta y vuelve a añadirlo.
+        </p>
         {local && (
           <Button variant="ghost" className="px-0" disabled={publish.isPending} onClick={() => publish.mutate(false)}>
             Dejar de publicar

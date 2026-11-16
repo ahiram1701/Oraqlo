@@ -202,6 +202,7 @@ export interface ServerInfo {
     installed: boolean;
     state: TailscaleState;
     enabled: boolean;
+    https_port?: number;
     url: string | null;
     serving_port: number | null;
   };

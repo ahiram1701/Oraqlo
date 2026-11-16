@@ -40,10 +40,10 @@ Después:
 
 - **Para abrirlo**, busca **Oraqlo** en el menú Inicio: se abre en **su propia ventana**, como cualquier programa, con su icono en la barra de tareas. El servidor arranca solo al iniciar sesión en Windows.
 - **Al cerrar la ventana**, Oraqlo sigue en la **bandeja del sistema** (junto al reloj): los análisis continúan y te avisa con **notificaciones de Windows** cuando terminan o vence un hito. Desde el icono de la bandeja la vuelves a abrir o la abres en el navegador.
-- **Para usarlo en el celular**, ve a **Ajustes → Conexión**. Te guía para instalar [Tailscale](https://tailscale.com/download), publica Oraqlo en tu red privada con un botón y te muestra un código QR. Ábrelo en el teléfono y elige **"Añadir a pantalla de inicio"**.
+- **Para usarlo en el celular**, ve a **Ajustes → Conexión**. Te guía para instalar [Tailscale](https://tailscale.com/download), publica Oraqlo en tu red privada con un botón y te muestra un código QR. Ábrelo en el teléfono y elige **"Añadir a pantalla de inicio"**. La dirección es `https://<tu-pc>.<tu-tailnet>.ts.net:8443`: Oraqlo usa su propio puerto y nunca ocupa la dirección principal del PC, para no pisar otras apps que publiques con Tailscale.
 - **Para desinstalarlo**, ve a **Configuración de Windows → Aplicaciones → Oraqlo → Desinstalar**. Te pregunta si quieres conservar tus datos.
 
-No tienes que elegir puerto. Oraqlo usa el 8765 y, si otra aplicación lo ocupa, toma el siguiente libre; la dirección del celular no cambia. Si lo prefieres, puedes cambiar el puerto en **Ajustes → Conexión**.
+No tienes que elegir puerto. Oraqlo usa el 8765 y, si otra aplicación lo ocupa, toma el siguiente libre; la dirección del celular no cambia. Lo mismo en la tailnet: si otra app usa el 8443, Oraqlo toma el siguiente. Si lo prefieres, puedes cambiar el puerto en **Ajustes → Conexión**.
 
 ### Todo se configura en Ajustes
 

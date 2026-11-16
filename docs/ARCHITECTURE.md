@@ -7,7 +7,7 @@ Motor de estrategia bajo incertidumbre, servido como app web local y accesible d
 ```
 Celular / PC (PWA React)                           este PC Windows
    │  HTTPS (identidad Tailscale)                ┌──────────────────────────────────────┐
-   └──► tailscale serve ──► 127.0.0.1:<port> ──► │ FastAPI  (api/)                      │
+   └──► tailscale serve :8443 ─► 127.0.0.1:<port> ─► │ FastAPI  (api/)                      │
                                                  │   auth Tailscale · REST · SSE        │
                                                  │ Servicios (services/)                │
                                                  │   OraqloService · JobRunner ·        │
@@ -93,6 +93,8 @@ SQLite en modo WAL, con migraciones versionadas por `PRAGMA user_version` y back
 - **`installer/oraqlo.iss`** → **`Oraqlo-Setup.exe`** (Inno Setup, compilado en CI): instalación por usuario sin administrador. Empaqueta el wheel, `uv.exe` (con versión y hash fijados) y el script de instalación. Lo que hace es preguntar y mostrar el progreso; el trabajo lo delega en el script. También registra la desinstalación en "Aplicaciones instaladas".
 - **`scripts/install-windows.ps1`**: el único camino de instalación, tanto para el .exe como a mano. Instala la release en `versions/<X.Y.Z>` y registra la tarea programada. Con `-Uv`, descarga un Python propio en `app/python`, así que el PC no necesita Python. También crea el acceso directo del menú Inicio y, si Tailscale está listo, ejecuta `tailscale serve`.
 - **`launcher.py`**: solo stdlib, se copia fuera de las versiones. Arranca el servidor y reinicia con el código 75. Si la versión pendiente no supera `/api/health` en 60 s, hace **rollback**. Con `--open`, que es lo que usa el acceso directo, abre el navegador y arranca la tarea si hacía falta.
+- **Tailscale** (`services/network.py`): Oraqlo se publica en su propio puerto HTTPS de la tailnet (`:8443`, o el siguiente libre) y nunca en la raíz, que queda para otras apps. Al arrancar, `migrate_from_root` retira solo su propio handler de la raíz si una versión ≤ 0.5 la ocupó. `tailscale.txt` guarda el puerto publicado.
+- **Lanzador actualizable**: al arrancar, el servidor copia su `oraqlo/launcher.py` a `app/launcher.py` si cambió (`updater.refresh_launcher`; valida que compile y deja `launcher.prev.py`). Así las mejoras del lanzador llegan con el auto-update; el proceso que corre conserva su código hasta el siguiente arranque.
 - **App de escritorio** (`desktop.py`, Windows):
   - Es una ventana **WebView2** (`pywebview`) que muestra la misma app web servida en 127.0.0.1, más un icono en la bandeja (`pystray`).
   - Cerrar la ventana la esconde. Hay una sola instancia: una segunda apertura deja la ruta en `app/open-path.txt` y la ventana viva la atiende.
