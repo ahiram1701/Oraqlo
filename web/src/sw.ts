@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 // Service worker de Oraqlo: abre la app (del servidor, o de la copia si no hay red) y recibe avisos push.
 import { clientsClaim } from "workbox-core";
-import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from "workbox-precaching";
+import { addRoute, cleanupOutdatedCaches, createHandlerBoundToURL, precache } from "workbox-precaching";
 import { NavigationRoute, registerRoute } from "workbox-routing";
 import { networkFirst } from "./lib/navigationStrategy";
 import { checkOrigin } from "./lib/swGuard";
@@ -11,7 +11,10 @@ declare const self: ServiceWorkerGlobalScope;
 self.skipWaiting();
 clientsClaim();
 cleanupOutdatedCaches();
-precacheAndRoute(self.__WB_MANIFEST);
+// Guardar la copia, pero sin registrar todavía su ruta: workbox resuelve «/» a
+// index.html, y si esa ruta va primero toda apertura de la app sale de la copia
+// (con la versión vieja). Las rutas se registran en orden y gana la primera.
+precache(self.__WB_MANIFEST);
 
 /** Otra app ocupa esta dirección: borrarse y recargar las pestañas desde la red. */
 async function retire(): Promise<void> {
@@ -50,6 +53,8 @@ registerRoute(
     { denylist: [/^\/api\//] },
   ),
 );
+// Después de la navegación: JS, CSS, iconos y fuentes (con hash) salen de la copia.
+addRoute();
 
 self.addEventListener("activate", (event) => event.waitUntil(verifyOrigin()));
 
