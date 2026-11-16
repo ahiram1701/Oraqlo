@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { lazy, Suspense, useEffect, useRef } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Icon, type IconName } from "./components/icons";
 import { cx, PageSkeleton } from "./components/ui";
@@ -26,7 +26,7 @@ interface NavItem {
   end?: boolean;
 }
 
-/** Todas las secciones; en el celular, la barra inferior las muestra todas y se desliza. */
+/** Todas las secciones. En el celular, el primer grupo va en la barra y el segundo en «Más». */
 export const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "Usar",
@@ -47,7 +47,6 @@ export const NAV: { group: string; items: NavItem[] }[] = [
     ],
   },
 ];
-const ALL = NAV.flatMap((g) => g.items);
 
 const TITLES: [RegExp, string][] = [
   [/^\/$/, "Preguntar"],
@@ -117,57 +116,109 @@ function SideNav() {
   );
 }
 
-/** Barra inferior deslizante: todas las secciones a un toque; la activa siempre a la vista. */
+/** Barra inferior: lo de uso diario a un toque; el resto, en «Más». */
 function BottomNav() {
   const overdue = useOverdueCount();
   const location = useLocation();
-  const scroller = useRef<HTMLDivElement>(null);
+  const [primary, secondary] = [NAV[0].items, NAV[1].items];
+  const [open, setOpen] = useState(false);
+  const sheet = useRef<HTMLDivElement>(null);
+  const moreButton = useRef<HTMLButtonElement>(null);
+  const inMore = secondary.some((item) => location.pathname.startsWith(item.to));
+
+  useEffect(() => setOpen(false), [location.pathname]); // al navegar, se cierra
 
   useEffect(() => {
-    const active = scroller.current?.querySelector<HTMLElement>('[aria-current="page"]');
-    active?.scrollIntoView?.({ inline: "center", block: "nearest", behavior: "smooth" });
-  }, [location.pathname]);
+    if (!open) return;
+    sheet.current?.querySelector<HTMLElement>("a")?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+        moreButton.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  const tab = (active: boolean) =>
+    cx("relative flex min-w-0 flex-1 flex-col items-center gap-0.5 py-2 text-[11px]", active ? "text-accent" : "text-muted");
+  const pill = (active: boolean) => cx("rounded-full px-3 py-0.5 transition", active && "bg-accent/15");
 
   return (
-    <nav
-      aria-label="Secciones"
-      className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-surface/95 backdrop-blur md:hidden"
-      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-    >
-      <div className="relative">
-        <div ref={scroller} className="no-scrollbar flex snap-x snap-mandatory overflow-x-auto overscroll-x-contain px-1">
-          {ALL.map((item) => (
+    <>
+      {open && (
+        <div className="fixed inset-0 z-20 bg-black/40 md:hidden" aria-hidden onClick={() => setOpen(false)} />
+      )}
+      <nav
+        aria-label="Secciones"
+        className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface/95 backdrop-blur md:hidden"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
+        {open && (
+          <div
+            ref={sheet}
+            id="mas-secciones"
+            className="grid grid-cols-2 gap-2 border-b border-line p-3"
+            aria-label="Más secciones"
+            role="group"
+          >
+            {secondary.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) =>
+                  cx(
+                    "flex min-h-12 items-center gap-3 rounded-xl px-3 text-sm",
+                    isActive ? "bg-accent/15 font-medium text-accent" : "bg-surface-2 text-fg",
+                  )
+                }
+              >
+                <Icon name={item.icon} />
+                {item.label}
+              </NavLink>
+            ))}
+          </div>
+        )}
+        <div className="flex px-0.5">
+          {primary.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.end}
               aria-label={navLabel(item, overdue)}
-              className={({ isActive }) =>
-                cx(
-                  "relative flex min-w-[4.75rem] shrink-0 snap-start flex-col items-center gap-0.5 px-2 py-2 text-[11px]",
-                  isActive ? "text-accent" : "text-muted",
-                )
-              }
+              className={({ isActive }) => tab(isActive && !open)}
             >
               {({ isActive }) => (
                 <>
-                  <span className={cx("rounded-full px-3 py-0.5 transition", isActive && "bg-accent/15")}>
+                  <span className={pill(isActive && !open)}>
                     <Icon name={item.icon} />
                   </span>
-                  {item.label}
+                  <span className="max-w-full truncate">{item.label}</span>
                   {item.to === "/objetivos" && overdue > 0 && (
-                    <span aria-hidden className="absolute top-1.5 right-4 size-2 rounded-full bg-warn" />
+                    <span aria-hidden className="absolute top-1.5 right-[calc(50%-1.25rem)] size-2 rounded-full bg-warn" />
                   )}
                 </>
               )}
             </NavLink>
           ))}
+          <button
+            ref={moreButton}
+            type="button"
+            className={tab(inMore || open)}
+            aria-expanded={open}
+            aria-controls="mas-secciones"
+            aria-current={inMore ? "page" : undefined}
+            onClick={() => setOpen(!open)}
+          >
+            <span className={pill(inMore || open)}>
+              <Icon name={open ? "x" : "more"} />
+            </span>
+            Más
+          </button>
         </div>
-        {/* Degradados en los bordes: hay más secciones al deslizar. */}
-        <div aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-4 bg-gradient-to-r from-surface to-transparent" />
-        <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-surface to-transparent" />
-      </div>
-    </nav>
+      </nav>
+    </>
   );
 }
 
