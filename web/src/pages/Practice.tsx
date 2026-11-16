@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { JobTimeline } from "../components/JobView";
+import { ChipGroup, FilteredEmpty, countLabel } from "../components/listControls";
 import { Button, Card, ErrorNote, Notice, SectionTitle, StatusBadge, Toggle, cx, inputClass } from "../components/ui";
 import { api, fmtDate, type PracticeState } from "../lib/api";
 import { useJob, useStoredJob } from "../lib/useJob";
+import { useStoredState } from "../lib/useStoredState";
 
 export default function Practice() {
   const qc = useQueryClient();
@@ -12,6 +14,8 @@ export default function Practice() {
     refetchInterval: 30_000,
   });
   const [jobId, setJobId] = useStoredJob("practice");
+  const [status, setStatus] = useStoredState<"todas" | "done" | "failed">("oraqlo.practice.status", "todas");
+  const recent = (s?.recent ?? []).filter((j) => status === "todas" || j.status === status);
   const job = useJob(jobId, () => setJobId(null));
   const save = useMutation({
     mutationFn: (body: Partial<Pick<PracticeState, "auto" | "interval_min">>) => api.put<PracticeState>("/practice", body),
@@ -92,9 +96,26 @@ export default function Practice() {
 
       {s && s.recent.length > 0 && (
         <Card>
-          <SectionTitle>Pasadas recientes</SectionTitle>
+          <SectionTitle aside={<span className="text-xs text-muted">{countLabel(recent.length, s.recent.length)}</span>}>
+            Pasadas recientes
+          </SectionTitle>
+          {s.recent.length > 5 && (
+            <div className="mb-2">
+              <ChipGroup
+                label="Estado de las pasadas"
+                options={[
+                  { value: "todas", label: "Todas" },
+                  { value: "done", label: "Terminadas" },
+                  { value: "failed", label: "Con error" },
+                ]}
+                value={status}
+                onChange={setStatus}
+              />
+            </div>
+          )}
+          {recent.length === 0 && <FilteredEmpty onClear={() => setStatus("todas")} />}
           <ul className="divide-y divide-line text-sm">
-            {s.recent.map((j) => (
+            {recent.map((j) => (
               <li key={j.id} className="py-2">
                 <div className="flex justify-between gap-2">
                   <span>{fmtDate(j.created_at)}</span>

@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Icon } from "../components/icons";
 import { JobTimeline } from "../components/JobView";
+import { ChipGroup, FilteredEmpty, SearchInput, SortSelect, includesText, type Option } from "../components/listControls";
 import { Button, Card, Empty, ErrorNote, SectionTitle, Skeleton, StatusBadge, cx, inputClass, useFeedback } from "../components/ui";
 import { api, pct, type Goal, type Milestone } from "../lib/api";
 import { useJob, useStoredJob } from "../lib/useJob";
+import { useStoredState } from "../lib/useStoredState";
 
 const shortDate = (iso: string) => {
   const d = new Date(iso.length === 10 ? `${iso}T12:00:00` : iso);
@@ -17,11 +19,72 @@ const longDate = (iso: string) => {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric" });
 };
 
+type GoalFilter = "todos" | "activo" | "logrado" | "no-logrado" | "abandonado" | "vencidos";
+type GoalSort = "fecha" | "probabilidad" | "mejora" | "recientes";
+const GOAL_SORTS: Option<GoalSort>[] = [
+  { value: "fecha", label: "Fecha límite" },
+  { value: "probabilidad", label: "Más probables" },
+  { value: "mejora", label: "Más han mejorado" },
+  { value: "recientes", label: "Más recientes" },
+];
+
+export function filterGoals(goals: Goal[], status: GoalFilter, query: string): Goal[] {
+  return goals.filter(
+    (g) =>
+      includesText(g.goal, query) &&
+      (status === "todos" || (status === "vencidos" ? g.status === "activo" && g.overdue.length > 0 : g.status === status)),
+  );
+}
+
+export function sortGoals(goals: Goal[], by: GoalSort): Goal[] {
+  const out = [...goals];
+  if (by === "fecha") out.sort((a, b) => a.deadline.localeCompare(b.deadline));
+  if (by === "probabilidad") out.sort((a, b) => b.current_p - a.current_p);
+  if (by === "mejora") out.sort((a, b) => b.current_p - b.initial_p - (a.current_p - a.initial_p));
+  if (by === "recientes") out.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  return out;
+}
+
 export function GoalsList() {
   const { data, error, isLoading } = useQuery({ queryKey: ["goals"], queryFn: () => api.get<Goal[]>("/goals") });
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useStoredState<GoalFilter>("oraqlo.goals.status", "todos");
+  const [sort, setSort] = useStoredState<GoalSort>("oraqlo.goals.sort", "fecha");
+  const shown = useMemo(() => sortGoals(filterGoals(data ?? [], status, query), sort), [data, status, query, sort]);
+  const statusOptions = useMemo(() => {
+    const goals = data ?? [];
+    const n = (f: GoalFilter) => filterGoals(goals, f, "").length;
+    const opts: Option<GoalFilter>[] = [{ value: "todos", label: "Todos", count: goals.length }];
+    for (const [value, label] of [
+      ["activo", "Activos"],
+      ["vencidos", "Con hitos vencidos"],
+      ["logrado", "Logrados"],
+      ["no-logrado", "No logrados"],
+      ["abandonado", "Abandonados"],
+    ] as const)
+      if (n(value) > 0) opts.push({ value, label, count: n(value) });
+    return opts;
+  }, [data]);
   return (
     <div className="space-y-3">
       <ErrorNote error={error} />
+      {data && data.length > 1 && (
+        <div className="space-y-2">
+          <SearchInput value={query} onChange={setQuery} label="Buscar objetivos" />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <ChipGroup label="Estado" options={statusOptions} value={status} onChange={setStatus} />
+            <SortSelect options={GOAL_SORTS} value={sort} onChange={setSort} />
+          </div>
+        </div>
+      )}
+      {data && data.length > 0 && shown.length === 0 && (
+        <FilteredEmpty
+          onClear={() => {
+            setQuery("");
+            setStatus("todos");
+          }}
+        />
+      )}
       {isLoading && (
         <>
           <Skeleton className="h-28" />
@@ -37,7 +100,7 @@ export function GoalsList() {
           elige «Lograr objetivo» y Oraqlo te arma un plan con hitos.
         </Empty>
       )}
-      {data?.map((g) => (
+      {shown.map((g) => (
         <Link key={g.id} to={`/objetivos/${g.id}`} className="block rounded-2xl">
           <Card className="transition hover:border-accent">
             <div className="flex items-start justify-between gap-3">
@@ -347,11 +410,7 @@ export function GoalDetail() {
       <Card>
         <SectionTitle>Hitos</SectionTitle>
         {g.milestones.length === 0 && <Empty>Sin hitos.</Empty>}
-        <ul className="space-y-2">
-          {g.milestones.map((m, i) => (
-            <MilestoneRow key={`${i}|${m.text}|${m.target_date}`} goalId={g.id} m={m} i={i} overdue={g.overdue.includes(i)} active={active} />
-          ))}
-        </ul>
+        <Milestones g={g} active={active} />
       </Card>
 
       <Card>
@@ -434,5 +493,51 @@ export function GoalDetail() {
         <ErrorNote error={close.error ?? remove.error} />
       </Card>
     </div>
+  );
+}
+
+type MilestoneFilter = "todos" | "pendiente" | "cumplido" | "fallado" | "vencidos";
+
+/** Hitos con filtro y orden. Cada fila conserva su índice original: es el que usa el servidor. */
+function Milestones({ g, active }: { g: Goal; active: boolean }) {
+  const [filter, setFilter] = useStoredState<MilestoneFilter>("oraqlo.goal.milestones", "todos");
+  const [byDate, setByDate] = useStoredState<boolean>("oraqlo.goal.milestonesByDate", true);
+  const rows = g.milestones
+    .map((m, i) => ({ m, i, overdue: g.overdue.includes(i) }))
+    .filter(({ m, overdue }) => filter === "todos" || (filter === "vencidos" ? overdue : m.status === filter));
+  if (byDate) rows.sort((a, b) => a.m.target_date.localeCompare(b.m.target_date));
+  return (
+    <>
+      {g.milestones.length > 3 && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <ChipGroup
+            label="Estado de los hitos"
+            options={[
+              { value: "todos", label: "Todos" },
+              { value: "pendiente", label: "Pendientes" },
+              { value: "vencidos", label: "Vencidos" },
+              { value: "cumplido", label: "Cumplidos" },
+              { value: "fallado", label: "Fallados" },
+            ]}
+            value={filter}
+            onChange={setFilter}
+          />
+          <SortSelect
+            options={[
+              { value: "fecha", label: "Por fecha" },
+              { value: "plan", label: "Orden del plan" },
+            ]}
+            value={byDate ? "fecha" : "plan"}
+            onChange={(v) => setByDate(v === "fecha")}
+          />
+        </div>
+      )}
+      {g.milestones.length > 0 && rows.length === 0 && <FilteredEmpty onClear={() => setFilter("todos")} />}
+      <ul className="space-y-2">
+        {rows.map(({ m, i, overdue }) => (
+          <MilestoneRow key={`${i}|${m.text}|${m.target_date}`} goalId={g.id} m={m} i={i} overdue={overdue} active={active} />
+        ))}
+      </ul>
+    </>
   );
 }
