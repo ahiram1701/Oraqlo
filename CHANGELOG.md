@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.5](https://github.com/ahiram1701/Oraqlo/compare/v0.5.4...v0.5.5) (2026-11-16)
+
+
+### Correcciones
+
+* **updater:** si gh attestation no responde, la procedencia queda como no comprobable ([#35](https://github.com/ahiram1701/Oraqlo/issues/35)) ([84faf16](https://github.com/ahiram1701/Oraqlo/commit/84faf16787f725b25aabd00c55333955faadb21a))
+
 ## [0.5.4](https://github.com/ahiram1701/Oraqlo/compare/v0.5.3...v0.5.4) (2026-11-16)
 
 
