@@ -28,7 +28,9 @@ _QUERY_PROMPT = (
     "buscar en internet para fundamentar probabilidades. Responde SOLO con JSON: "
     '{"queries": ["<consulta de búsqueda>", ...]} — entre 2 y 4 consultas cortas y '
     "concretas (datos de mercado, precios, fechas, competidores, regulación), en el "
-    "idioma más útil para encontrar resultados."
+    "idioma más útil para encontrar resultados. Una de ellas debe buscar la TASA BASE: "
+    "con qué frecuencia ha pasado históricamente algo parecido (estadísticas, "
+    "precedentes)."
 )
 
 _REFLECT_PROMPT = (

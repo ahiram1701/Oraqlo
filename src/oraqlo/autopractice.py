@@ -18,10 +18,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
+from oraqlo.forecaster.aggregate import clamp
 from oraqlo.forecaster.base import Distribution, Forecast
 from oraqlo.llm.base import LLMProvider
 from oraqlo.llm.jsonchat import JsonChatError, chat_json
 from oraqlo.memory.calibration import CalibrationLedger, ResolvedForecast
+from oraqlo.memory.recalibration import Recalibration, for_model
 from oraqlo.polymarket import Market, PolymarketClient, PolymarketError
 from oraqlo.research import Researcher, ResearchError
 
@@ -31,9 +33,11 @@ _TAG_RE = re.compile(r"^\[polymarket:(\d+)\]")
 _FORECAST_PROMPT = (
     "Eres el Oráculo de Oraqlo: probabilidades calibradas, nunca certezas. "
     "Asigna probabilidad a CADA UNO de los resultados dados, usando EXACTAMENTE "
-    "esas etiquetas (ni una más, ni una menos); deben sumar 1.0. Responde SOLO "
-    'con JSON: {"outcomes": {"<etiqueta>": <prob>, ...}, '
-    '"assumptions": ["<supuesto>", ...]}'
+    "esas etiquetas (ni una más, ni una menos); deben sumar 1.0. Empieza por la "
+    "tasa base (en casos parecidos, con qué frecuencia pasa cada cosa), ajústala con "
+    "lo específico y evita 0 y 1. Responde SOLO con JSON: "
+    '{"base_rate": "<clase de referencia y frecuencia>", '
+    '"outcomes": {"<etiqueta>": <prob>, ...}, "assumptions": ["<supuesto>", ...]}'
 )
 
 
@@ -146,7 +150,13 @@ class PracticeEngine:
         delta = market.end_date - datetime.now(UTC)
         return max(delta, timedelta(days=1))
 
-    def _forecast_market(self, market: Market, advice: str | None, context: str | None) -> Forecast:
+    def _forecast_market(
+        self,
+        market: Market,
+        advice: str | None,
+        context: str | None,
+        recal: Recalibration | None = None,
+    ) -> Forecast:
         system = _FORECAST_PROMPT
         if advice:
             system += f"\n\nTu historial de calibración dice: {advice}"
@@ -174,14 +184,22 @@ class PracticeEngine:
         total = sum(probs.values())
         if total <= 0:
             raise PracticeError("Probabilidades no positivas.")
-        distribution = Distribution(outcomes={k: v / total for k, v in probs.items()})
+        outcomes = clamp({k: v / total for k, v in probs.items()})
+        assumptions = [str(a) for a in data.get("assumptions", [])]
+        base_rate = str(data.get("base_rate") or "").strip()
+        if base_rate:
+            assumptions.append(f"Tasa base: {base_rate}")
+        if recal is not None and recal.active:
+            outcomes = clamp(recal.apply(outcomes))
+            assumptions.append(recal.note())
+        distribution = Distribution(outcomes=outcomes)
         distribution.validate()
         return Forecast(
             id=str(uuid.uuid4()),
             question=f"{market_tag(market.id)} {market.question}",
             distribution=distribution,
             horizon=self._horizon(market),
-            assumptions=[str(a) for a in data.get("assumptions", [])],
+            assumptions=assumptions,
             source=self.oraqlo_source,
             created_at=datetime.now(UTC),
         )
@@ -210,6 +228,9 @@ class PracticeEngine:
         advice = calibration_advice(self.ledger, self.oraqlo_source)
         if advice:
             progress(f"consejo de calibración activo: {advice}")
+        recal = for_model(self.ledger, self.model)
+        if recal.active:
+            progress(f"recalibración activa (a={recal.a:.2f}): {recal.describe()}")
 
         known = self._known_market_ids()
         candidates = [
@@ -232,7 +253,7 @@ class PracticeEngine:
                     )
                 except (ResearchError, Exception) as e:  # la práctica no se detiene por esto
                     progress(f"  investigación no disponible ({e}); prediciendo sin ella")
-            forecast = self._forecast_market(market, advice, context)
+            forecast = self._forecast_market(market, advice, context, recal)
             self.ledger.record(forecast)
             self.ledger.record(self._benchmark_forecast(market))
             top = forecast.distribution.mode()
