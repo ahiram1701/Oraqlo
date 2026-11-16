@@ -231,13 +231,16 @@ class GoalStrategist:
         state: WorldState | None = None,
         brief: ResearchBrief | None = None,
         on_progress: OnProgress | None = None,
+        on_phase: OnProgress | None = None,
     ) -> GoalPlan:
         if not goal.strip():
             raise GoalError("El objetivo está vacío.")
         progress = on_progress or (lambda msg: None)
+        phase = on_phase or (lambda name: None)
         base_ctx = self._context_block(goal, horizon, brief, state)
 
         # 1. Línea base: P(objetivo | statu quo).
+        phase("linea_base")
         progress("1/5 Línea base: P(objetivo) si no cambias nada…")
         baseline = self._binary_forecast(_BASELINE_PROMPT, base_ctx, goal, horizon, "statu quo")
         ledger.record(baseline)
@@ -246,6 +249,7 @@ class GoalStrategist:
         )
 
         # 2. Palancas y condiciones externas.
+        phase("palancas")
         progress("2/5 Análisis: qué controlas y qué tiene que pasar…")
         data = self._chat(_LEVERS_PROMPT, base_ctx, temperature=0.4)
         levers = [
@@ -303,11 +307,13 @@ class GoalStrategist:
                 raise GoalError("El estratega no produjo pasos de plan.")
             return str(plan_data.get("summary", "")).strip(), steps, milestones
 
+        phase("plan")
         progress("3/5 Diseñando el plan…")
         summary, steps, milestones = make_plan()
         revised = False
 
         # 4. Debate del panel sobre el plan.
+        phase("deliberar")
         progress("4/5 Panel deliberando sobre el plan…")
 
         def plan_text() -> str:
@@ -336,6 +342,7 @@ class GoalStrategist:
             verdict = panel.deliberate(base_ctx + objections, candidate)
 
         # 5. P(objetivo | plan) y uplift.
+        phase("con_plan")
         progress("5/5 P(objetivo) si ejecutas el plan…")
         objections_txt = "\n".join(f"- {o}" for o in verdict.objections)
         with_plan = self._binary_forecast(

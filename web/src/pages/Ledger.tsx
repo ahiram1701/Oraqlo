@@ -205,7 +205,7 @@ function ResolvedRow({ r }: { r: ResolvedForecast }) {
     },
   });
   // Clases literales: Tailwind no detecta nombres construidos dinámicamente.
-  const toneClass = r.brier < 0.1 ? "text-good" : r.brier < 0.25 ? "text-good" : r.brier < 0.5 ? "text-warn" : "text-bad";
+  const toneClass = r.brier < 0.1 ? "text-good" : r.brier < 0.25 ? "text-accent" : r.brier < 0.5 ? "text-warn" : "text-bad";
   return (
     <li className="py-2">
       <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex w-full items-start justify-between gap-3 py-1 text-left">
@@ -217,7 +217,7 @@ function ResolvedRow({ r }: { r: ResolvedForecast }) {
         </span>
         <span className="flex shrink-0 flex-col items-end">
           <span className={cx("text-sm font-semibold tabular-nums", toneClass)}>{r.brier.toFixed(2)}</span>
-          <span className="text-[11px] text-muted">{brierWords(r.brier)}</span>
+          <span className="text-xs text-muted">{brierWords(r.brier)}</span>
         </span>
       </button>
       {open && (

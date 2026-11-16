@@ -264,6 +264,7 @@ class OraqloService:
             state=self._state_from(brief) if brief else None,
             brief=brief,
             on_progress=lambda msg: emit("log", {"msg": msg}),
+            on_phase=lambda name: emit("phase", {"name": name}),
         )
         tracked = GoalTracker(self.store.goals, self.store.ledger).track(plan)
         facts = [(f.text, f.source_url) for f in brief.facts] if brief else None

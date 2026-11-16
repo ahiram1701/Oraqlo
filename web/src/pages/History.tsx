@@ -91,11 +91,19 @@ export function HistoryList() {
 export function RunDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { data, error } = useQuery({
+  const { data, error, refetch } = useQuery({
     queryKey: ["runs", id],
     queryFn: () => api.get<{ id: string; title: string; kind: string; created_at: string; data: any }>(`/runs/${id}`),
   });
-  if (error) return <ErrorNote error={error} />;
+  if (error)
+    return (
+      <Card className="space-y-3">
+        <ErrorNote error={error} onRetry={() => refetch()} />
+        <Button variant="secondary" onClick={() => navigate("/historial")}>
+          Volver al historial
+        </Button>
+      </Card>
+    );
   if (!data)
     return (
       <div className="space-y-4" role="status" aria-label="cargando">

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { vi } from "vitest";
 import App from "../App";
@@ -94,6 +94,25 @@ test("desde el celular las claves no se pueden cambiar", async () => {
   const add = await screen.findByRole("button", { name: "Añadir clave" });
   expect(add).toBeDisabled();
   expect(screen.getByText(/Solo se puede cambiar desde el PC/)).toBeInTheDocument();
+});
+
+test("en el celular, «Más» abre el resto de secciones y se marca si estás en una de ellas", async () => {
+  mockApi({
+    "/setup": { ready: true, needs_setup: false, local: true, legacy_imported: false },
+    "/providers": PROVIDERS,
+    "/goals": [],
+    "/calibration": { n: 0, sources: [], reliability: [] },
+  });
+  renderAt("/calibracion");
+  const more = await screen.findByRole("button", { name: "Más" });
+  expect(more).toHaveAttribute("aria-current", "page");
+  expect(screen.queryByRole("group", { name: "Más secciones" })).not.toBeInTheDocument();
+  fireEvent.click(more);
+  expect(more).toHaveAttribute("aria-expanded", "true");
+  const group = screen.getByRole("group", { name: "Más secciones" });
+  expect(within(group).getByRole("link", { name: "Ajustes" })).toHaveAttribute("href", "/ajustes");
+  fireEvent.keyDown(window, { key: "Escape" });
+  expect(screen.queryByRole("group", { name: "Más secciones" })).not.toBeInTheDocument();
 });
 
 test("la clave de búsqueda web se guarda y se prueba aunque se use Ollama local", async () => {

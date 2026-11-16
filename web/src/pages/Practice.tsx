@@ -117,7 +117,7 @@ function Stat({ label, value, better }: { label: string; value: number | null | 
       <p className={cx("mt-1 text-3xl font-semibold tracking-tight tabular-nums", better && "text-good")}>
         {value == null ? "—" : value.toFixed(3)}
       </p>
-      {better && <p className="text-[11px] text-good">va ganando</p>}
+      {better && <p className="text-xs text-good">va ganando</p>}
     </div>
   );
 }
