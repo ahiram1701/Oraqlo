@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/ahiram1701/Oraqlo/compare/v0.5.0...v0.5.1) (2026-11-16)
+
+
+### Correcciones
+
+* Oraqlo en su propio puerto de Tailscale y lanzador que se actualiza solo ([#27](https://github.com/ahiram1701/Oraqlo/issues/27)) ([b7bc299](https://github.com/ahiram1701/Oraqlo/commit/b7bc299c3ffccc9789cddd568c9d54a09f1a0214))
+
 ## [0.5.0](https://github.com/ahiram1701/Oraqlo/compare/v0.4.0...v0.5.0) (2026-11-16)
 
 
