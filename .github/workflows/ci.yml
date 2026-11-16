@@ -92,3 +92,29 @@ jobs:
           uv venv /tmp/smoke
           uv pip install --python /tmp/smoke dist/*.whl
           /tmp/smoke/bin/oraqlo version
+
+  installer:
+    name: Instalador Windows (.exe)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Compilar el frontend dentro del paquete
+        working-directory: web
+        run: npm ci && npm run build
+      - uses: astral-sh/setup-uv@v7
+      - run: uv build --wheel
+      - name: Compilar Oraqlo-Setup.exe
+        shell: pwsh
+        run: ./installer/build-installer.ps1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: oraqlo-setup
+          path: dist/Oraqlo-Setup-*.exe
+          retention-days: 7

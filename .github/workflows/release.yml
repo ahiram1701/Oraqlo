@@ -59,9 +59,7 @@ jobs:
     if: needs.release-please.outputs.created == 'true'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      id-token: write # attestation de procedencia (Sigstore)
-      attestations: write
+      contents: read
     steps:
       - uses: actions/checkout@v7
         with:
@@ -81,15 +79,43 @@ jobs:
       - run: uv build
       - name: Comprobar que el wheel lleva el frontend
         run: unzip -l dist/*.whl | grep -q "oraqlo/api/static/index.html"
-      - name: Adjuntar también el instalador de Windows
-        run: cp scripts/install-windows.ps1 dist/
-      - name: SHA256SUMS
-        working-directory: dist
-        run: sha256sum * > SHA256SUMS
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  # El instalador .exe se compila en Windows (Inno Setup); aquí se firma la
+  # procedencia de todo y se adjunta a la Release.
+  windows:
+    needs: [release-please, publish]
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      id-token: write # attestation de procedencia (Sigstore)
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - name: Compilar Oraqlo-Setup.exe
+        shell: pwsh
+        run: ./installer/build-installer.ps1
+      - name: Adjuntar también el instalador avanzado y SHA256SUMS
+        shell: bash
+        run: |
+          cp scripts/install-windows.ps1 dist/
+          cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
       - uses: actions/attest-build-provenance@v4
         with:
-          subject-path: dist/*.whl
+          subject-path: |
+            dist/*.whl
+            dist/Oraqlo-Setup-*.exe
       - name: Adjuntar artefactos a la Release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${{ needs.release-please.outputs.tag }}" dist/* --clobber

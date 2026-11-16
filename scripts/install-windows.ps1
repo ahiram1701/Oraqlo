@@ -31,13 +31,25 @@ param(
     [switch]$NoTask,
     [switch]$NoTailscale,
     [switch]$NoStart,
-    [switch]$Uninstall
+    [switch]$Uninstall,
+    # Usados por Oraqlo-Setup.exe:
+    [string]$Uv,               # uv.exe: trae su propio Python (no hace falta tenerlo instalado)
+    [string]$LogFile,          # registra toda la salida (el .exe corre sin ventana)
+    [switch]$Shortcuts,        # acceso directo "Oraqlo" en el menú Inicio
+    [switch]$DesktopShortcut   # ... y en el escritorio
 )
 
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
 $TaskName = "Oraqlo"
 $App = Join-Path $OraqloHome "app"
 $Versions = Join-Path $App "versions"
+$StartMenuLink = Join-Path ([Environment]::GetFolderPath("Programs")) "Oraqlo.lnk"
+$DesktopLink = Join-Path ([Environment]::GetFolderPath("Desktop")) "Oraqlo.lnk"
+if ($LogFile) {
+    New-Item -ItemType Directory -Force -Path (Split-Path $LogFile) | Out-Null
+    Start-Transcript -Path $LogFile -Append | Out-Null
+}
 
 function Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 function Warn($msg) { Write-Host "[!] $msg" -ForegroundColor Yellow }
@@ -50,6 +62,23 @@ function Find-Tailscale {
     return $null
 }
 
+# Para los procesos de esta instalación y espera a que suelten sus archivos
+# (Windows no deja borrar un python.exe en marcha).
+function Stop-OraqloProcesses {
+    $procs = @(Get-CimInstance Win32_Process -Filter "Name like 'python%'" |
+        Where-Object { $_.CommandLine -like "*$App*" })
+    foreach ($p in $procs) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+    foreach ($p in $procs) { Wait-Process -Id $p.ProcessId -Timeout 15 -ErrorAction SilentlyContinue }
+}
+
+function Remove-Tree([string]$Path) {
+    foreach ($i in 1..10) {
+        if (-not (Test-Path $Path)) { return }
+        try { Remove-Item -Recurse -Force $Path -ErrorAction Stop; return }
+        catch { if ($i -eq 10) { throw }; Start-Sleep -Seconds 1 }
+    }
+}
+
 # ── Desinstalar ──────────────────────────────────────────────────────────
 if ($Uninstall) {
     Step "Quitando la tarea programada"
@@ -57,15 +86,14 @@ if ($Uninstall) {
         Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
     }
-    Get-CimInstance Win32_Process -Filter "Name like 'python%'" |
-        Where-Object { $_.CommandLine -like "*$App*" } |
-        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-    $ts = Find-Tailscale
-    if ($ts) {
+    Stop-OraqloProcesses
+    $ts = if ($NoTailscale) { $null } else { Find-Tailscale }
+    if ($ts -and (Test-Path (Join-Path $App "tailscale.txt"))) {
         Step "Retirando la publicación de tailscale serve"
         & $ts serve --https=443 off 2>$null
     }
-    if (Test-Path $App) { Remove-Item -Recurse -Force $App }
+    Remove-Item $StartMenuLink, $DesktopLink -Force -ErrorAction SilentlyContinue
+    Remove-Tree $App
     Write-Host "Oraqlo desinstalado. Tus datos siguen en $OraqloHome (bórralos a mano si quieres)."
     exit 0
 }
@@ -112,9 +140,32 @@ if (-not (Test-OraqloHealth $Port)) {
 }
 
 # ── Python 3.12+ ─────────────────────────────────────────────────────────
-Step "Buscando Python 3.12 o superior"
 $Python = $null
+if ($Uv) {
+    # Python propio dentro de app\python: no depende de lo que haya en el PC
+    # y se borra al desinstalar.
+    Step "Preparando Python (puede tardar un minuto la primera vez)"
+    $env:UV_PYTHON_INSTALL_DIR = Join-Path $App "python"
+    $env:UV_NO_PROGRESS = "1"
+    $env:UV_CACHE_DIR = Join-Path ([IO.Path]::GetTempPath()) ("oraqlo-uv-" + [guid]::NewGuid())
+    # --no-bin / --no-registry: nada fuera de la carpeta de Oraqlo (ni accesos en
+    # ~/.local/bin ni registro de Windows); desinstalar lo borra todo.
+    & $Uv python install 3.13 --managed-python --no-bin --no-registry
+    Remove-Item -Recurse -Force $env:UV_CACHE_DIR -ErrorAction SilentlyContinue
+    # Se usa el python.exe de la carpeta de la versión concreta, no el enlace
+    # "cpython-3.13-..." que uv crea encima: Windows 11 puede bloquear ese enlace
+    # dentro de un instalador (error 448, RedirectionGuard) y uv sale con error
+    # aunque Python ya quedó completo.
+    $Python = Get-ChildItem (Join-Path $env:UV_PYTHON_INSTALL_DIR "cpython-3.13.*-windows-*") -Directory -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending |
+        ForEach-Object { Join-Path $_.FullName "python.exe" } |
+        Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $Python) { throw "No se pudo descargar Python (revisa tu conexión a internet)." }
+} else {
+    Step "Buscando Python 3.12 o superior"
+}
 foreach ($v in @("3.13", "3.12")) {
+    if ($Python) { break }
     try {
         $exe = & py "-$v" -c "import sys; print(sys.executable)" 2>$null
         if ($LASTEXITCODE -eq 0 -and $exe) { $Python = $exe.Trim(); break }
@@ -162,22 +213,35 @@ try {
     if ($WheelName -notmatch "^oraqlo-(?<ver>[^-]+)-") { throw "Nombre de wheel inesperado: $WheelName" }
     $NewVersion = $Matches["ver"]
 
+    # Si el auto-updater ya instaló algo más nuevo, no se baja de versión.
+    $CurrentFile = Join-Path $App "current.txt"
+    $Current = if (Test-Path $CurrentFile) { (Get-Content $CurrentFile -Raw).Trim().TrimStart([char]0xFEFF) } else { $null }
+    $SkipInstall = $false
+    try {
+        if ($Current -and (Test-Path (Join-Path $Versions $Current)) -and ([version]$Current -gt [version]$NewVersion)) {
+            Write-Host "    Ya tienes Oraqlo $Current (más nuevo que $NewVersion): se conserva."
+            $SkipInstall = $true
+            $NewVersion = $Current
+        }
+    } catch { }
+
     # ── Instalar la versión ──────────────────────────────────────────────
     $Venv = Join-Path $Versions $NewVersion
-    Step "Instalando Oraqlo $NewVersion en $Venv"
-    if (Test-Path $Venv) { Remove-Item -Recurse -Force $Venv }
-    & $Python -m venv $Venv
-    if ($LASTEXITCODE -ne 0) { throw "No se pudo crear el entorno virtual." }
     $VenvPython = Join-Path $Venv "Scripts\python.exe"
-    & $VenvPython -m pip install --disable-pip-version-check -q $WheelPath
-    if ($LASTEXITCODE -ne 0) { throw "Falló la instalación del wheel." }
+    if (-not $SkipInstall) {
+        Step "Instalando Oraqlo $NewVersion en $Venv"
+        Stop-OraqloProcesses
+        Remove-Tree $Venv
+        & $Python -m venv $Venv
+        if ($LASTEXITCODE -ne 0) { throw "No se pudo crear el entorno virtual." }
+        & $VenvPython -m pip install --disable-pip-version-check -q $WheelPath
+        if ($LASTEXITCODE -ne 0) { throw "Falló la instalación del wheel." }
+    }
 
     Step "Copiando el lanzador estable"
     New-Item -ItemType Directory -Force -Path $App | Out-Null
     & $VenvPython -c "import shutil, oraqlo.launcher as l; shutil.copy(l.__file__, r'$App\launcher.py')"
 
-    $CurrentFile = Join-Path $App "current.txt"
-    $Current = if (Test-Path $CurrentFile) { (Get-Content $CurrentFile -Raw).Trim().TrimStart([char]0xFEFF) } else { $null }
     if ($Current -and $Current -ne $NewVersion) {
         [IO.File]::WriteAllText((Join-Path $App "previous.txt"), $Current)
         [IO.File]::WriteAllText((Join-Path $App "pending.txt"), $NewVersion)
@@ -185,6 +249,7 @@ try {
     # Sin BOM: Set-Content -Encoding UTF8 de PowerShell 5.1 lo añadiría.
     [IO.File]::WriteAllText($CurrentFile, $NewVersion)
     [IO.File]::WriteAllText($PortFile, "$Port")
+    [IO.File]::WriteAllText((Join-Path $App "pythonw.txt"), $PythonW)
     Add-Content -Path (Join-Path $App "update.log") -Value "$(Get-Date -Format s) [instalador] instalada $NewVersion"
 
     $env:ORAQLO_HOME = $OraqloHome
@@ -193,11 +258,8 @@ try {
         Step "Importando datos de la versión TUI desde $ImportFrom"
         & $Oraqlo import-legacy $ImportFrom
     }
-    $ConfigFile = Join-Path $OraqloHome "oraqlo.toml"
-    if (-not (Test-Path $ConfigFile)) {
-        Warn "No hay ${ConfigFile}: Oraqlo usará valores por defecto (elige proveedor según tus claves). Mira config/oraqlo.example.toml."
-    }
     & $Oraqlo doctor --preflight
+    if ($LASTEXITCODE -ne 0) { throw "La comprobación inicial de Oraqlo falló." }
 }
 finally {
     Remove-Item -Recurse -Force $Tmp -ErrorAction SilentlyContinue
@@ -219,9 +281,7 @@ if (-not $NoTask) {
 
     if (-not $NoStart) {
         Step "Arrancando Oraqlo"
-        Get-CimInstance Win32_Process -Filter "Name like 'python%'" |
-            Where-Object { $_.CommandLine -like "*$App*" } |
-            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+        Stop-OraqloProcesses
         Start-ScheduledTask -TaskName $TaskName
         $healthy = $false
         foreach ($i in 1..60) {
@@ -236,16 +296,39 @@ if (-not $NoTask) {
     }
 }
 
+# ── Accesos directos ─────────────────────────────────────────────────────
+# Abren Oraqlo en el navegador (y lo arrancan si no estaba corriendo).
+function New-OraqloShortcut([string]$Path) {
+    $shell = New-Object -ComObject WScript.Shell
+    $lnk = $shell.CreateShortcut($Path)
+    $lnk.TargetPath = $PythonW
+    $lnk.Arguments = "`"$(Join-Path $App 'launcher.py')`" --open --home `"$OraqloHome`""
+    $lnk.WorkingDirectory = $App
+    $lnk.Description = "Abrir Oraqlo"
+    $icon = Join-Path $OraqloHome "setup\oraqlo.ico"
+    if (Test-Path $icon) { $lnk.IconLocation = $icon }
+    $lnk.Save()
+}
+if ($Shortcuts) {
+    Step "Creando el acceso directo en el menú Inicio"
+    New-OraqloShortcut $StartMenuLink
+    if ($DesktopShortcut) { New-OraqloShortcut $DesktopLink }
+}
+
 # ── Tailscale ────────────────────────────────────────────────────────────
 if (-not $NoTailscale) {
     $ts = Find-Tailscale
     if (-not $ts) {
-        Warn "Tailscale no está instalado: https://tailscale.com/download (luego vuelve a ejecutar este script)."
+        Warn "Tailscale no está instalado. Para usar Oraqlo en el celular, ve a Ajustes > Conexión."
     } else {
         Step "Publicando Oraqlo en tu tailnet (tailscale serve, HTTPS)"
-        & $ts serve --bg $Port
-        # Marca para que Oraqlo mantenga la publicación si alguna vez cambia de puerto.
-        [IO.File]::WriteAllText((Join-Path $App "tailscale.txt"), "on")
+        & $ts serve --bg $Port | Out-Host
+        if ($LASTEXITCODE -eq 0) {
+            # Marca para que Oraqlo mantenga la publicación si alguna vez cambia de puerto.
+            [IO.File]::WriteAllText((Join-Path $App "tailscale.txt"), "on")
+        } else {
+            Warn "Tailscale no pudo publicar Oraqlo (¿sesión iniciada?). Hazlo luego desde Ajustes > Conexión."
+        }
         try {
             $status = & $ts status --json | ConvertFrom-Json
             $dns = $status.Self.DNSName.TrimEnd(".")
@@ -253,12 +336,12 @@ if (-not $NoTailscale) {
             Write-Host "    Desde tu celular (con Tailscale activo): https://$dns" -ForegroundColor Green
             Write-Host "    Ábrela en Safari/Chrome y elige 'Añadir a pantalla de inicio' para instalarla."
         } catch {
-            Warn "No pude leer tu nombre en el tailnet: ejecuta 'tailscale serve status'."
+            Warn "No pude leer tu nombre en el tailnet: míralo en Ajustes > Conexión."
         }
     }
 }
 
 Write-Host ""
 Write-Host "Listo. En este PC: http://127.0.0.1:$Port  ·  Datos: $OraqloHome" -ForegroundColor Green
-Write-Host "El puerto se cambia en Ajustes > Conexión. Registro: $App\update.log"
-Write-Host "Las actualizaciones se instalan solas (updates.mode en oraqlo.toml: auto | notify | off)."
+Write-Host "Todo lo demás (claves, modelos, puerto, celular, actualizaciones) se configura en Ajustes."
+if ($LogFile) { Stop-Transcript | Out-Null }

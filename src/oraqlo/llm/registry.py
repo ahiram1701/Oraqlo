@@ -64,6 +64,10 @@ class ProviderRegistry:
         self.config = config
         self._cache: dict[tuple[str, str | None], LLMProvider] = {}
 
+    def clear(self) -> None:
+        """Olvida los proveedores construidos (cambiaron claves o configuración)."""
+        self._cache.clear()
+
     def names(self) -> list[str]:
         return sorted({*BUILTIN, *self.config.providers})
 

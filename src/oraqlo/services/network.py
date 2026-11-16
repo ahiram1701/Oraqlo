@@ -55,6 +55,15 @@ def write_port_file(app_dir: Path, port: int) -> None:
     (app_dir / PORT_FILE).write_text(str(port), encoding="utf-8")
 
 
+def set_tailscale_enabled(app_dir: Path, enabled: bool) -> None:
+    path = app_dir / TAILSCALE_FILE
+    if enabled:
+        app_dir.mkdir(parents=True, exist_ok=True)
+        path.write_text("on", encoding="utf-8")
+    else:
+        path.unlink(missing_ok=True)
+
+
 def tailscale_enabled(app_dir: Path) -> bool:
     try:
         return (app_dir / TAILSCALE_FILE).read_text(encoding="utf-8-sig").strip() == "on"
@@ -108,10 +117,37 @@ class TailscaleServe:
             return {}
         return data if isinstance(data, dict) else {}
 
-    def url(self) -> str | None:
+    def status(self) -> dict:
+        return self._json("status")
+
+    def state(self, status: dict | None = None) -> str:
+        """ "missing" (no instalado), "stopped", "needs_login" o "running"."""
+        if not self.exe:
+            return "missing"
+        status = self.status() if status is None else status
+        backend = str(status.get("BackendState", ""))
+        if backend == "Running":
+            return "running"
+        if backend in ("NeedsLogin", "NeedsMachineAuth", "NoState"):
+            return "needs_login"
+        return "stopped"
+
+    def url(self, status: dict | None = None) -> str | None:
         """https://<pc>.<tailnet>.ts.net, si Tailscale está conectado."""
-        dns = str(self._json("status").get("Self", {}).get("DNSName", "")).rstrip(".")
+        status = self.status() if status is None else status
+        dns = str(status.get("Self", {}).get("DNSName", "")).rstrip(".")
         return f"https://{dns}" if dns else None
+
+    def disable(self) -> bool:
+        """Retira la publicación HTTPS (443) de `tailscale serve`."""
+        if not self.exe:
+            return False
+        try:
+            out = self.run([self.exe, "serve", "--https=443", "off"])
+        except (OSError, subprocess.SubprocessError) as e:
+            log.warning("No pude retirar tailscale serve: %s", e)
+            return False
+        return out.returncode == 0
 
     def serving_port(self) -> int | None:
         """Puerto local al que apunta la raíz HTTPS publicada, o None."""

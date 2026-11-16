@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { useSetup } from "./components/ProvidersCard";
 import { cx } from "./components/ui";
 import { api, type Goal } from "./lib/api";
 import Ask from "./pages/Ask";
@@ -11,6 +12,7 @@ import { HistoryList, RunDetail } from "./pages/History";
 import Ledger from "./pages/Ledger";
 import Practice from "./pages/Practice";
 import Settings from "./pages/Settings";
+import Welcome from "./pages/Welcome";
 
 const ICONS: Record<string, ReactNode> = {
   ask: <path d="M12 3a9 9 0 1 0 9 9M12 7v5l3 2" />,
@@ -62,6 +64,7 @@ const TITLES: [RegExp, string][] = [
   [/^\/historial/, "Historial"],
   [/^\/ajustes/, "Ajustes"],
   [/^\/mas/, "Más"],
+  [/^\/bienvenida/, "Bienvenida"],
 ];
 
 function useOverdueCount() {
@@ -143,6 +146,9 @@ function More() {
 export default function App() {
   const location = useLocation();
   const title = TITLES.find(([re]) => re.test(location.pathname))?.[1] ?? "Oraqlo";
+  // Primer arranque: sin un modelo listo, todo empieza por la bienvenida.
+  const setup = useSetup();
+  if (setup.data?.needs_setup && location.pathname !== "/bienvenida") return <Navigate to="/bienvenida" replace />;
   return (
     <div className="flex min-h-dvh">
       <SideNav />
@@ -163,6 +169,7 @@ export default function App() {
           <Route path="/historial/:id" element={<RunDetail />} />
           <Route path="/ajustes" element={<Settings />} />
           <Route path="/mas" element={<More />} />
+          <Route path="/bienvenida" element={<Welcome />} />
           <Route path="*" element={<p className="text-muted">Página no encontrada.</p>} />
         </Routes>
       </main>

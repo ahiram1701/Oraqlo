@@ -19,7 +19,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -28,18 +28,21 @@ from oraqlo.api.auth import AuthError, identify
 from oraqlo.casefile import CaseError, case_to_dict, parse_case, template_json
 from oraqlo.goaltrack import MILESTONE_STATUSES, GoalTracker
 from oraqlo.services.core import OraqloService
+from oraqlo.services.doctor import probe_provider, run_checks
 from oraqlo.services.jobs import TERMINAL, JobRunner
 from oraqlo.services.network import (
     MAX_PORT,
     MIN_PORT,
     TailscaleServe,
     port_in_use,
+    set_tailscale_enabled,
     tailscale_enabled,
     write_port_file,
 )
 from oraqlo.services.push import PushService, job_notification
 from oraqlo.services.scheduler import PeriodicTask, Scheduler
 from oraqlo.services.serialize import goal_json
+from oraqlo.services.userconfig import ConfigError, apply_changes, set_secret, toml_roles
 from oraqlo.store.db import dumps, loads
 from oraqlo.updater import UpdateError, Updater, is_managed, is_newer
 
@@ -103,6 +106,38 @@ class PracticeIn(BaseModel):
 
 class PortChange(BaseModel):
     port: int = Field(ge=MIN_PORT, le=MAX_PORT)
+
+
+class KeyIn(BaseModel):
+    value: str = Field(min_length=1, max_length=1000)
+
+
+class ConfigIn(BaseModel):
+    # {rol: {provider, model, temperature, effort}}; None o "" quita el ajuste.
+    roles: dict[str, dict[str, Any]] | None = None
+    updates_mode: Literal["auto", "notify", "off"] | None = None
+    allowed_users: list[str] | None = None
+
+
+class LegacyIn(BaseModel):
+    # nombre de archivo (oraqlo_ledger.json, ...) -> contenido JSON como texto
+    files: dict[str, str]
+
+
+class TailscaleIn(BaseModel):
+    enabled: bool
+
+
+LEGACY_FILES = ("oraqlo_ledger.json", "oraqlo_goals.json", "oraqlo_settings.json")
+LOCAL_ONLY = (
+    "Esto solo se puede cambiar desde el PC donde corre Oraqlo. Ábrelo allí desde el menú Inicio."
+)
+
+
+def require_local(request: Request) -> None:
+    """Claves y ajustes del sistema: solo desde el propio PC, nunca por la tailnet."""
+    if request.state.identity.via != "local":
+        raise HTTPException(403, LOCAL_ONLY)
 
 
 def create_app(
@@ -389,6 +424,32 @@ def create_app(
             "detail": result["detail"] + " Se activará cuando no haya análisis en curso.",
         }
 
+    @app.post("/api/update/rollback")
+    def update_rollback() -> dict:
+        """Vuelve a la versión anterior instalada y reinicia."""
+        if not managed:
+            raise HTTPException(409, "Esta copia no es una instalación gestionada.")
+        if runner.active():
+            raise HTTPException(409, "Hay análisis en curso: inténtalo cuando terminen.")
+        try:
+            version = updater.rollback()
+        except UpdateError as e:
+            raise HTTPException(409, str(e)) from e
+        settings.set("update.staged", None)
+        settings.set("update.approved", False)
+        request_restart()
+        return {"version": version, "restarting": True, "detail": f"Volviendo a {version}..."}
+
+    def tailscale_info() -> dict:
+        status = ts.status() if ts.installed else {}
+        return {
+            "installed": ts.installed,
+            "state": ts.state(status),
+            "enabled": tailscale_enabled(app_dir),
+            "url": ts.url(status) if ts.installed else None,
+            "serving_port": ts.serving_port() if ts.installed else None,
+        }
+
     @app.get("/api/server")
     def server_info() -> dict:
         port = getattr(app.state, "port", None)
@@ -396,13 +457,30 @@ def create_app(
             "port": port,
             "local_url": f"http://127.0.0.1:{port}" if port else None,
             "managed": managed,
-            "tailscale": {
-                "installed": ts.installed,
-                "enabled": tailscale_enabled(app_dir),
-                "url": ts.url() if ts.installed else None,
-                "serving_port": ts.serving_port() if ts.installed else None,
-            },
+            "tailscale": tailscale_info(),
         }
+
+    @app.put("/api/server/tailscale", dependencies=[Depends(require_local)])
+    def set_tailscale(body: TailscaleIn) -> dict:
+        """Publica (o retira) Oraqlo en la tailnet para abrirlo desde el celular."""
+        port = getattr(app.state, "port", None)
+        if body.enabled:
+            state = ts.state()
+            if state == "missing":
+                raise HTTPException(409, "Instala Tailscale en este PC primero.")
+            if state != "running":
+                raise HTTPException(409, "Abre Tailscale en este PC e inicia sesión.")
+            if not port:
+                raise HTTPException(409, "No sé en qué puerto corre Oraqlo.")
+            ts.ensure(port)
+            if ts.serving_port() != port:
+                raise HTTPException(502, "Tailscale no aceptó la publicación. Inténtalo de nuevo.")
+            set_tailscale_enabled(app_dir, True)
+        else:
+            if tailscale_enabled(app_dir) or (port and ts.serving_port() == port):
+                ts.disable()
+            set_tailscale_enabled(app_dir, False)
+        return tailscale_info()
 
     @app.put("/api/server/port")
     def change_port(body: PortChange) -> dict:
@@ -410,7 +488,7 @@ def create_app(
         if not managed:
             raise HTTPException(
                 409,
-                "Esta copia no es una instalación gestionada: arráncala con `oraqlo serve --port N`.",
+                "Esta copia no es una instalación gestionada (copia de desarrollo).",
             )
         current = getattr(app.state, "port", None)
         if body.port == current:
@@ -447,6 +525,112 @@ def create_app(
             raise HTTPException(404, str(e)) from e
         except Exception as e:
             raise HTTPException(502, str(e)) from e
+
+    @app.post("/api/providers/{name}/test")
+    def provider_test(name: str) -> dict:
+        if name not in service.registry.names():
+            raise HTTPException(404, f"Proveedor desconocido: {name}")
+        return probe_provider(service.registry, name).as_dict()
+
+    # ── primer arranque y configuración desde la app ──────────────────────
+
+    @app.get("/api/setup")
+    def setup_status(request: Request) -> dict:
+        ready = not service.needs_setup()
+        return {
+            "ready": ready,
+            "needs_setup": not ready and not settings.get("setup.skipped"),
+            "local": request.state.identity.via == "local",
+            "legacy_imported": bool(settings.get("setup.legacy_imported")),
+        }
+
+    @app.post("/api/setup/skip")
+    def setup_skip() -> dict:
+        settings.set("setup.skipped", True)
+        return {"ok": True}
+
+    @app.put("/api/keys/{env}", dependencies=[Depends(require_local)])
+    def put_key(env: str, body: KeyIn) -> dict:
+        try:
+            set_secret(cfg.home, env, body.value, service.key_envs())
+        except ConfigError as e:
+            raise HTTPException(400, str(e)) from e
+        service.reload_config()
+        return service.providers_view()
+
+    @app.delete("/api/keys/{env}", dependencies=[Depends(require_local)])
+    def delete_key(env: str) -> dict:
+        try:
+            set_secret(cfg.home, env, None, service.key_envs())
+        except ConfigError as e:
+            raise HTTPException(400, str(e)) from e
+        service.reload_config()
+        return service.providers_view()
+
+    def config_view() -> dict:
+        return {
+            "roles": toml_roles(cfg.home),
+            "updates_mode": cfg.updates.mode,
+            "allowed_users": list(cfg.server.allowed_users),
+        }
+
+    @app.get("/api/config")
+    def get_config() -> dict:
+        return config_view()
+
+    @app.put("/api/config", dependencies=[Depends(require_local)])
+    def put_config(body: ConfigIn) -> dict:
+        changes = body.model_dump(exclude_none=True)
+        known = set(service.registry.names())
+        for role, fields in (changes.get("roles") or {}).items():
+            provider = (fields or {}).get("provider")
+            if provider and provider not in known:
+                raise HTTPException(400, f"Proveedor desconocido para {role}: {provider}")
+        try:
+            new = apply_changes(cfg.home, changes)
+        except ConfigError as e:
+            raise HTTPException(400, str(e)) from e
+        service.reload_config(new)
+        return config_view()
+
+    @app.get("/api/doctor")
+    def doctor() -> dict:
+        checks = run_checks(service.config, service.store, ping=True, registry=service.registry)
+        return {"ok": all(c.ok for c in checks), "checks": [c.as_dict() for c in checks]}
+
+    @app.post("/api/import-legacy", dependencies=[Depends(require_local)])
+    def import_legacy_files(body: LegacyIn) -> dict:
+        """Importa los JSON de la versión TUI (los sube el navegador; no hay rutas)."""
+        import tempfile
+
+        from oraqlo.store.legacy import import_legacy
+
+        files = {Path(k).name: v for k, v in body.files.items()}
+        unknown = sorted(set(files) - set(LEGACY_FILES))
+        if unknown or not files:
+            raise HTTPException(
+                400,
+                f"Elige archivos {', '.join(LEGACY_FILES)} "
+                f"(recibí: {', '.join(unknown) or 'ninguno'}).",
+            )
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, text in files.items():
+                try:
+                    json.loads(text)
+                except ValueError as e:
+                    raise HTTPException(400, f"{name} no es un JSON válido.") from e
+                (Path(tmp) / name).write_text(text, encoding="utf-8")
+            try:
+                report = import_legacy(service.store.db, tmp)
+            except Exception as e:
+                raise HTTPException(400, f"No pude importar: {e}") from e
+        settings.set("setup.legacy_imported", True)
+        return {
+            "open_forecasts": report.open_forecasts,
+            "resolved_forecasts": report.resolved_forecasts,
+            "goals": report.goals,
+            "settings": report.settings,
+        }
 
     # ── preguntar / casos ─────────────────────────────────────────────────
 

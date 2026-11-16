@@ -52,8 +52,13 @@ class RoleAwareFake(LLMProvider):
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    for var in ("ANTHROPIC_API_KEY", "OLLAMA_API_KEY"):
-        monkeypatch.delenv(var, raising=False)
+    from oraqlo.config import AUTO_PROVIDERS
+
+    for _, var in AUTO_PROVIDERS:
+        # setenv+delenv: monkeypatch restaura el estado original aunque la app
+        # escriba la variable durante el test (claves desde Ajustes).
+        monkeypatch.setenv(var, "")
+        monkeypatch.delenv(var)
     config = load_config(tmp_path / "none.toml", home=tmp_path)
     config.updates.mode = "off"  # los tests nunca consultan GitHub
     service = OraqloService(config, Store(tmp_path / "o.db"))
@@ -480,6 +485,7 @@ def test_server_info_y_cambio_de_puerto(tmp_path, monkeypatch):
         assert info["port"] == 8765 and info["managed"] is True
         assert info["tailscale"] == {
             "installed": True,
+            "state": "running",
             "enabled": True,
             "url": "https://pc.tail1.ts.net",
             "serving_port": 8765,
@@ -516,4 +522,4 @@ def test_al_arrancar_tailscale_sigue_al_puerto_real(tmp_path, monkeypatch):
 def test_cambiar_puerto_en_copia_no_gestionada(env):
     client, *_ = env
     r = client.put("/api/server/port", json={"port": 8770})
-    assert r.status_code == 409 and "oraqlo serve --port" in r.json()["detail"]
+    assert r.status_code == 409 and "desarrollo" in r.json()["detail"]

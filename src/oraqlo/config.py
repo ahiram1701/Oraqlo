@@ -136,12 +136,25 @@ def default_model_for(provider: str) -> str:
     }.get(provider, "")
 
 
+# Orden de preferencia cuando no hay `roles.default.provider`: la primera clave presente.
+AUTO_PROVIDERS = (
+    ("anthropic", "ANTHROPIC_API_KEY"),
+    ("openai", "OPENAI_API_KEY"),
+    ("gemini", "GEMINI_API_KEY"),
+    ("openrouter", "OPENROUTER_API_KEY"),
+    ("ollama-cloud", "OLLAMA_API_KEY"),
+    ("mistral", "MISTRAL_API_KEY"),
+    ("xai", "XAI_API_KEY"),
+    ("deepseek", "DEEPSEEK_API_KEY"),
+    ("groq", "GROQ_API_KEY"),
+)
+
+
 def default_provider_and_model() -> tuple[str, str]:
     """Sin configuración explícita, elige según las claves disponibles en el entorno."""
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return "anthropic", default_model_for("anthropic")
-    if os.environ.get("OLLAMA_API_KEY"):
-        return "ollama-cloud", default_model_for("ollama-cloud")
+    for provider, env in AUTO_PROVIDERS:
+        if os.environ.get(env):
+            return provider, default_model_for(provider)
     return "ollama-local", default_model_for("ollama-local")
 
 

@@ -360,21 +360,66 @@ class OraqloService:
         }
 
     def providers_view(self) -> dict:
+        import os
+
+        from oraqlo.config import ROLES
+        from oraqlo.services.userconfig import key_hint, toml_roles
+
+        def entry(n: str) -> dict:
+            info = provider_info(n, self.config)
+            return {
+                "name": n,
+                "kind": info.kind,
+                "api_key_env": info.api_key_env,
+                "key_present": info.key_present,
+                "key_hint": key_hint(os.environ.get(info.api_key_env))
+                if info.api_key_env
+                else None,
+            }
+
+        return {
+            "providers": [entry(n) for n in self.registry.names()],
+            "roles": [self.config.role(r).model_dump() for r in ROLES],
+            "configured": toml_roles(self.config.home),
+        }
+
+    def key_envs(self) -> set[str]:
+        """Variables de clave que la app puede escribir (las de proveedores conocidos)."""
+        return {
+            env
+            for n in self.registry.names()
+            if (env := provider_info(n, self.config).api_key_env) is not None
+        }
+
+    def reload_config(self, config: OraqloConfig | None = None) -> None:
+        """Aplica una config nueva sin reiniciar. Se actualiza el MISMO objeto (otras
+        piezas guardan referencias a él) y se vacía la caché de proveedores: los
+        análisis en curso terminan con el proveedor que ya tenían."""
+        new = config or load_config(home=self.config.home)
+        for field in type(self.config).model_fields:
+            setattr(self.config, field, getattr(new, field))
+        self.registry.config = self.config
+        self.registry.clear()
+
+    def needs_setup(self) -> bool:
+        """¿Falta algo para poder preguntar? Una clave de un proveedor en uso, o un
+        Ollama local que no responde o no tiene descargado el modelo elegido."""
         from oraqlo.config import ROLES
 
-        names = self.registry.names()
-        return {
-            "providers": [
-                {
-                    "name": n,
-                    "kind": provider_info(n, self.config).kind,
-                    "api_key_env": provider_info(n, self.config).api_key_env,
-                    "key_present": provider_info(n, self.config).key_present,
-                }
-                for n in names
-            ],
-            "roles": [self.config.role(r).model_dump() for r in ROLES],
-        }
+        roles = [self.config.role(r) for r in ROLES]
+        for name in {r.provider for r in roles}:
+            if provider_info(name, self.config).key_present is False:
+                return True
+        wanted = {r.model for r in roles if r.provider == "ollama-local"}
+        if wanted:
+            try:
+                models = self.registry.get("ollama-local").list_models()
+            except Exception:
+                return True
+            have = set(models) | {m.removesuffix(":latest") for m in models}
+            if not wanted <= have:
+                return True
+        return False
 
     def report_filename(self, run: dict) -> str:
         return f"{run['created_at'][:10]}-{slugify(run['title'])}.md"

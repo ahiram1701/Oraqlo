@@ -55,43 +55,36 @@ def _cmd_config(args: argparse.Namespace) -> int:
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
     """Diagnóstico: configuración, claves, base de datos y proveedores en uso."""
-    from oraqlo.config import ROLES, load_config
-    from oraqlo.llm.registry import ProviderRegistry, provider_info
+    from oraqlo.config import load_config
+    from oraqlo.services.doctor import run_checks
     from oraqlo.store import Store
 
-    ok = True
     try:
         config = load_config()
     except Exception as e:  # config inválida: se informa, no se lanza
         print(f"[X] Configuración inválida: {e}")
         return 1
-    print(f"[ok] Configuración cargada ({config.home})")
     try:
         store = Store(config.db_path)
-        print(
-            f"[ok] Base de datos v{store.db.version}: {len(store.ledger.open_forecasts)} abiertas, "
-            f"{len(store.ledger.resolved_forecasts)} resueltas, {len(store.goals.list_all())} objetivos"
-        )
-        store.close()
     except Exception as e:
-        ok = False
         print(f"[X] Base de datos: {e}")
-    registry = ProviderRegistry(config)
-    for name in sorted({config.role(r).provider for r in ROLES}):
-        info = provider_info(name, config)
-        if info.key_present is False:
-            ok = False
-            print(f"[X] {name}: falta la variable {info.api_key_env}")
-            continue
-        if args.preflight:
-            print(f"[ok] {name}: clave presente" if info.key_present else f"[ok] {name}")
-            continue
-        available = registry.get(name).is_available()
-        ok &= available
-        print(
-            f"[{'ok' if available else 'X'}] {name}: {'responde' if available else 'no responde'}"
+        return 1
+    try:
+        checks = run_checks(config, store, ping=not args.preflight)
+    finally:
+        store.close()
+    for c in checks:
+        print(f"[{'ok' if c.ok else 'X'}] {c.name}: {c.detail}" + (f" {c.fix}" if c.fix else ""))
+    # En --preflight (instalador) faltar una clave no es un error: se pide en la app.
+    return (
+        0
+        if all(
+            c.ok
+            for c in checks
+            if not args.preflight or c.name in ("Configuración", "Base de datos")
         )
-    return 0 if ok else 1
+        else 1
+    )
 
 
 def _cmd_import_legacy(args: argparse.Namespace) -> int:

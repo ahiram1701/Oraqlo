@@ -30,29 +30,32 @@ Los análisis largos corren en el servidor: **puedes bloquear el celular** y al 
 
 ## Instalación (Windows)
 
-Requisitos: **Python 3.12+** y, para el celular, **[Tailscale](https://tailscale.com/download)** en el PC y en el teléfono.
+1. Descarga **`Oraqlo-Setup-X.Y.Z.exe`** de la [última versión](https://github.com/ahiram1701/Oraqlo/releases/latest).
+2. Ábrelo con doble clic y pulsa **Instalar**. No necesita permisos de administrador ni tener Python: trae lo suyo.
+3. Al terminar, Oraqlo se abre en el navegador con un asistente de bienvenida. Ahí eliges el modelo de IA (Claude, OpenAI, Gemini, Ollama…) y pegas tu clave.
 
-Abre una PowerShell normal (Win+X → Terminal; no la terminal integrada de otra app) y ejecuta:
+Windows puede mostrar el aviso azul *"Windows protegió tu PC"*, porque el instalador no está firmado con un certificado de pago. Pulsa **Más información → Ejecutar de todas formas**. Si quieres comprobar el archivo, su SHA256 está en `SHA256SUMS` y su procedencia se verifica con `gh attestation verify`.
 
-```powershell
-irm https://github.com/ahiram1701/Oraqlo/releases/latest/download/install-windows.ps1 -OutFile $env:TEMP\install-oraqlo.ps1
-powershell -ExecutionPolicy Bypass -File $env:TEMP\install-oraqlo.ps1
-```
+Después:
 
-No tienes que elegir puerto. Oraqlo usa el 8765 y, si otra aplicación lo ocupa, toma el siguiente libre. Lo hace al instalar y también cada vez que arranca. La dirección del celular no cambia, porque Oraqlo mantiene `tailscale serve` apuntando al puerto real. Si prefieres otro puerto, cámbialo en **Ajustes → Conexión**.
+- **Para abrirlo**, busca **Oraqlo** en el menú Inicio. Arranca solo al iniciar sesión en Windows.
+- **Para usarlo en el celular**, ve a **Ajustes → Conexión**. Te guía para instalar [Tailscale](https://tailscale.com/download), publica Oraqlo en tu red privada con un botón y te muestra un código QR. Ábrelo en el teléfono y elige **"Añadir a pantalla de inicio"**.
+- **Para desinstalarlo**, ve a **Configuración de Windows → Aplicaciones → Oraqlo → Desinstalar**. Te pregunta si quieres conservar tus datos.
 
-El instalador hace lo siguiente:
+No tienes que elegir puerto. Oraqlo usa el 8765 y, si otra aplicación lo ocupa, toma el siguiente libre; la dirección del celular no cambia. Si lo prefieres, puedes cambiar el puerto en **Ajustes → Conexión**.
 
-1. Descarga la última release y verifica su SHA256.
-2. La instala en `%LOCALAPPDATA%\Oraqlo`.
-3. Registra la tarea programada **Oraqlo**, que arranca al iniciar sesión.
-4. Publica la app en tu tailnet con `tailscale serve`.
-5. Al terminar, te muestra la URL `https://<tu-pc>.<tu-tailnet>.ts.net`.
+### Todo se configura en Ajustes
 
-Ábrela en el celular y elige **"Añadir a pantalla de inicio"**.
+| Qué | Dónde |
+|---|---|
+| Claves de API (se guardan solo en tu PC) | Ajustes → Proveedores y claves |
+| Proveedor y modelo de cada rol del debate | Ajustes → Modelos del panel |
+| Celular (Tailscale), puerto, quién puede entrar | Ajustes → Conexión |
+| Actualizaciones automáticas / avisar / desactivadas; volver a la versión anterior | Ajustes → Sistema |
+| Comprobar que todo funciona | Ajustes → Diagnóstico |
+| Importar el historial de la versión de terminal | Ajustes → Importar historial antiguo |
 
-- ¿Vienes de la versión TUI? Añade `-ImportFrom C:\ruta\con\oraqlo_ledger.json` para conservar tu historial de calibración y tus objetivos.
-- `-Uninstall` quita la tarea y la publicación. Tus datos se conservan.
+Las claves y los ajustes del sistema solo se pueden cambiar desde el propio PC. Desde el celular se ven, pero no se editan.
 
 ### Actualizaciones automáticas
 
@@ -65,28 +68,34 @@ Oraqlo comprueba las releases cada 6 h. Cuando hay una versión nueva, la instal
 
 Si la versión nueva no arranca, **vuelve sola a la anterior** y te avisa.
 
-Configúralo con `[updates] mode = "auto" | "notify" | "off"`. A mano: `oraqlo update --apply` y `oraqlo rollback`.
+### Instalación avanzada (PowerShell)
 
-## Configuración
+El `.exe` ejecuta por dentro [scripts/install-windows.ps1](scripts/install-windows.ps1), que también se puede usar a mano: necesita Python 3.12+ y admite `-ImportFrom`, `-Port`, `-NoTailscale` y `-Uninstall`.
 
-`oraqlo config` te dice dónde está todo. Copia [config/oraqlo.example.toml](config/oraqlo.example.toml) a esa ruta como `oraqlo.toml`.
+```powershell
+irm https://github.com/ahiram1701/Oraqlo/releases/latest/download/install-windows.ps1 -OutFile $env:TEMP\install-oraqlo.ps1
+powershell -ExecutionPolicy Bypass -File $env:TEMP\install-oraqlo.ps1
+```
+
+## Proveedores de IA
 
 Cada rol del panel (estratega, red_team, oraculo, juez, investigador, redactor, practica) puede usar **un proveedor y un modelo distinto**:
 
-| Proveedor | Clave (variable de entorno) |
+| Proveedor | Clave |
 |---|---|
-| `anthropic` (Claude; por defecto `claude-opus-5-5`, con `effort` por rol) | `ANTHROPIC_API_KEY` |
-| `ollama-local` / `ollama-cloud` | — / `OLLAMA_API_KEY` |
-| `openai`, `gemini`, `openrouter`, `groq`, `deepseek`, `mistral`, `xai` | `OPENAI_API_KEY`, `GEMINI_API_KEY`, … |
-| `lmstudio` o cualquier API compatible con OpenAI (`[providers.x]`) | la que definas |
+| Claude (Anthropic; por defecto `claude-opus-5-5`, con `effort` por rol) | `ANTHROPIC_API_KEY` |
+| Ollama en el PC (gratis) / Ollama Cloud | — / `OLLAMA_API_KEY` |
+| OpenAI, Gemini, OpenRouter, Groq, DeepSeek, Mistral, xAI | `OPENAI_API_KEY`, `GEMINI_API_KEY`, … |
+| LM Studio o cualquier API compatible con OpenAI (`[providers.x]`) | la que definas |
 
-Sin configuración, Oraqlo elige el proveedor según las claves que encuentre: Anthropic, luego Ollama cloud, luego Ollama local.
+Sin configuración, Oraqlo usa el primer proveedor cuya clave encuentre. Si no hay ninguna, usa Ollama local.
 
-Las claves **solo** se leen del entorno o del archivo `.env` del directorio de datos. Nunca van en el TOML ni salen por la API.
+Por debajo, lo que guardas en Ajustes queda en dos archivos de tu carpeta de datos. Sirven para usos avanzados, como añadir proveedores propios:
+
+- **`oraqlo.toml`**: ver [config/oraqlo.example.toml](config/oraqlo.example.toml). La app conserva tus comentarios al editarlo.
+- **`.env`**: guarda las claves. Las claves nunca salen por la API.
 
 La investigación web usa la API de búsqueda de Ollama (`OLLAMA_API_KEY`). Sin esa clave, Oraqlo avisa y sigue sin investigar.
-
-`oraqlo doctor` comprueba la configuración, la base de datos, las claves y que los proveedores respondan.
 
 ## Seguridad y privacidad
 
