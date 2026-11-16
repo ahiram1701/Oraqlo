@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { vi } from "vitest";
 import App from "../App";
 import ProvidersCard from "../components/ProvidersCard";
+import WebSearchCard from "../components/WebSearchCard";
 import { FeedbackProvider } from "../components/ui";
 
 type Handler = (method: string, body: any) => unknown;
@@ -93,4 +94,43 @@ test("desde el celular las claves no se pueden cambiar", async () => {
   const add = await screen.findByRole("button", { name: "Añadir clave" });
   expect(add).toBeDisabled();
   expect(screen.getByText(/Solo se puede cambiar desde el PC/)).toBeInTheDocument();
+});
+
+test("la clave de búsqueda web se guarda y se prueba aunque se use Ollama local", async () => {
+  let present = false;
+  const view = () => ({
+    ...PROVIDERS,
+    web_search: { api_key_env: "OLLAMA_API_KEY", key_present: present, key_hint: present ? "olla…3456" : null },
+  });
+  const calls = mockApi({
+    "/setup": { ready: true, needs_setup: false, local: true, legacy_imported: false },
+    "/providers": () => view(),
+    "PUT /keys/OLLAMA_API_KEY": () => {
+      present = true;
+      return view();
+    },
+    "POST /websearch/test": { name: "Investigación web", ok: true, detail: "La búsqueda web responde.", fix: null },
+  });
+  renderAt("/ajustes", <WebSearchCard />);
+  const add = await screen.findByRole("button", { name: "Añadir clave" });
+  await waitFor(() => expect(add).toBeEnabled()); // se habilita al saber que es el propio PC
+  fireEvent.click(add);
+  fireEvent.change(screen.getByLabelText("Clave de búsqueda web (ollama.com)"), { target: { value: "ollama-key-123456" } });
+  fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+  expect(await screen.findByText(/La búsqueda web responde/)).toBeInTheDocument();
+  expect(calls.find((c) => c.method === "PUT")).toMatchObject({ path: "/keys/OLLAMA_API_KEY", body: { value: "ollama-key-123456" } });
+  expect(await screen.findByText("clave olla…3456")).toBeInTheDocument();
+});
+
+test("Preguntar avisa si se quiere investigar y falta la clave de búsqueda", async () => {
+  mockApi({
+    "/setup": { ready: true, needs_setup: false, local: true, legacy_imported: false },
+    "/providers": { ...PROVIDERS, web_search: { api_key_env: "OLLAMA_API_KEY", key_present: false, key_hint: null } },
+    "/goals": [],
+    "/ledger": [],
+    "/runs": [],
+  });
+  renderAt("/");
+  const link = await screen.findByRole("link", { name: "Añádela en Ajustes" });
+  expect(link).toHaveAttribute("href", "/ajustes#busqueda-web");
 });

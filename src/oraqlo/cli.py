@@ -75,12 +75,15 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     finally:
         store.close()
     for c in checks:
-        print(f"[{'ok' if c.ok else 'X'}] {c.name}: {c.detail}" + (f" {c.fix}" if c.fix else ""))
+        print(
+            f"[{'ok' if c.ok else ('--' if c.optional else 'X')}] {c.name}: {c.detail}"
+            + (f" {c.fix}" if c.fix else "")
+        )
     # En --preflight (instalador) faltar una clave no es un error: se pide en la app.
     return (
         0
         if all(
-            c.ok
+            not c.blocking
             for c in checks
             if not args.preflight or c.name in ("Configuración", "Base de datos")
         )

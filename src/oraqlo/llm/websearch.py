@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from oraqlo.llm.ollama import OllamaUnavailableError
 
 SEARCH_HOST = "https://ollama.com"
+WEB_SEARCH_KEY_ENV = "OLLAMA_API_KEY"
 
 
 @dataclass
@@ -30,7 +31,7 @@ class SearchResult:
 class OllamaWebClient:
     """search()/fetch() contra la API web de Ollama, con errores accionables."""
 
-    def __init__(self, api_key_env: str = "OLLAMA_API_KEY", timeout_s: float = 30.0) -> None:
+    def __init__(self, api_key_env: str = WEB_SEARCH_KEY_ENV, timeout_s: float = 30.0) -> None:
         self.api_key_env = api_key_env
         self.timeout_s = timeout_s
 
