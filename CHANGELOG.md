@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.4](https://github.com/ahiram1701/Oraqlo/compare/v0.5.3...v0.5.4) (2026-11-16)
+
+
+### Correcciones
+
+* **updater:** una instalación que tarda demasiado es un error visible ([#33](https://github.com/ahiram1701/Oraqlo/issues/33)) ([9901b05](https://github.com/ahiram1701/Oraqlo/commit/9901b0505b9de66975409169427c1887e18aaa16))
+
 ## [0.5.3](https://github.com/ahiram1701/Oraqlo/compare/v0.5.2...v0.5.3) (2026-11-16)
 
 
