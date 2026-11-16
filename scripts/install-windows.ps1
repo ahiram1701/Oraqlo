@@ -62,6 +62,23 @@ function Find-Tailscale {
     return $null
 }
 
+# Para los procesos de esta instalación y espera a que suelten sus archivos
+# (Windows no deja borrar un python.exe en marcha).
+function Stop-OraqloProcesses {
+    $procs = @(Get-CimInstance Win32_Process -Filter "Name like 'python%'" |
+        Where-Object { $_.CommandLine -like "*$App*" })
+    foreach ($p in $procs) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+    foreach ($p in $procs) { Wait-Process -Id $p.ProcessId -Timeout 15 -ErrorAction SilentlyContinue }
+}
+
+function Remove-Tree([string]$Path) {
+    foreach ($i in 1..10) {
+        if (-not (Test-Path $Path)) { return }
+        try { Remove-Item -Recurse -Force $Path -ErrorAction Stop; return }
+        catch { if ($i -eq 10) { throw }; Start-Sleep -Seconds 1 }
+    }
+}
+
 # ── Desinstalar ──────────────────────────────────────────────────────────
 if ($Uninstall) {
     Step "Quitando la tarea programada"
@@ -69,16 +86,14 @@ if ($Uninstall) {
         Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
     }
-    Get-CimInstance Win32_Process -Filter "Name like 'python%'" |
-        Where-Object { $_.CommandLine -like "*$App*" } |
-        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Stop-OraqloProcesses
     $ts = if ($NoTailscale) { $null } else { Find-Tailscale }
     if ($ts -and (Test-Path (Join-Path $App "tailscale.txt"))) {
         Step "Retirando la publicación de tailscale serve"
         & $ts serve --https=443 off 2>$null
     }
     Remove-Item $StartMenuLink, $DesktopLink -Force -ErrorAction SilentlyContinue
-    if (Test-Path $App) { Remove-Item -Recurse -Force $App }
+    Remove-Tree $App
     Write-Host "Oraqlo desinstalado. Tus datos siguen en $OraqloHome (bórralos a mano si quieres)."
     exit 0
 }
@@ -132,9 +147,13 @@ if ($Uv) {
     Step "Preparando Python (puede tardar un minuto la primera vez)"
     $env:UV_PYTHON_INSTALL_DIR = Join-Path $App "python"
     $env:UV_NO_PROGRESS = "1"
-    & $Uv python install 3.13 --managed-python
+    $env:UV_CACHE_DIR = Join-Path ([IO.Path]::GetTempPath()) ("oraqlo-uv-" + [guid]::NewGuid())
+    # --no-bin / --no-registry: nada fuera de la carpeta de Oraqlo (ni accesos en
+    # ~/.local/bin ni registro de Windows); desinstalar lo borra todo.
+    & $Uv python install 3.13 --managed-python --no-bin --no-registry
     if ($LASTEXITCODE -ne 0) { throw "No se pudo descargar Python." }
     $Python = (& $Uv python find 3.13 --managed-python | Select-Object -Last 1).Trim()
+    Remove-Item -Recurse -Force $env:UV_CACHE_DIR -ErrorAction SilentlyContinue
 } else {
     Step "Buscando Python 3.12 o superior"
 }
@@ -204,11 +223,8 @@ try {
     $VenvPython = Join-Path $Venv "Scripts\python.exe"
     if (-not $SkipInstall) {
         Step "Instalando Oraqlo $NewVersion en $Venv"
-        # Windows no deja borrar un venv con un python.exe en marcha.
-        Get-CimInstance Win32_Process -Filter "Name like 'python%'" |
-            Where-Object { $_.CommandLine -like "*$App*" } |
-            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-        if (Test-Path $Venv) { Remove-Item -Recurse -Force $Venv }
+        Stop-OraqloProcesses
+        Remove-Tree $Venv
         & $Python -m venv $Venv
         if ($LASTEXITCODE -ne 0) { throw "No se pudo crear el entorno virtual." }
         & $VenvPython -m pip install --disable-pip-version-check -q $WheelPath
@@ -258,9 +274,7 @@ if (-not $NoTask) {
 
     if (-not $NoStart) {
         Step "Arrancando Oraqlo"
-        Get-CimInstance Win32_Process -Filter "Name like 'python%'" |
-            Where-Object { $_.CommandLine -like "*$App*" } |
-            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+        Stop-OraqloProcesses
         Start-ScheduledTask -TaskName $TaskName
         $healthy = $false
         foreach ($i in 1..60) {
