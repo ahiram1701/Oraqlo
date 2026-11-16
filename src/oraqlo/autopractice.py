@@ -357,3 +357,92 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+# ── duelos: Oraqlo frente al mercado, pregunta a pregunta ─────────────────
+
+TIE = 0.005  # diferencias de Brier menores son un empate
+
+
+def strip_tag(question: str) -> str:
+    return _TAG_RE.sub("", question, count=1).strip()
+
+
+def _focus_label(oraqlo: Forecast, market: Forecast, actual: str | None) -> str:
+    """El resultado que se compara: el que ganó o, si sigue abierto, el «sí»."""
+    if actual:
+        return actual
+    labels = list(market.distribution.outcomes) or list(oraqlo.distribution.outcomes)
+    for label in labels:
+        if label.strip().lower() in ("yes", "sí", "si"):
+            return label
+    return max(labels, key=lambda k: market.distribution.outcomes.get(k, 0.0)) if labels else ""
+
+
+def duels(ledger: CalibrationLedger) -> dict:
+    """Empareja la previsión de Oraqlo y la del mercado de cada pregunta (por la
+    etiqueta del mercado) y dice quién se acercó más. Las que no tienen pareja
+    (p. ej. una pasada que falló a medias) se ignoran."""
+    from oraqlo.memory.scorecard import chance_brier
+
+    sides: dict[str, dict[str, tuple[Forecast, ResolvedForecast | None]]] = {}
+
+    def add(f: Forecast, r: ResolvedForecast | None) -> None:
+        mid = extract_market_id(f.question)
+        if mid:
+            side = "market" if f.source == MARKET_SOURCE else "oraqlo"
+            sides.setdefault(mid, {})[side] = (f, r)
+
+    for f in ledger.open_forecasts:
+        add(f, None)
+    for r in ledger.resolved_forecasts:
+        add(r.forecast, r)
+
+    items: list[dict] = []
+    for mid, pair in sides.items():
+        if "oraqlo" not in pair or "market" not in pair:
+            continue
+        (fo, ro), (fm, rm) = pair["oraqlo"], pair["market"]
+        done = ro is not None and rm is not None
+        actual = ro.actual_outcome if ro is not None and done else None
+        label = _focus_label(fo, fm, actual)
+        item = {
+            "market_id": mid,
+            "question": strip_tag(fo.question),
+            "label": label,
+            "oraqlo_p": fo.distribution.outcomes.get(label, 0.0),
+            "market_p": fm.distribution.outcomes.get(label, 0.0),
+            "created_at": fo.created_at.isoformat() if fo.created_at else None,
+            "closes_at": (fo.created_at + fo.horizon).isoformat() if fo.created_at else None,
+            "status": "resuelto" if done else "abierto",
+            "actual": actual,
+            "resolved_at": ro.resolved_at.isoformat() if done and ro else None,
+            "oraqlo_brier": ro.brier if done and ro else None,
+            "market_brier": rm.brier if done and rm else None,
+            "chance_brier": chance_brier(ro) if done and ro else None,
+            "winner": None,
+        }
+        if done and ro and rm:
+            diff = ro.brier - rm.brier
+            item["winner"] = "empate" if abs(diff) < TIE else ("oraqlo" if diff < 0 else "mercado")
+        items.append(item)
+
+    items.sort(key=lambda d: d["resolved_at"] or d["created_at"] or "", reverse=True)
+    resolved = [d for d in items if d["status"] == "resuelto"]
+
+    def mean(key: str) -> float | None:
+        return sum(d[key] for d in resolved) / len(resolved) if resolved else None
+
+    return {
+        "items": items,
+        "summary": {
+            "resolved": len(resolved),
+            "open": len(items) - len(resolved),
+            "won": sum(d["winner"] == "oraqlo" for d in resolved),
+            "lost": sum(d["winner"] == "mercado" for d in resolved),
+            "tied": sum(d["winner"] == "empate" for d in resolved),
+            "oraqlo_brier": mean("oraqlo_brier"),
+            "market_brier": mean("market_brier"),
+            "chance_brier": mean("chance_brier"),
+        },
+    }
