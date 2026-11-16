@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/ahiram1701/Oraqlo/compare/v0.4.0...v0.5.0) (2026-11-16)
+
+
+### Novedades
+
+* Oraqlo como app nativa de Windows (ventana propia, bandeja y avisos) ([#25](https://github.com/ahiram1701/Oraqlo/issues/25)) ([6c29e63](https://github.com/ahiram1701/Oraqlo/commit/6c29e6362d71c8bcafb97665863366c570387e7d))
+
 ## [0.4.0](https://github.com/ahiram1701/Oraqlo/compare/v0.3.0...v0.4.0) (2026-11-16)
 
 
