@@ -20,7 +20,7 @@ from html import escape
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -935,7 +935,7 @@ def create_app(
     # ── runs / informes ───────────────────────────────────────────────────
 
     @app.get("/api/runs")
-    def runs_list(limit: int = 50) -> list[dict]:
+    def runs_list(limit: int = Query(50, ge=1, le=2000)) -> list[dict]:
         rows = service.store.db.query(
             "SELECT id, kind, title, created_at FROM runs ORDER BY created_at DESC LIMIT ?",
             (limit,),
@@ -1144,7 +1144,7 @@ def create_app(
             "reliability_oraqlo": ledger.reliability(source),
             "reliability_market": ledger.reliability(MARKET_SOURCE),
             "advice": calibration_advice(ledger, source),
-            "recent": runner.list(limit=5, kind="practice"),
+            "recent": runner.list(limit=20, kind="practice"),
         }
 
     @app.get("/api/practice")

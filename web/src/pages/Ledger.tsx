@@ -2,21 +2,20 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Icon } from "../components/icons";
+import { ChipGroup, FilteredEmpty, SearchInput, SortSelect, countLabel, includesText, type Option } from "../components/listControls";
 import { Badge, Button, Card, Empty, ErrorNote, SectionTitle, Skeleton, cx, inputClass, useFeedback } from "../components/ui";
-import { api, fmtDate, pct, type Forecast, type ResolvedForecast } from "../lib/api";
-
-const SOURCE: Record<string, string> = {
-  llm: "Modelo de IA",
-  quant: "Estadístico",
-  ensemble: "Combinado",
-  practica: "Práctica",
-  practice: "Práctica",
-  polymarket: "Práctica",
-};
-
-function sourceLabel(source: string) {
-  return SOURCE[source.split(/[:/]/)[0]] ?? source;
-}
+import {
+  FORECAST_KIND_LABEL,
+  api,
+  fmtDate,
+  forecastKind,
+  pct,
+  sourceLabel,
+  type Forecast,
+  type ForecastKind,
+  type ResolvedForecast,
+} from "../lib/api";
+import { useStoredState } from "../lib/useStoredState";
 
 /** El Brier en palabras: el color solo no basta. */
 function brierWords(b: number) {
@@ -66,6 +65,57 @@ export function cancelResolution(id: string) {
   pendingResolutions.delete(id);
 }
 
+/** Cuándo se sabrá (ms): creación + horizonte. Sin fecha, al final. */
+export function dueTime(f: Forecast): number {
+  return f.created_at ? new Date(f.created_at).getTime() + f.horizon_days * 864e5 : Number.MAX_SAFE_INTEGER;
+}
+
+const topProb = (f: Forecast) => Math.max(0, ...Object.values(f.outcomes ?? {}));
+const created = (f: Forecast) => (f.created_at ? new Date(f.created_at).getTime() : 0);
+
+type KindFilter = "todas" | ForecastKind;
+type OpenState = "todas" | "vencidas" | "por-venir";
+type OpenSort = "se-sabra" | "recientes" | "antiguas" | "probable";
+type Accuracy = "todas" | "bueno" | "flojo" | "fallo";
+type ResolvedSort = "resueltas" | "mejor" | "peor" | "creadas";
+
+const OPEN_SORTS: Option<OpenSort>[] = [
+  { value: "se-sabra", label: "Cuándo se sabrá" },
+  { value: "recientes", label: "Más recientes" },
+  { value: "antiguas", label: "Más antiguas" },
+  { value: "probable", label: "Más seguras primero" },
+];
+const RESOLVED_SORTS: Option<ResolvedSort>[] = [
+  { value: "resueltas", label: "Resueltas hace poco" },
+  { value: "mejor", label: "Mejor acierto" },
+  { value: "peor", label: "Peor acierto" },
+  { value: "creadas", label: "Creadas hace poco" },
+];
+
+/** Bandas de acierto (Brier): las mismas palabras que en cada fila. */
+export function accuracyBand(brier: number): Exclude<Accuracy, "todas"> {
+  return brier < 0.25 ? "bueno" : brier < 0.5 ? "flojo" : "fallo";
+}
+
+export function sortOpen(list: Forecast[], by: OpenSort): Forecast[] {
+  const out = [...list];
+  if (by === "se-sabra") out.sort((a, b) => dueTime(a) - dueTime(b));
+  if (by === "recientes") out.sort((a, b) => created(b) - created(a));
+  if (by === "antiguas") out.sort((a, b) => created(a) - created(b));
+  if (by === "probable") out.sort((a, b) => topProb(b) - topProb(a));
+  return out;
+}
+
+export function sortResolved(list: ResolvedForecast[], by: ResolvedSort): ResolvedForecast[] {
+  const out = [...list];
+  const resolved = (r: ResolvedForecast) => new Date(r.resolved_at).getTime();
+  if (by === "resueltas") out.sort((a, b) => resolved(b) - resolved(a));
+  if (by === "mejor") out.sort((a, b) => a.brier - b.brier);
+  if (by === "peor") out.sort((a, b) => b.brier - a.brier);
+  if (by === "creadas") out.sort((a, b) => created(b) - created(a));
+  return out;
+}
+
 function sortedOutcomes(outcomes: Record<string, number>) {
   return Object.entries(outcomes).sort((a, b) => b[1] - a[1]);
 }
@@ -76,30 +126,94 @@ export default function Ledger() {
     queryFn: () => api.get<{ open: Forecast[]; resolved: ResolvedForecast[]; overdue?: number }>("/ledger"),
   });
   const [query, setQuery] = useState("");
-  const q = query.trim().toLowerCase();
-  const open = useMemo(() => (data?.open ?? []).filter((f) => !q || f.question.toLowerCase().includes(q)), [data, q]);
-  const resolved = useMemo(() => (data?.resolved ?? []).filter((r) => !q || r.question.toLowerCase().includes(q)), [data, q]);
-  const total = (data?.open.length ?? 0) + (data?.resolved.length ?? 0);
+  const [kind, setKind] = useStoredState<KindFilter>("oraqlo.ledger.kind", "todas");
+  const [state, setState] = useStoredState<OpenState>("oraqlo.ledger.state", "todas");
+  const [openSort, setOpenSort] = useStoredState<OpenSort>("oraqlo.ledger.openSort", "se-sabra");
+  const [accuracy, setAccuracy] = useStoredState<Accuracy>("oraqlo.ledger.accuracy", "todas");
+  const [resolvedSort, setResolvedSort] = useStoredState<ResolvedSort>("oraqlo.ledger.resolvedSort", "resueltas");
+
+  const allOpen = data?.open ?? [];
+  const allResolved = data?.resolved ?? [];
+  const total = allOpen.length + allResolved.length;
+  const now = Date.now();
+  const kindOk = (f: Forecast) => kind === "todas" || forecastKind(f.source) === kind;
+
+  const open = useMemo(() => {
+    const filtered = allOpen.filter((f) => {
+      const overdue = dueTime(f) <= now;
+      return (
+        kindOk(f) &&
+        includesText(f.question, query) &&
+        (state === "todas" || (state === "vencidas" ? overdue : !overdue))
+      );
+    });
+    return sortOpen(filtered, openSort);
+  }, [data, query, kind, state, openSort]);
+  const resolved = useMemo(
+    () =>
+      sortResolved(
+        allResolved.filter(
+          (r) => kindOk(r) && includesText(r.question, query) && (accuracy === "todas" || accuracyBand(r.brier) === accuracy),
+        ),
+        resolvedSort,
+      ),
+    [data, query, kind, accuracy, resolvedSort],
+  );
+
+  // Solo los tipos que existen: no ofrecer filtros que dejan la lista vacía.
+  const kindOptions = useMemo(() => {
+    const counts = new Map<ForecastKind, number>();
+    for (const f of [...allOpen, ...allResolved]) counts.set(forecastKind(f.source), (counts.get(forecastKind(f.source)) ?? 0) + 1);
+    const opts: Option<KindFilter>[] = [{ value: "todas", label: "Todas" }];
+    for (const k of ["prevision", "objetivo", "panel", "practica"] as const)
+      if (counts.get(k)) opts.push({ value: k, label: FORECAST_KIND_LABEL[k], count: counts.get(k) });
+    return opts;
+  }, [data]);
+
+  const clearOpen = () => {
+    setQuery("");
+    setKind("todas");
+    setState("todas");
+  };
+  const clearResolved = () => {
+    setQuery("");
+    setKind("todas");
+    setAccuracy("todas");
+  };
 
   return (
     <div className="space-y-4">
       <ErrorNote error={error} />
-      {total > 4 && (
-        <label className="relative block">
-          <span className="sr-only">Buscar predicciones</span>
-          <Icon name="search" className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" />
-          <input className={cx(inputClass, "pl-9")} placeholder="Buscar…" value={query} onChange={(e) => setQuery(e.target.value)} />
-        </label>
+      {total > 0 && (
+        <div className="space-y-2">
+          <SearchInput value={query} onChange={setQuery} label="Buscar predicciones" />
+          {kindOptions.length > 2 && <ChipGroup label="Tipo" options={kindOptions} value={kind} onChange={setKind} />}
+        </div>
       )}
       <Card>
-        <SectionTitle aside={<Badge>{data?.open.length ?? 0}</Badge>}>Pendientes</SectionTitle>
+        <SectionTitle aside={<Badge>{countLabel(open.length, allOpen.length)}</Badge>}>Pendientes</SectionTitle>
         <p className="-mt-1 mb-3 text-xs text-muted">
           {data?.overdue
-            ? `${data.overdue} ya deberían saberse (salen primero). Toca una y marca qué pasó: así Oraqlo aprende.`
+            ? `${data.overdue} ya deberían saberse. Toca una y marca qué pasó: así Oraqlo aprende.`
             : "Toca una cuando sepas qué pasó."}
         </p>
+        {allOpen.length > 1 && (
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <ChipGroup
+              label="Estado"
+              options={[
+                { value: "todas", label: "Todas" },
+                { value: "vencidas", label: "Ya deberían saberse" },
+                { value: "por-venir", label: "Por venir" },
+              ]}
+              value={state}
+              onChange={setState}
+            />
+            <SortSelect options={OPEN_SORTS} value={openSort} onChange={setOpenSort} />
+          </div>
+        )}
         {isLoading && <Skeleton className="h-16" />}
-        {data && data.open.length === 0 && (
+        {data && allOpen.length === 0 && (
           <Empty>
             No hay predicciones pendientes. Cada previsión que hagas en{" "}
             <Link to="/" className="text-accent underline">
@@ -108,6 +222,7 @@ export default function Ledger() {
             queda aquí hasta que sepas qué pasó.
           </Empty>
         )}
+        {allOpen.length > 0 && open.length === 0 && <FilteredEmpty onClear={clearOpen} />}
         <div className="space-y-3">
           {open.map((f) => (
             <OpenForecast key={f.id} f={f} />
@@ -115,14 +230,31 @@ export default function Ledger() {
         </div>
       </Card>
       <Card>
-        <SectionTitle aside={<Badge>{data?.resolved.length ?? 0}</Badge>}>Resueltas</SectionTitle>
+        <SectionTitle aside={<Badge>{countLabel(resolved.length, allResolved.length)}</Badge>}>Resueltas</SectionTitle>
         {total > 0 && <ExportLink className="-mt-1 mb-3" />}
-        {data && data.resolved.length === 0 && (
+        {allResolved.length > 1 && (
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <ChipGroup
+              label="Acierto"
+              options={[
+                { value: "todas", label: "Todas" },
+                { value: "bueno", label: "Buen acierto" },
+                { value: "flojo", label: "Flojo" },
+                { value: "fallo", label: "Fallos" },
+              ]}
+              value={accuracy}
+              onChange={setAccuracy}
+            />
+            <SortSelect options={RESOLVED_SORTS} value={resolvedSort} onChange={setResolvedSort} />
+          </div>
+        )}
+        {data && allResolved.length === 0 && (
           <Empty>
             Cuando marques cómo acabó una predicción, aparecerá aquí con su puntuación (Brier: 0 es perfecto; menos es mejor). Así
             Oraqlo aprende.
           </Empty>
         )}
+        {allResolved.length > 0 && resolved.length === 0 && <FilteredEmpty onClear={clearResolved} />}
         <ul className="divide-y divide-line">
           {resolved.map((r) => (
             <ResolvedRow key={r.id} r={r} />

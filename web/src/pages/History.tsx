@@ -6,52 +6,69 @@ import remarkGfm from "remark-gfm";
 import { Icon } from "../components/icons";
 import { Turn } from "../components/JobView";
 import { ResultCard } from "../components/ResultCard";
-import { Badge, Button, Card, Empty, ErrorNote, LinkButton, SectionTitle, Skeleton, cx, inputClass } from "../components/ui";
+import { ChipGroup, FilteredEmpty, SearchInput, SortSelect, countLabel, includesText, type Option } from "../components/listControls";
+import { Badge, Button, Card, Empty, ErrorNote, LinkButton, SectionTitle, Skeleton } from "../components/ui";
 import { api, fmtDate, type RunSummary } from "../lib/api";
+import { useStoredState } from "../lib/useStoredState";
 
 const KIND: Record<string, string> = { forecast: "Previsión", cycle: "Análisis", goal: "Objetivo" };
 const MODE_FOR_KIND: Record<string, string> = { forecast: "forecast", cycle: "full", goal: "goal" };
 
+const PAGE = 100;
+type RunKind = "all" | "forecast" | "cycle" | "goal";
+type RunSort = "recientes" | "antiguos" | "az";
+const RUN_SORTS: Option<RunSort>[] = [
+  { value: "recientes", label: "Más recientes" },
+  { value: "antiguos", label: "Más antiguos" },
+  { value: "az", label: "Pregunta (A-Z)" },
+];
+
+export function sortRuns(list: RunSummary[], by: RunSort): RunSummary[] {
+  const out = [...list];
+  if (by === "recientes") out.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  if (by === "antiguos") out.sort((a, b) => a.created_at.localeCompare(b.created_at));
+  if (by === "az") out.sort((a, b) => a.title.localeCompare(b.title, "es", { sensitivity: "base" }));
+  return out;
+}
+
 export function HistoryList() {
-  const { data, error, isLoading } = useQuery({ queryKey: ["runs"], queryFn: () => api.get<RunSummary[]>("/runs") });
+  // De 100 en 100: antes solo se veían (y se buscaba en) los últimos 50.
+  const [limit, setLimit] = useState(PAGE);
+  const { data, error, isLoading, isFetching } = useQuery({
+    queryKey: ["runs", { limit }],
+    queryFn: () => api.get<RunSummary[]>(`/runs?limit=${limit}`),
+    placeholderData: (prev) => prev,
+  });
   const [query, setQuery] = useState("");
-  const [kind, setKind] = useState<string>("all");
-  const shown = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return (data ?? []).filter((r) => (kind === "all" || r.kind === kind) && (!q || r.title.toLowerCase().includes(q)));
-  }, [data, query, kind]);
+  const [kind, setKind] = useStoredState<RunKind>("oraqlo.history.kind", "all");
+  const [sort, setSort] = useStoredState<RunSort>("oraqlo.history.sort", "recientes");
+  const shown = useMemo(
+    () => sortRuns((data ?? []).filter((r) => (kind === "all" || r.kind === kind) && includesText(r.title, query)), sort),
+    [data, query, kind, sort],
+  );
+  const more = (data?.length ?? 0) >= limit;
 
   return (
     <Card>
       <ErrorNote error={error} />
       {data && data.length > 0 && (
         <div className="mb-3 space-y-2">
-          <label className="relative block">
-            <span className="sr-only">Buscar en el historial</span>
-            <Icon name="search" className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" />
-            <input
-              className={cx(inputClass, "pl-9")}
-              placeholder="Buscar…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
+          <SearchInput value={query} onChange={setQuery} label="Buscar en el historial" />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <ChipGroup
+              label="Tipo"
+              options={[
+                { value: "all", label: "Todo" },
+                { value: "forecast", label: "Previsiones" },
+                { value: "cycle", label: "Análisis" },
+                { value: "goal", label: "Objetivos" },
+              ]}
+              value={kind}
+              onChange={setKind}
             />
-          </label>
-          <div className="no-scrollbar flex gap-2 overflow-x-auto" role="group" aria-label="Tipo">
-            {[["all", "Todo"], ["forecast", "Previsiones"], ["cycle", "Análisis"], ["goal", "Objetivos"]].map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                aria-pressed={kind === value}
-                onClick={() => setKind(value)}
-                className={cx(
-                  "min-h-9 shrink-0 rounded-full border px-3 text-sm transition",
-                  kind === value ? "border-accent bg-accent/15 text-accent" : "border-line text-muted hover:text-fg",
-                )}
-              >
-                {label}
-              </button>
-            ))}
+            <SortSelect options={RUN_SORTS} value={sort} onChange={setSort} />
           </div>
+          {shown.length !== data.length && <p className="text-xs text-muted">{countLabel(shown.length, data.length)}</p>}
         </div>
       )}
       {isLoading && (
@@ -70,7 +87,14 @@ export function HistoryList() {
           : su informe completo quedará aquí.
         </Empty>
       )}
-      {data && data.length > 0 && shown.length === 0 && <Empty>Nada coincide con la búsqueda.</Empty>}
+      {data && data.length > 0 && shown.length === 0 && (
+        <FilteredEmpty
+          onClear={() => {
+            setQuery("");
+            setKind("all");
+          }}
+        />
+      )}
       <ul className="divide-y divide-line">
         {shown.map((r) => (
           <li key={r.id}>
@@ -84,6 +108,11 @@ export function HistoryList() {
           </li>
         ))}
       </ul>
+      {more && (
+        <Button variant="secondary" className="mt-3 w-full" disabled={isFetching} onClick={() => setLimit(limit + PAGE)}>
+          {isFetching ? "Cargando…" : "Cargar más antiguos"}
+        </Button>
+      )}
     </Card>
   );
 }

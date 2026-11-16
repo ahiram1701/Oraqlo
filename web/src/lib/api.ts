@@ -352,3 +352,19 @@ export const pct = (p: number | null | undefined, digits = 0) =>
 
 export const fmtDate = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString("es", { dateStyle: "medium", timeStyle: "short" }) : "—";
+
+/** Tipo de predicción según su fuente: qué la produjo y quién la resuelve. */
+export type ForecastKind = "prevision" | "objetivo" | "panel" | "practica";
+
+export function forecastKind(source: string): ForecastKind {
+  if (source.startsWith("polymarket:")) return "practica";
+  for (const kind of ["prevision", "objetivo", "panel"] as const) if (source.endsWith(`:${kind}`)) return kind;
+  return source.startsWith("llm:") ? "practica" : "prevision";
+}
+
+export const FORECAST_KIND_LABEL: Record<ForecastKind, string> = {
+  prevision: "Previsiones",
+  objetivo: "Objetivos",
+  panel: "Análisis",
+  practica: "Práctica",
+};

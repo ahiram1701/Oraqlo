@@ -646,3 +646,13 @@ def test_avisos_de_jobs_dicen_de_que_y_llevan_a_su_pantalla():
     assert practice_alert(failed, 1) is None
     assert practice_alert(failed, 2)[2] == "/practica"
     assert practice_alert(failed, 3) is None  # una sola vez por racha
+
+
+def test_historial_admite_mas_de_50_y_valida_el_limite(env):
+    client, service, *_ = env
+    for i in range(60):
+        service._save_run("forecast", f"Pregunta {i}", {"kind": "forecast"})
+    assert len(client.get("/api/runs").json()) == 50  # por defecto, como antes
+    assert len(client.get("/api/runs?limit=100").json()) == 60
+    assert client.get("/api/runs?limit=0").status_code == 422
+    assert client.get("/api/runs?limit=999999").status_code == 422
