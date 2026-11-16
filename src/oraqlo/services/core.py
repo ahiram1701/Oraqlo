@@ -333,6 +333,7 @@ class OraqloService:
             "kind": "goal",
             "question": goal,
             "goal_id": tracked.id,
+            "horizon_days": horizon_days,  # para «Repetir pregunta» con el mismo plazo
             "baseline_p": plan.baseline_p,
             "with_plan_p": plan.with_plan_p,
             "uplift": plan.uplift,
@@ -412,7 +413,9 @@ class OraqloService:
         return [
             f
             for f in self.store.ledger.open_forecasts
-            if user_resolvable(f.source) and f.created_at and f.created_at + f.horizon <= now
+            if user_resolvable(f.source, f.question)
+            and f.created_at
+            and f.created_at + f.horizon <= now
         ]
 
     def ledger_view(self) -> dict:
@@ -450,7 +453,7 @@ class OraqloService:
         open_n = sum(
             1
             for f in ledger.open_forecasts
-            if (not kind or scorecard.forecast_kind(f.source) == kind)
+            if (not kind or scorecard.forecast_kind(f.source, f.question) == kind)
             and (not model or recalibration.model_of(f.source) == model)
         )
         card = scorecard.scorecard(items, bins=bins)
@@ -459,7 +462,10 @@ class OraqloService:
             "n": len(items),
             "filters": {
                 "kinds": sorted(
-                    {scorecard.forecast_kind(r.forecast.source) for r in everything},
+                    {
+                        scorecard.forecast_kind(r.forecast.source, r.forecast.question)
+                        for r in everything
+                    },
                     key=scorecard.KINDS.index,
                 ),
                 "models": sorted(

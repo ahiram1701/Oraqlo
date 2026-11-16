@@ -26,7 +26,7 @@ def _resolve(
     ledger.record(
         Forecast(
             id=fid,
-            question=f"¿{fid}?",
+            question=f"[polymarket:{fid}] ¿{fid}?" if source == "llm:m" else f"¿{fid}?",
             distribution=Distribution(outcomes=outcomes),
             horizon=timedelta(days=horizon),
             assumptions=[],
@@ -42,7 +42,7 @@ def _resolve(
 def test_tipos_de_fuente():
     assert forecast_kind("llm:qwen3:8b:panel") == "panel"
     assert forecast_kind("llm:m:objetivo") == "objetivo"
-    assert forecast_kind("llm:m") == "practica"
+    assert forecast_kind("llm:m", "[polymarket:7] ¿X?") == "practica"
     assert forecast_kind("polymarket:mercado") == "practica"
 
 
@@ -119,3 +119,14 @@ def test_api_de_calibracion_con_filtros(env):
     assert client.get("/api/calibration?kind=panel").json()["n"] == 1
     assert client.get("/api/calibration?kind=nada").status_code == 422
     assert client.get("/api/calibration?days=1").json()["n"] == 2
+
+
+def test_previsiones_antiguas_sin_tipo_no_son_practica():
+    from oraqlo.memory.recalibration import user_resolvable
+
+    # Antes de la 0.7 todo era `llm:<modelo>`: sin etiqueta de mercado, es una previsión.
+    assert forecast_kind("llm:qwen3:8b", "¿Lloverá?") == "prevision"
+    assert forecast_kind("llm:deepseek:cloud", "[polymarket:123] ¿Ganará X?") == "practica"
+    assert user_resolvable("llm:m", "¿Lloverá?")
+    assert not user_resolvable("llm:m", "[polymarket:9] ¿Algo?")
+    assert not user_resolvable("polymarket:mercado", "[polymarket:9] ¿Algo?")

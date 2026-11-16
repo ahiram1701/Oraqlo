@@ -63,7 +63,8 @@ export default function Ask() {
       /* sin almacenamiento */
     }
   }, [horizon]);
-  const [deadline, setDeadline] = useState(isoInDays(90));
+  // Un objetivo repetido desde el Historial conserva su plazo.
+  const [deadline, setDeadline] = useState(() => isoInDays(incoming.mode === "goal" && incoming.horizon ? incoming.horizon : 90));
   const [research, setResearch] = useState(true);
   const { webSearch } = useWebSearch();
   const noSearchKey = research && webSearch?.key_present === false;

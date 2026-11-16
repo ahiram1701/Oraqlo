@@ -46,13 +46,20 @@ def model_of(source: str) -> str | None:
     return rest
 
 
-def user_resolvable(source: str) -> bool:
+MARKET_TAG_PREFIX = "[polymarket:"  # ver autopractice.market_tag
+
+
+def is_practice(source: str, question: str = "") -> bool:
+    """De la Práctica: el mercado o la previsión de Oraqlo sobre un mercado.
+
+    Se reconoce por la etiqueta del mercado en la pregunta: la fuente sola no
+    basta, porque las previsiones de antes de la 0.7 eran todas `llm:<modelo>`."""
+    return source.startswith("polymarket:") or question.startswith(MARKET_TAG_PREFIX)
+
+
+def user_resolvable(source: str, question: str = "") -> bool:
     """La resuelve el usuario (no la Práctica, que se resuelve sola con el mercado)."""
-    if source.startswith("polymarket:"):
-        return False
-    if source.startswith(LLM_PREFIX):
-        return any(source.endswith(f":{kind}") for kind in SOURCE_KINDS)
-    return True
+    return not is_practice(source, question)
 
 
 @dataclass(frozen=True)

@@ -136,7 +136,7 @@ export default function Ledger() {
   const allResolved = data?.resolved ?? [];
   const total = allOpen.length + allResolved.length;
   const now = Date.now();
-  const kindOk = (f: Forecast) => kind === "todas" || forecastKind(f.source) === kind;
+  const kindOk = (f: Forecast) => kind === "todas" || forecastKind(f.source, f.question) === kind;
 
   const open = useMemo(() => {
     const filtered = allOpen.filter((f) => {
@@ -163,7 +163,10 @@ export default function Ledger() {
   // Solo los tipos que existen: no ofrecer filtros que dejan la lista vacía.
   const kindOptions = useMemo(() => {
     const counts = new Map<ForecastKind, number>();
-    for (const f of [...allOpen, ...allResolved]) counts.set(forecastKind(f.source), (counts.get(forecastKind(f.source)) ?? 0) + 1);
+    for (const f of [...allOpen, ...allResolved]) {
+      const k = forecastKind(f.source, f.question);
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
     const opts: Option<KindFilter>[] = [{ value: "todas", label: "Todas" }];
     for (const k of ["prevision", "objetivo", "panel", "practica"] as const)
       if (counts.get(k)) opts.push({ value: k, label: FORECAST_KIND_LABEL[k], count: counts.get(k) });

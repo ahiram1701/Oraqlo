@@ -33,10 +33,17 @@ export interface Horizon {
   date: string; // AAAA-MM-DD, para la unidad «fecha»
 }
 
-export function isoInDays(days: number) {
-  const d = new Date();
+/** AAAA-MM-DD en el calendario local (toISOString daría el día UTC: por la
+ * tarde-noche en América, «mañana» salía como pasado mañana). */
+export function localISODate(d: Date) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+export function isoInDays(days: number, from = new Date()) {
+  const d = new Date(from);
   d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 }
 
 export function daysUntil(iso: string) {
