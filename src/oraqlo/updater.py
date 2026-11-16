@@ -334,7 +334,10 @@ def install_version(layout: Layout, version: str, wheel: Path, python: str | Non
     if venv.exists():
         shutil.rmtree(venv)
     # Margen amplio: con una conexión lenta, bajar las dependencias tarda.
-    run = lambda *cmd: subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=1800)
+    flags = getattr(subprocess, "NORMAL_PRIORITY_CLASS", 0)  # no heredar la prioridad baja
+    run = lambda *cmd: subprocess.run(
+        cmd, check=True, capture_output=True, text=True, timeout=1800, creationflags=flags
+    )
     try:
         run(python or _base_python(), "-m", "venv", str(venv))
         run(

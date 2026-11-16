@@ -143,7 +143,11 @@ class Launcher:
 
     def _spawn(self, cmd: list[str]) -> subprocess.Popen:
         env = dict(os.environ, ORAQLO_HOME=str(self.home))
-        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        # La tarea programada corre "por debajo de lo normal" (CPU y disco): el
+        # servidor y lo que lance (pip al actualizar) irían lentísimos con el PC ocupado.
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(
+            subprocess, "NORMAL_PRIORITY_CLASS", 0
+        )
         logfile = (self.root / "server.log").open("a", encoding="utf-8")
         return subprocess.Popen(
             cmd, env=env, stdout=logfile, stderr=subprocess.STDOUT, creationflags=flags
