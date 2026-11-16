@@ -1,13 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import ConnectionCard from "../components/ConnectionCard";
 import ProvidersCard from "../components/ProvidersCard";
 import RolesCard from "../components/RolesCard";
 import { DoctorCard, ImportCard, UpdatesCard } from "../components/SystemCards";
-import { useSetup } from "../components/ProvidersCard";
-import { Badge, Button, Card, ErrorNote, SectionTitle, Toggle } from "../components/ui";
+import { useSetup } from "../lib/setup";
+import { Badge, Button, Card, ErrorNote, Notice, SectionTitle, Toggle, cx } from "../components/ui";
 import { api } from "../lib/api";
 import { pushState, subscribePush, unsubscribePush } from "../lib/push";
+import { getTheme, setTheme, type ThemeChoice } from "../lib/theme";
+import { Icon } from "../components/icons";
 
 type NotifyWindows = { supported: boolean; enabled: boolean };
 
@@ -61,12 +63,12 @@ function NotificationsCard() {
         Avisos en este dispositivo cuando termina un análisis, vence un hito, falla la práctica o Oraqlo se actualiza.
       </p>
       {!s ? null : s.kind === "unsupported" ? (
-        <p className="rounded-xl bg-warn/10 p-3 text-sm text-warn">{s.reason}</p>
+        <Notice tone="warn">{s.reason}</Notice>
       ) : s.kind === "denied" ? (
-        <p className="rounded-xl bg-warn/10 p-3 text-sm text-warn">
+        <Notice tone="warn">
           Bloqueaste las notificaciones de Oraqlo. Permítelas en los ajustes del sistema (en iPhone: Ajustes → Notificaciones →
           Oraqlo) y vuelve aquí.
-        </p>
+        </Notice>
       ) : (
         <>
           <p className="mb-3 flex items-center gap-2 text-sm">
@@ -97,16 +99,93 @@ function NotificationsCard() {
   );
 }
 
+function ThemeCard() {
+  const [choice, setChoice] = useState<ThemeChoice>(getTheme);
+  const options: { value: ThemeChoice; label: string; icon: "device" | "sun" | "moon" }[] = [
+    { value: "system", label: "Como el sistema", icon: "device" },
+    { value: "light", label: "Claro", icon: "sun" },
+    { value: "dark", label: "Oscuro", icon: "moon" },
+  ];
+  return (
+    <Card>
+      <SectionTitle>Apariencia</SectionTitle>
+      <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Tema">
+        {options.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            role="radio"
+            aria-checked={choice === o.value}
+            onClick={() => {
+              setChoice(o.value);
+              setTheme(o.value);
+            }}
+            className={cx(
+              "flex min-h-16 flex-col items-center justify-center gap-1 rounded-xl border text-xs font-medium transition",
+              choice === o.value ? "border-accent bg-accent/10 text-fg" : "border-line text-muted hover:text-fg",
+            )}
+          >
+            <Icon name={o.icon} />
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+const GROUPS = [
+  { id: "ia", label: "IA" },
+  { id: "dispositivos", label: "Dispositivos" },
+  { id: "sistema", label: "Sistema" },
+];
+
+function Group({ id, title, hint, children }: { id: string; title: string; hint: string; children: ReactNode }) {
+  return (
+    <section id={id} aria-labelledby={`${id}-title`} className="scroll-mt-4 space-y-4">
+      <div className="px-1 pt-2">
+        <h2 id={`${id}-title`} className="text-base font-semibold">
+          {title}
+        </h2>
+        <p className="text-sm text-muted">{hint}</p>
+      </div>
+      {children}
+    </section>
+  );
+}
+
 export default function Settings() {
   return (
-    <div className="space-y-4">
-      <ProvidersCard />
-      <RolesCard />
-      <ConnectionCard />
-      <NotificationsCard />
-      <UpdatesCard />
-      <DoctorCard />
-      <ImportCard />
+    <div className="space-y-6">
+      <nav aria-label="Secciones de ajustes" className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1">
+        {GROUPS.map((g) => (
+          <a
+            key={g.id}
+            href={`#${g.id}`}
+            onClick={(e) => {
+              e.preventDefault();
+              document.getElementById(g.id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+            className="inline-flex min-h-9 shrink-0 items-center rounded-full border border-line px-4 text-sm text-muted hover:border-accent hover:text-fg"
+          >
+            {g.label}
+          </a>
+        ))}
+      </nav>
+      <Group id="ia" title="IA" hint="Qué modelo usa Oraqlo y con qué claves.">
+        <ProvidersCard />
+        <RolesCard />
+      </Group>
+      <Group id="dispositivos" title="Dispositivos" hint="Celular, avisos y apariencia.">
+        <ConnectionCard />
+        <NotificationsCard />
+        <ThemeCard />
+      </Group>
+      <Group id="sistema" title="Sistema" hint="Versión, actualizaciones, diagnóstico y datos.">
+        <UpdatesCard />
+        <DoctorCard />
+        <ImportCard />
+      </Group>
     </div>
   );
 }

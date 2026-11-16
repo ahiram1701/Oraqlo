@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { api, type Check, type ConfigView, type Health, type UpdateMode } from "../lib/api";
-import { LOCAL_ONLY_NOTE, useSetup } from "./ProvidersCard";
-import { Badge, Button, Card, ErrorNote, SectionTitle, cx, inputClass } from "./ui";
+import { LOCAL_ONLY_NOTE, useSetup } from "../lib/setup";
+import { Badge, Button, Card, ErrorNote, SectionTitle, cx, inputClass, useFeedback } from "./ui";
 
 const MODES: { value: UpdateMode; label: string; hint: string }[] = [
   { value: "auto", label: "Automáticas", hint: "Se instalan solas cuando no hay análisis en curso." },
@@ -25,6 +25,7 @@ async function reloadWhenBack() {
 }
 
 export function UpdatesCard() {
+  const { confirm } = useFeedback();
   const qc = useQueryClient();
   const health = useQuery({ queryKey: ["health"], queryFn: () => api.get<Health>("/health") });
   const me = useQuery({ queryKey: ["me"], queryFn: () => api.get<{ login: string | null; via: string }>("/me") });
@@ -122,7 +123,11 @@ export function UpdatesCard() {
             variant="ghost"
             disabled={rollback.isPending || restarting !== null}
             onClick={() => {
-              if (window.confirm("¿Volver a la versión anterior de Oraqlo? Se reiniciará en unos segundos.")) rollback.mutate();
+              void confirm({
+                title: "¿Volver a la versión anterior?",
+                body: "Oraqlo se reiniciará en unos segundos con la versión que tenías antes.",
+                confirm: "Volver",
+              }).then((ok) => ok && rollback.mutate());
             }}
           >
             Volver a la versión anterior

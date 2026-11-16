@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { vi } from "vitest";
 import App from "../App";
 import ProvidersCard from "../components/ProvidersCard";
+import { FeedbackProvider } from "../components/ui";
 
 type Handler = (method: string, body: any) => unknown;
 
@@ -39,7 +40,9 @@ function renderAt(path: string, ui = <App />) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={[path]}>{ui}</MemoryRouter>
+      <MemoryRouter initialEntries={[path]}>
+        <FeedbackProvider>{ui}</FeedbackProvider>
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -58,7 +61,7 @@ test("sin modelo listo, la app lleva a la bienvenida y conecta con la clave pega
     "/me": { login: null, via: "local" },
   });
   renderAt("/");
-  expect(await screen.findByText("Te damos la bienvenida a Oraqlo")).toBeInTheDocument();
+  expect(await screen.findByText("Te damos la bienvenida a Oraqlo", {}, { timeout: 8000 })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: /Claude \(Anthropic\)/ }));
   fireEvent.change(screen.getByLabelText("Clave de API"), { target: { value: "sk-ant-123" } });

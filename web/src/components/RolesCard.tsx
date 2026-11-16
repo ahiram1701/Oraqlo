@@ -1,10 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api, providerLabel, ROLE_LABELS, type ConfigView, type ProvidersView, type RoleSettings } from "../lib/api";
-import { LOCAL_ONLY_NOTE, useSetup } from "./ProvidersCard";
+import { LOCAL_ONLY_NOTE, useSetup } from "../lib/setup";
 import { Button, Card, ErrorNote, SectionTitle, cx, inputClass } from "./ui";
 
-const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+const EFFORTS: [string, string][] = [
+  ["low", "Bajo (rápido)"],
+  ["medium", "Medio"],
+  ["high", "Alto"],
+  ["xhigh", "Muy alto"],
+  ["max", "Máximo (más lento)"],
+];
 
 function useModels(provider: string | undefined) {
   return useQuery({
@@ -106,9 +112,9 @@ function RoleEditor({
           <span className="text-muted">Esfuerzo de razonamiento</span>
           <select className={inputClass} value={form.effort ?? ""} onChange={(e) => setForm({ ...form, effort: e.target.value })}>
             <option value="">Por defecto</option>
-            {EFFORTS.map((e) => (
+            {EFFORTS.map(([e, label]) => (
               <option key={e} value={e}>
-                {e}
+                {label}
               </option>
             ))}
           </select>
@@ -172,7 +178,7 @@ export default function RolesCard() {
                   <span className={cx("font-medium", role === "default" && "text-accent")}>{ROLE_LABELS[role] ?? role}</span>
                   <span className="ml-auto min-w-0 truncate text-muted">{summary}</span>
                   {local && open !== role && (
-                    <Button variant="ghost" className="min-h-0 shrink-0 px-2 py-1" onClick={() => setOpen(role)}>
+                    <Button variant="ghost" className="-my-2 shrink-0 px-2" onClick={() => setOpen(role)}>
                       Cambiar
                     </Button>
                   )}

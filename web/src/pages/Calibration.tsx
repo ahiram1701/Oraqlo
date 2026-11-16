@@ -1,24 +1,38 @@
 import { useQuery } from "@tanstack/react-query";
 import { CartesianGrid, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis, ReferenceLine } from "recharts";
-import { Card, Empty, ErrorNote, SectionTitle } from "../components/ui";
+import { Card, Empty, ErrorNote, SectionTitle, Skeleton } from "../components/ui";
 import { api, type Calibration as Cal } from "../lib/api";
 
 export default function Calibration() {
-  const { data, error } = useQuery({ queryKey: ["calibration"], queryFn: () => api.get<Cal>("/calibration") });
+  const { data, error, isLoading } = useQuery({ queryKey: ["calibration"], queryFn: () => api.get<Cal>("/calibration") });
   const points = (data?.reliability ?? [])
     .filter((b) => b.n > 0 && b.observed != null)
     .map((b) => ({ x: Math.round(b.p_mid * 100), y: Math.round((b.observed ?? 0) * 100), n: b.n }));
+  // Una frase que resume el gráfico: ¿se pasa de confiado o se queda corto?
+  const weighted = points.reduce((acc, p) => acc + (p.y - p.x) * p.n, 0);
+  const totalN = points.reduce((acc, p) => acc + p.n, 0);
+  const gap = totalN ? weighted / totalN : 0;
+  const summary =
+    totalN < 5
+      ? "Aún hay pocas predicciones resueltas para sacar conclusiones."
+      : Math.abs(gap) < 6
+        ? "Bien calibrado: cuando dice un porcentaje, suele cumplirse más o menos así."
+        : gap < 0
+          ? "Algo confiado de más: lo que da por probable pasa menos de lo que dice."
+          : "Algo prudente de más: lo que ve poco probable pasa más de lo que dice.";
 
   return (
     <div className="space-y-4">
       <ErrorNote error={error} />
       <Card>
-        <SectionTitle>Diagrama de fiabilidad</SectionTitle>
+        <SectionTitle>¿Acierta cuando dice un porcentaje?</SectionTitle>
+        {data && data.n > 0 && <p className="mb-2 text-base font-medium">{summary}</p>}
         <p className="mb-3 text-sm text-muted">
-          Cuando Oraqlo dice “70%”, ¿pasa el 70% de las veces? Los puntos sobre la diagonal indican calibración perfecta;
-          por debajo, exceso de confianza.
+          Si Oraqlo dice «70%», debería pasar 7 de cada 10 veces. Cada punto agrupa predicciones parecidas: sobre la diagonal
+          es perfecto; por debajo, se pasó de confiado.
         </p>
-        {data && data.n === 0 ? (
+        {isLoading && <Skeleton className="h-64" />}
+        {!data ? null : data.n === 0 ? (
           <Empty>Aún no hay datos. Cuando sepas cómo acabó una previsión, márcalo en Predicciones y aquí verás qué tan acertado es Oraqlo.</Empty>
         ) : (
           <div className="h-64">
@@ -37,7 +51,7 @@ export default function Calibration() {
         )}
       </Card>
       <Card>
-        <SectionTitle>Brier por fuente</SectionTitle>
+        <SectionTitle>Error por fuente</SectionTitle>
         {data && data.sources.length === 0 && <Empty>Sin datos todavía.</Empty>}
         <ul className="divide-y divide-line">
           {data?.sources.map((s) => (
@@ -49,7 +63,7 @@ export default function Calibration() {
             </li>
           ))}
         </ul>
-        <p className="mt-3 text-xs text-muted">0 = perfecto · 0.25 = lanzar una moneda con 50% · 2 = certeza en lo equivocado.</p>
+        <p className="mt-3 text-xs text-muted">Puntuación Brier: 0 = perfecto · 0,25 = tirar una moneda · 2 = seguro y equivocado.</p>
       </Card>
     </div>
   );

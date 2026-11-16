@@ -1,13 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { api, PROVIDER_INFO, providerLabel, type Check, type ProviderEntry, type ProvidersView, type SetupStatus } from "../lib/api";
+import { api, PROVIDER_INFO, providerLabel, type Check, type ProviderEntry, type ProvidersView } from "../lib/api";
 import { Badge, Button, Card, ErrorNote, SectionTitle, cx, inputClass } from "./ui";
 
-export const LOCAL_ONLY_NOTE = "Solo se puede cambiar desde el PC donde corre Oraqlo.";
+import { LOCAL_ONLY_NOTE, useSetup } from "../lib/setup";
 
-export function useSetup() {
-  return useQuery({ queryKey: ["setup"], queryFn: () => api.get<SetupStatus>("/setup") });
-}
+export { LOCAL_ONLY_NOTE, useSetup };
 
 /** Guarda la clave de un proveedor (y la prueba). Se reutiliza en la bienvenida. */
 export function useKeyActions(onDone?: (check: Check) => void) {
@@ -148,7 +146,7 @@ export default function ProvidersCard() {
     <Card>
       <SectionTitle
         aside={
-          <Button variant="ghost" className="min-h-0 py-1" onClick={() => setAll(!all)}>
+          <Button variant="ghost" className="-my-2 px-2" onClick={() => setAll(!all)}>
             {all ? "Ver menos" : "Ver todos"}
           </Button>
         }

@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from oraqlo import __version__
 from oraqlo.api.auth import AuthError, check_request, identify
 from oraqlo.casefile import CaseError, case_to_dict, parse_case, template_json
-from oraqlo.goaltrack import MILESTONE_STATUSES, GoalTracker
+from oraqlo.goaltrack import MILESTONE_STATUSES, GoalTracker, GoalTrackError
 from oraqlo.services.core import OraqloService
 from oraqlo.services.doctor import probe_provider, run_checks
 from oraqlo.services.jobs import TERMINAL, JobRunner
@@ -84,6 +84,17 @@ class CheckinIn(BaseModel):
 
 class MilestoneIn(BaseModel):
     status: str
+
+
+class GoalEditIn(BaseModel):
+    goal: str | None = Field(None, min_length=1, max_length=500)
+    deadline: str | None = None  # AAAA-MM-DD
+
+
+class MilestoneEditIn(BaseModel):
+    text: str | None = Field(None, min_length=1, max_length=300)
+    target_date: str | None = None  # AAAA-MM-DD
+    status: str | None = None
 
 
 class CloseIn(BaseModel):
@@ -151,6 +162,11 @@ LEGACY_FILES = ("oraqlo_ledger.json", "oraqlo_goals.json", "oraqlo_settings.json
 LOCAL_ONLY = (
     "Esto solo se puede cambiar desde el PC donde corre Oraqlo. Ábrelo allí desde el menú Inicio."
 )
+
+
+def _message(e: Exception) -> str:
+    """Texto de un error para el usuario: str(KeyError) añade comillas de más."""
+    return str(e.args[0]) if e.args else str(e)
 
 
 def require_local(request: Request) -> None:
@@ -595,7 +611,7 @@ def create_app(
         try:
             return {"models": service.registry.get(name).list_models()}
         except KeyError as e:
-            raise HTTPException(404, str(e)) from e
+            raise HTTPException(404, _message(e)) from e
         except Exception as e:
             raise HTTPException(502, str(e)) from e
 
@@ -911,7 +927,7 @@ def create_app(
         try:
             return {"resolved": service.resolve(forecast_id, body.outcome)}
         except KeyError as e:
-            raise HTTPException(404, str(e)) from e
+            raise HTTPException(404, _message(e)) from e
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
 
@@ -920,14 +936,14 @@ def create_app(
         try:
             service.store.ledger.discard(forecast_id)
         except KeyError as e:
-            raise HTTPException(404, str(e)) from e
+            raise HTTPException(404, _message(e)) from e
 
     @app.delete("/api/ledger/resolved/{forecast_id}", status_code=204)
     def ledger_delete_resolved(forecast_id: str) -> None:
         try:
             service.store.ledger.delete_resolved(forecast_id)
         except KeyError as e:
-            raise HTTPException(404, str(e)) from e
+            raise HTTPException(404, _message(e)) from e
 
     @app.get("/api/calibration")
     def calibration() -> dict:
@@ -942,7 +958,7 @@ def create_app(
         try:
             return service.store.goals.get(goal_id)
         except KeyError as e:
-            raise HTTPException(404, str(e)) from e
+            raise HTTPException(404, _message(e)) from e
 
     @app.get("/api/goals")
     def goals_list() -> list[dict]:
@@ -970,6 +986,29 @@ def create_app(
         try:
             tracker().set_milestone(goal_id, index, body.status)
         except (IndexError, ValueError) as e:
+            raise HTTPException(422, str(e)) from e
+        return goal_json(service.store.goals.get(goal_id))
+
+    @app.patch("/api/goals/{goal_id}")
+    def goals_edit(goal_id: str, body: GoalEditIn) -> dict:
+        goal_or_404(goal_id)
+        try:
+            tracker().edit(goal_id, goal=body.goal, deadline=body.deadline)
+        except GoalTrackError as e:
+            raise HTTPException(422, str(e)) from e
+        return goal_json(service.store.goals.get(goal_id))
+
+    @app.patch("/api/goals/{goal_id}/milestones/{index}")
+    def goals_milestone_edit(goal_id: str, index: int, body: MilestoneEditIn) -> dict:
+        goal_or_404(goal_id)
+        try:
+            if body.text is not None or body.target_date is not None:
+                tracker().edit_milestone(
+                    goal_id, index, text=body.text, target_date=body.target_date
+                )
+            if body.status is not None:
+                tracker().set_milestone(goal_id, index, body.status)
+        except GoalTrackError as e:
             raise HTTPException(422, str(e)) from e
         return goal_json(service.store.goals.get(goal_id))
 
