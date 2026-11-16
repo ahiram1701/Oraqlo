@@ -259,12 +259,19 @@ def verify_attestation(path: Path, repo: str) -> bool | None:
     gh = shutil.which("gh")
     if not gh:
         return None
-    result = subprocess.run(
-        [gh, "attestation", "verify", str(path), "--repo", repo],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
+    try:
+        result = subprocess.run(
+            [gh, "attestation", "verify", str(path), "--repo", repo],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (subprocess.TimeoutExpired, OSError) as e:
+        # Sin red estable no se puede comprobar: igual que sin `gh` (el SHA256 ya
+        # se verificó). Antes el TimeoutExpired mataba el hilo de actualización.
+        log.warning("No se pudo comprobar la procedencia (%s); sigo con el SHA256", e)
+        return None
     if result.returncode == 0:
         return True
     if "authentication" in (result.stderr or "").lower() or "gh auth login" in (
