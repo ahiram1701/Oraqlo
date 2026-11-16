@@ -5,7 +5,8 @@ import { pct } from "../lib/api";
 import type { JobState } from "../lib/useJob";
 import { Icon } from "./icons";
 import { ProbBars } from "./ProbBars";
-import { Card, ErrorNote, Spinner, VerdictBadge, cx, verdictInfo } from "./ui";
+import { WEB_SEARCH_ANCHOR } from "./WebSearchCard";
+import { Card, ErrorNote, Notice, Spinner, VerdictBadge, cx, verdictInfo } from "./ui";
 
 const MarkdownText = lazy(() => import("./MarkdownText"));
 
@@ -148,8 +149,18 @@ function Process({ job, showForecast }: { job: JobState; showForecast: boolean }
   const lastTurn = turns.at(-1)?.seq;
   const logs = job.events.filter((e) => e.type === "log");
   const facts = job.events.filter((e) => e.type === "fact");
+  const noSearchKey = logs.some((e) => e.data.code === "no_websearch_key");
   return (
     <div className="space-y-3">
+      {noSearchKey && (
+        <Notice tone="warn">
+          No investigó en internet: falta la clave de búsqueda web.{" "}
+          <Link to={`/ajustes#${WEB_SEARCH_ANCHOR}`} className="underline">
+            Añádela en Ajustes
+          </Link>
+          .
+        </Notice>
+      )}
       {facts.length > 0 && (
         <div>
           <p className="mb-1.5 text-xs font-semibold tracking-wide text-muted uppercase">Lo que encontró</p>
