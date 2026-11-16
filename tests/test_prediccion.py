@@ -193,7 +193,8 @@ def test_prevision_rapida_varias_estimaciones_y_fuente_propia(env):
         "¿Sube?", 30, research=False, emit=lambda t, d: logs.append(d.get("msg", ""))
     )
     assert result["forecast"]["source"].endswith(":prevision")
-    assert fake.calls == service.config.forecast.samples == 3
+    # 3 estimaciones + la respuesta en palabras llanas.
+    assert fake.calls == service.config.forecast.samples + 1 == 4
     assert "Estimación 3 de 3" in logs
 
 

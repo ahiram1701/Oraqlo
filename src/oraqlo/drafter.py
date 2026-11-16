@@ -27,7 +27,11 @@ _SYSTEM_PROMPT = (
     "probabilidades sumen 1.0; cada resultado que uses debe tener utilidad en "
     "utilities, en la escala -1.0 (ruina) a 1.0 (mejor resultado plausible), y si un "
     "resultado aparece en varias acciones su utilidad es una sola; sé concreto y usa "
-    "el idioma de la pregunta."
+    "el idioma de la pregunta.\n"
+    "Las acciones son de quien pregunta, una persona: no supongas que tiene "
+    "inversiones, empresa o patrimonio si la pregunta no lo dice. Si la pregunta es "
+    "informativa (si algo pasará o cuándo), propón cosas sencillas y cotidianas que "
+    "esa persona podría hacer al respecto, descritas en lenguaje llano."
 )
 
 
