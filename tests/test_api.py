@@ -413,6 +413,16 @@ def test_health_informa_actualizaciones_y_copia_no_gestionada(env, monkeypatch):
     assert client.post("/api/update/apply").status_code == 409
 
 
+def test_health_no_anuncia_la_version_que_ya_corre(env):
+    from oraqlo import __version__
+
+    client, service, *_ = env
+    service.store.settings.set("update.available", __version__)
+    service.store.settings.set("update.staged", "0.0.1")
+    upd = client.get("/api/health").json()["update"]
+    assert upd["available"] is None and upd["staged"] is None
+
+
 def test_instalacion_gestionada_activa_cuando_no_hay_trabajos(tmp_path, monkeypatch):
     from oraqlo.api import app as app_module
     from oraqlo.api.app import create_app
