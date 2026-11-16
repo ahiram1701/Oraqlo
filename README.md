@@ -32,11 +32,14 @@ Los análisis largos corren en el servidor: **puedes bloquear el celular** y al 
 
 Requisitos: **Python 3.12+** y, para el celular, **[Tailscale](https://tailscale.com/download)** en el PC y en el teléfono.
 
+Abre una PowerShell normal (Win+X → Terminal; no la terminal integrada de otra app) y ejecuta:
+
 ```powershell
-git clone https://github.com/ahiram1701/Oraqlo.git
-cd Oraqlo
-powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1
+irm https://github.com/ahiram1701/Oraqlo/releases/latest/download/install-windows.ps1 -OutFile $env:TEMP\install-oraqlo.ps1
+powershell -ExecutionPolicy Bypass -File $env:TEMP\install-oraqlo.ps1
 ```
+
+Si el puerto 8765 ya lo usa otra aplicación, el instalador se detiene y te lo dice; elige otro con `-Port 8770`.
 
 El instalador hace lo siguiente:
 

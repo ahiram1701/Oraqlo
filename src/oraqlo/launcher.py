@@ -18,6 +18,7 @@ Bucle:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -29,6 +30,14 @@ from pathlib import Path
 
 RESTART_EXIT_CODE = 75
 HEALTH_TIMEOUT_S = 60.0
+
+
+def is_oraqlo_health(body: bytes) -> bool:
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return False
+    return isinstance(data, dict) and data.get("app") == "oraqlo" and data.get("status") == "ok"
 
 
 class Launcher:
@@ -92,9 +101,10 @@ class Launcher:
         )
 
     def _healthy(self, port: int) -> bool:
+        """True solo si en el puerto responde Oraqlo (otra app con /api/health no cuenta)."""
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=3) as r:
-                return r.status == 200
+                return r.status == 200 and is_oraqlo_health(r.read())
         except OSError:
             return False
 

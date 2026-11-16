@@ -320,6 +320,7 @@ def create_app(service: OraqloService | None = None, background: bool = True) ->
     @app.get("/api/health")
     def health() -> dict:
         return {
+            "app": "oraqlo",
             "status": "ok",
             "version": __version__,
             "db_version": service.store.db.version,

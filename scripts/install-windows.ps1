@@ -70,6 +70,30 @@ if ($Uninstall) {
     exit 0
 }
 
+function Test-OraqloHealth([int]$P) {
+    try {
+        $h = Invoke-RestMethod -Uri "http://127.0.0.1:$P/api/health" -TimeoutSec 2
+        if ($h.app -eq "oraqlo" -and $h.status -eq "ok") { return $h }
+    } catch { }
+    return $null
+}
+
+# ── Comprobaciones previas ───────────────────────────────────────────────
+# Las apps empaquetadas (MSIX) redirigen en silencio lo que se escribe en
+# %LOCALAPPDATA% a su almacén privado: la tarea programada no lo encontraría.
+$Probe = "oraqlo-probe-" + [guid]::NewGuid()
+[IO.File]::WriteAllText((Join-Path $env:LOCALAPPDATA $Probe), "")
+$Virtual = Get-ChildItem (Join-Path $env:LOCALAPPDATA "Packages\*\LocalCache\Local\$Probe") -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $env:LOCALAPPDATA $Probe) -Force -ErrorAction SilentlyContinue
+if ($Virtual) {
+    throw "Esta PowerShell corre dentro de una app empaquetada y Windows redirigiría la instalación a $(Split-Path $Virtual[0].FullName). Ejecuta el instalador desde una PowerShell normal (Win+X > Terminal)."
+}
+if (-not $NoStart -and -not $NoTask -and -not (Test-OraqloHealth $Port)) {
+    $tcp = New-Object System.Net.Sockets.TcpClient
+    try { $tcp.Connect("127.0.0.1", $Port); $inUse = $true } catch { $inUse = $false } finally { $tcp.Dispose() }
+    if ($inUse) { throw "El puerto $Port lo usa otra aplicación. Elige otro, por ejemplo: -Port 8770" }
+}
+
 # ── Python 3.12+ ─────────────────────────────────────────────────────────
 Step "Buscando Python 3.12 o superior"
 $Python = $null
@@ -183,10 +207,9 @@ if (-not $NoTask) {
         Start-ScheduledTask -TaskName $TaskName
         $healthy = $false
         foreach ($i in 1..60) {
-            try {
-                $h = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/health" -TimeoutSec 2
-                if ($h.status -eq "ok") { $healthy = $true; break }
-            } catch { Start-Sleep -Seconds 1 }
+            $h = Test-OraqloHealth $Port
+            if ($h) { $healthy = $true; break }
+            Start-Sleep -Seconds 1
         }
         if ($healthy) { Write-Host "    Oraqlo $($h.version) responde en http://127.0.0.1:$Port" -ForegroundColor Green }
         else { Warn "Oraqlo no respondió en 60 s. Revisa $App\server.log y $App\update.log." }

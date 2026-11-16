@@ -26,19 +26,20 @@ jobs:
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-      # Los PRs que abre GITHUB_TOKEN no disparan workflows: lanzamos el CI a mano
-      # sobre la rama del PR de release para que tenga los checks requeridos.
-      - name: Lanzar el CI sobre el PR de release
+      # GitHub deja en "action_required" el CI de los PRs que abre el bot de
+      # Actions hasta que alguien lo aprueba; aquí se aprueba solo (es nuestro PR).
+      - name: Aprobar el CI del PR de release
         if: steps.rp.outputs.release_created != 'true'
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           branch=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --label "autorelease: pending" --json headRefName --jq '.[0].headRefName // empty')
-          if [ -n "$branch" ]; then
-            gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
-          else
-            echo "No hay PR de release abierto."
-          fi
+          [ -z "$branch" ] && { echo "No hay PR de release abierto."; exit 0; }
+          sleep 20  # da tiempo a que GitHub cree las ejecuciones del último push
+          for id in $(gh run list --repo "$GITHUB_REPOSITORY" --branch "$branch" --status action_required --json databaseId --jq '.[].databaseId'); do
+            gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$id/approve" && echo "Aprobada la ejecución $id"
+          done
 
   publish:
     needs: release-please
@@ -67,6 +68,8 @@ jobs:
       - run: uv build
       - name: Comprobar que el wheel lleva el frontend
         run: unzip -l dist/*.whl | grep -q "oraqlo/api/static/index.html"
+      - name: Adjuntar también el instalador de Windows
+        run: cp scripts/install-windows.ps1 dist/
       - name: SHA256SUMS
         working-directory: dist
         run: sha256sum * > SHA256SUMS
