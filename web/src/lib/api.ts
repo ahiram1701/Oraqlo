@@ -100,6 +100,7 @@ export function sourceLabel(source: string): string {
   for (const [suffix, label] of [
     [":prevision", "previsiones"],
     [":objetivo", "objetivos"],
+    [":panel", "análisis completo"],
   ] as const) {
     if (rest.endsWith(suffix)) return `${rest.slice(0, -suffix.length)} · ${label}`;
   }

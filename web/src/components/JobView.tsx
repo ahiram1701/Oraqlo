@@ -44,7 +44,7 @@ export const PHASE_LABEL: Record<string, string> = {
 /** Fases que se esperan según el tipo de trabajo (para mostrar lo que falta). */
 export const EXPECTED_PHASES: Record<string, string[]> = {
   forecast: ["prever"],
-  full: ["redactar", "observar", "prever", "simular", "planificar", "deliberar"],
+  full: ["prever", "redactar", "observar", "simular", "planificar", "deliberar"],
   case: ["observar", "prever", "simular", "planificar", "deliberar"],
   goal: ["linea_base", "palancas", "plan", "deliberar", "con_plan"],
 };

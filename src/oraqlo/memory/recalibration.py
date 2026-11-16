@@ -26,7 +26,7 @@ MIN_RESOLVED = 30
 A_MIN, A_MAX, A_STEP = 0.5, 2.0, 0.05
 LLM_PREFIX = "llm:"
 # Sufijos de fuente por tipo de pregunta (la práctica usa `llm:<modelo>` sin sufijo).
-SOURCE_KINDS = ("prevision", "objetivo")
+SOURCE_KINDS = ("prevision", "objetivo", "panel")
 _NOTE_RE = re.compile(r"^Recalibrado con su historial \(factor a=(\d+(?:\.\d+)?)\)")
 
 
@@ -44,6 +44,15 @@ def model_of(source: str) -> str | None:
         if rest.endswith(f":{kind}"):
             return rest[: -len(kind) - 1]
     return rest
+
+
+def user_resolvable(source: str) -> bool:
+    """La resuelve el usuario (no la Práctica, que se resuelve sola con el mercado)."""
+    if source.startswith("polymarket:"):
+        return False
+    if source.startswith(LLM_PREFIX):
+        return any(source.endswith(f":{kind}") for kind in SOURCE_KINDS)
+    return True
 
 
 @dataclass(frozen=True)

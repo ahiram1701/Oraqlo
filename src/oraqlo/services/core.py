@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -20,6 +21,8 @@ from oraqlo.agent import OraqloAgent
 from oraqlo.casefile import CaseSpec, case_to_dict, parse_case
 from oraqlo.config import OraqloConfig, load_config
 from oraqlo.drafter import draft_case
+from oraqlo.forecaster.aggregate import clamp
+from oraqlo.forecaster.base import Distribution, Forecast, Forecaster
 from oraqlo.forecaster.ensemble import resolve_group
 from oraqlo.forecaster.llm import LLMForecaster
 from oraqlo.goals import GoalStrategist
@@ -28,7 +31,7 @@ from oraqlo.llm.registry import ProviderRegistry, provider_info
 from oraqlo.llm.websearch import WEB_SEARCH_KEY_ENV, OllamaWebClient
 from oraqlo.memory import recalibration
 from oraqlo.memory.calibration import ResolvedForecast
-from oraqlo.memory.recalibration import Recalibration, llm_source
+from oraqlo.memory.recalibration import Recalibration, llm_source, user_resolvable
 from oraqlo.panel import ROLE_PROMPTS, RoleConfig, SequentialPanel
 from oraqlo.report import render_goal_report_markdown, render_report_markdown, slugify
 from oraqlo.research import ResearchBrief, Researcher
@@ -179,7 +182,10 @@ class OraqloService:
         research: bool = False,
         emit: Emit = _noop,
         brief: ResearchBrief | None = None,
+        forecast: Forecast | None = None,
     ) -> dict:
+        """`forecast`: previsión ya calculada para esta pregunta (el análisis completo
+        la hace antes de redactar el caso); si no, la calcula el oráculo aquí."""
         spec = case if isinstance(case, CaseSpec) else parse_case(case)
         if research and brief is None:
             brief = self.research(spec.question, spec.horizon.days, emit)
@@ -191,7 +197,9 @@ class OraqloService:
         agent = OraqloAgent(
             connectors=[],
             world_model=world,
-            forecaster=self._oracle(r.model, provider),
+            forecaster=_Precomputed(forecast)
+            if forecast is not None
+            else self._oracle(r.model, provider, self.config.forecast.samples, emit),
             simulator=TreeSearchEngine(spec.outcome_model(), spec.utility_fn()),
             planner=ExpectedUtilityPlanner(),
             panel=self._panel(),
@@ -206,6 +214,9 @@ class OraqloService:
             on_event=emit,
             extra_context=brief.as_context() if brief else "",
         )
+        if report.verdict.p_success is not None and report.verdict.decision == "emitir":
+            p = self._record_panel(spec, report, r.model)
+            report.verdict = replace(report.verdict, p_success=p)
         facts = [(f.text, f.source_url) for f in brief.facts] if brief else None
         ranking = [report.recommendation]
         markdown = render_report_markdown(
@@ -232,23 +243,65 @@ class OraqloService:
         result["run_id"] = self._save_run("cycle", spec.question, result)
         return result
 
+    def _record_panel(self, spec: CaseSpec, report: Any, model: str) -> float:
+        """La probabilidad de éxito del Oráculo, recalibrada y anotada en el ledger.
+
+        Así se puede resolver más adelante y la cifra del análisis completo aprende
+        del historial como las demás. Devuelve la probabilidad ya recalibrada."""
+        p = float(report.verdict.p_success)
+        outcomes = {"sí": p, "no": 1.0 - p}
+        assumptions = [
+            f"Probabilidad de éxito que dio el Oráculo del panel para «{spec.question}»."
+        ]
+        _advice, recal = self._learned(model)
+        if recal.active:
+            outcomes = clamp(recal.apply(outcomes))
+            assumptions.append(recal.note())
+        distribution = Distribution(outcomes=outcomes)
+        distribution.validate()
+        self.store.ledger.record(
+            Forecast(
+                id=str(uuid.uuid4()),
+                question=f"¿Saldrá bien «{report.recommendation.action.description}»?",
+                distribution=distribution,
+                horizon=spec.horizon,
+                assumptions=assumptions,
+                source=llm_source(model, "panel"),
+                created_at=datetime.now(UTC),
+            )
+        )
+        return outcomes["sí"]
+
     def ask_full(
         self, question: str, horizon_days: int = 90, research: bool = True, emit: Emit = _noop
     ) -> dict:
-        """Análisis completo: el LLM redacta el caso y se ejecuta el ciclo con panel."""
+        """Análisis completo: previsión calibrada → el LLM redacta el caso anclado en
+        ella → ciclo con panel (que reutiliza esa misma previsión)."""
         brief = self.research(question, horizon_days, emit) if research else None
+        emit("phase", {"name": "prever"})
+        oracle_provider, oracle_role = self._role("oraculo")
+        world = WorldModel()
+        if brief is not None:
+            for obs in brief.as_observations():
+                world.apply(obs)
+        forecast = self._oracle(
+            oracle_role.model, oracle_provider, self.config.forecast.samples, emit
+        ).forecast(world.current(), question, timedelta(days=horizon_days))
         emit("phase", {"name": "redactar"})
         provider, r = self._role("redactor")
+        context = "\n\n".join(
+            part for part in (brief.as_context() if brief else None, anchor_text(forecast)) if part
+        )
         spec = draft_case(
             provider,
             r.model,
             question,
             horizon_days,
             temperature=r.temperature,
-            context=brief.as_context() if brief else None,
+            context=context,
         )
         emit("log", {"msg": f"Caso redactado: {len(spec.actions)} acciones candidatas."})
-        return self.run_case(spec, emit=emit, brief=brief)
+        return self.run_case(spec, emit=emit, brief=brief, forecast=forecast)
 
     def achieve_goal(
         self, goal: str, horizon_days: int = 90, research: bool = True, emit: Emit = _noop
@@ -256,7 +309,13 @@ class OraqloService:
         brief = self.research(goal, horizon_days, emit) if research else None
         provider, r = self._role("estratega")
         advice, recal = self._learned(r.model)
-        plan = GoalStrategist(provider, r.model, advice=advice, recalibration=recal).pursue(
+        plan = GoalStrategist(
+            provider,
+            r.model,
+            advice=advice,
+            recalibration=recal,
+            samples=self.config.forecast.samples,
+        ).pursue(
             goal,
             timedelta(days=horizon_days),
             self._panel(),
@@ -348,10 +407,23 @@ class OraqloService:
 
     # ── operaciones rápidas (síncronas) ──────────────────────────────────
 
+    def overdue_forecasts(self, now: datetime | None = None) -> list[Forecast]:
+        """Abiertas que ya deberían saberse y que tiene que resolver el usuario."""
+        now = now or datetime.now(UTC)
+        return [
+            f
+            for f in self.store.ledger.open_forecasts
+            if user_resolvable(f.source) and f.created_at and f.created_at + f.horizon <= now
+        ]
+
     def ledger_view(self) -> dict:
         ledger = self.store.ledger
+        overdue = {f.id for f in self.overdue_forecasts()}
+        # Las que ya deberían saberse, primero (orden estable para el resto).
+        open_forecasts = sorted(ledger.open_forecasts, key=lambda f: f.id not in overdue)
         return {
-            "open": [forecast_json(f) for f in ledger.open_forecasts],
+            "overdue": len(overdue),
+            "open": [forecast_json(f) for f in open_forecasts],
             "resolved": [resolved_json(r) for r in reversed(ledger.resolved_forecasts)],
         }
 
@@ -477,3 +549,25 @@ def _dumps(value: Any) -> str:
     from oraqlo.store.db import dumps
 
     return dumps(value)
+
+
+class _Precomputed(Forecaster):
+    """Devuelve una previsión ya hecha (el ciclo la registra igual en el ledger)."""
+
+    def __init__(self, forecast: Forecast) -> None:
+        self._forecast = forecast
+
+    def forecast(self, state: WorldState, question: str, horizon: timedelta) -> Forecast:
+        return self._forecast
+
+
+def anchor_text(forecast: Forecast) -> str:
+    """La previsión calibrada como ancla del redactor (que si no inventa las cifras)."""
+    lines = [
+        "Previsión calibrada de Oraqlo para esta pregunta (escenario sin intervenir). "
+        "Úsala como referencia: los resultados de esperar o no hacer nada deberían "
+        "parecerse a ella, y cada acción solo debería moverlos lo que justifique:"
+    ]
+    for label, prob in sorted(forecast.distribution.outcomes.items(), key=lambda kv: -kv[1]):
+        lines.append(f"- {label}: {prob:.0%}")
+    return "\n".join(lines)

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { CartesianGrid, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis, ReferenceLine } from "recharts";
 import { Card, Empty, ErrorNote, SectionTitle, Skeleton } from "../components/ui";
 import { api, sourceLabel, type Calibration as Cal } from "../lib/api";
+import { ExportLink } from "./Ledger";
 
 export default function Calibration() {
   const { data, error, isLoading } = useQuery({ queryKey: ["calibration"], queryFn: () => api.get<Cal>("/calibration") });
@@ -69,7 +70,7 @@ export default function Calibration() {
         )}
       </Card>
       <Card>
-        <SectionTitle>Error por fuente</SectionTitle>
+        <SectionTitle aside={<ExportLink />}>Error por fuente</SectionTitle>
         {data && data.sources.length === 0 && <Empty>Sin datos todavía.</Empty>}
         <ul className="divide-y divide-line">
           {data?.sources.map((s) => (

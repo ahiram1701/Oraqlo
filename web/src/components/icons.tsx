@@ -28,6 +28,7 @@ const PATHS: Record<string, ReactNode> = {
   spark: <path d="M12 3v4m0 10v4M3 12h4m10 0h4M6.3 6.3l2.8 2.8m5.8 5.8 2.8 2.8M6.3 17.7l2.8-2.8m5.8-5.8 2.8-2.8" />,
   calendar: <path d="M5 5h14v15H5zM5 10h14M9 3v4m6-4v4" />,
   more: <path d="M5 12h.01M12 12h.01M19 12h.01" strokeWidth="3" />,
+  download: <path d="M12 4v11m0 0-4-4m4 4 4-4M5 19h14" />,
 };
 
 export type IconName = keyof typeof PATHS;

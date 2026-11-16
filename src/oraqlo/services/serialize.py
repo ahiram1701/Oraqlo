@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import csv
 import dataclasses
+import io
+import json
 from datetime import date, datetime, timedelta
 from enum import Enum
 from typing import Any
 
 from oraqlo.forecaster.base import Forecast
 from oraqlo.goaltrack import TrackedGoal
-from oraqlo.memory.calibration import ResolvedForecast
+from oraqlo.memory.calibration import CalibrationLedger, ResolvedForecast
 
 
 def to_jsonable(obj: Any) -> Any:
@@ -64,3 +67,54 @@ def goal_json(g: TrackedGoal) -> dict:
         overdue=[i for i, m in enumerate(g.milestones) if m.overdue],
     )
     return data
+
+
+CSV_COLUMNS = (
+    "id",
+    "pregunta",
+    "fuente",
+    "estado",
+    "previsto",
+    "prob_previsto",
+    "probabilidades",
+    "creada",
+    "horizonte_dias",
+    "resultado",
+    "brier",
+    "resuelta",
+)
+
+
+def ledger_to_csv(ledger: CalibrationLedger) -> str:
+    """Todas las predicciones (abiertas y resueltas) como CSV para hoja de cálculo.
+
+    Con BOM: así Excel abre bien los acentos. Las probabilidades van como fracción
+    (0.62) con punto decimal, que es lo que esperan pandas y las hojas en inglés."""
+    out = io.StringIO()
+    out.write("﻿")
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(CSV_COLUMNS)
+
+    def row(f: Forecast, status: str, r: ResolvedForecast | None = None) -> list:
+        outcomes = sorted(f.distribution.outcomes.items(), key=lambda kv: -kv[1])
+        top = outcomes[0] if outcomes else ("", None)
+        return [
+            f.id,
+            f.question,
+            f.source,
+            status,
+            top[0],
+            "" if top[1] is None else round(top[1], 4),
+            json.dumps(dict(outcomes), ensure_ascii=False),
+            f.created_at.isoformat() if f.created_at else "",
+            round(f.horizon.total_seconds() / 86400, 2),
+            r.actual_outcome if r else "",
+            round(r.brier, 4) if r else "",
+            r.resolved_at.isoformat() if r else "",
+        ]
+
+    for f in ledger.open_forecasts:
+        writer.writerow(row(f, "abierta"))
+    for r in ledger.resolved_forecasts:
+        writer.writerow(row(r.forecast, "resuelta", r))
+    return out.getvalue()

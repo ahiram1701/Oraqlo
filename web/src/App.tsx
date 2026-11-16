@@ -68,17 +68,32 @@ const PARENT: [RegExp, string][] = [
   [/^\/historial\/.+/, "/historial"],
 ];
 
-function useOverdueCount() {
-  const { data } = useQuery({ queryKey: ["goals"], queryFn: () => api.get<Goal[]>("/goals"), staleTime: 60_000 });
-  return data?.reduce((n, g) => n + (g.status === "activo" ? g.overdue.length : 0), 0) ?? 0;
+/** Lo que espera al usuario en cada sección: hitos vencidos y predicciones por resolver. */
+function useNavBadges(): Record<string, number> {
+  const goals = useQuery({ queryKey: ["goals"], queryFn: () => api.get<Goal[]>("/goals"), staleTime: 60_000 });
+  const due = useQuery({
+    queryKey: ["ledger", "overdue"],
+    queryFn: () => api.get<{ count: number }>("/ledger/overdue"),
+    staleTime: 60_000,
+  });
+  return {
+    "/objetivos": goals.data?.reduce((n, g) => n + (g.status === "activo" ? g.overdue.length : 0), 0) ?? 0,
+    "/predicciones": due.data?.count ?? 0,
+  };
 }
 
-function navLabel(item: NavItem, overdue: number) {
-  return item.to === "/objetivos" && overdue > 0 ? `${item.label} (${overdue} hitos vencidos)` : item.label;
+const BADGE_WORDS: Record<string, string> = {
+  "/objetivos": "hitos vencidos",
+  "/predicciones": "para resolver",
+};
+
+function navLabel(item: NavItem, badges: Record<string, number>) {
+  const n = badges[item.to] ?? 0;
+  return n > 0 ? `${item.label} (${n} ${BADGE_WORDS[item.to]})` : item.label;
 }
 
 function SideNav() {
-  const overdue = useOverdueCount();
+  const badges = useNavBadges();
   return (
     <nav className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col gap-1 border-r border-line p-4 md:flex" aria-label="Secciones">
       <div className="mb-6 flex items-center gap-2.5 px-2">
@@ -93,7 +108,7 @@ function SideNav() {
               key={item.to}
               to={item.to}
               end={item.end}
-              aria-label={navLabel(item, overdue)}
+              aria-label={navLabel(item, badges)}
               className={({ isActive }) =>
                 cx(
                   "flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition",
@@ -103,9 +118,9 @@ function SideNav() {
             >
               <Icon name={item.icon} />
               {item.label}
-              {item.to === "/objetivos" && overdue > 0 && (
+              {(badges[item.to] ?? 0) > 0 && (
                 <span aria-hidden className="ml-auto rounded-full bg-warn px-1.5 text-xs font-semibold text-black">
-                  {overdue}
+                  {badges[item.to]}
                 </span>
               )}
             </NavLink>
@@ -118,7 +133,7 @@ function SideNav() {
 
 /** Barra inferior: lo de uso diario a un toque; el resto, en «Más». */
 function BottomNav() {
-  const overdue = useOverdueCount();
+  const badges = useNavBadges();
   const location = useLocation();
   const [primary, secondary] = [NAV[0].items, NAV[1].items];
   const [open, setOpen] = useState(false);
@@ -186,7 +201,7 @@ function BottomNav() {
               key={item.to}
               to={item.to}
               end={item.end}
-              aria-label={navLabel(item, overdue)}
+              aria-label={navLabel(item, badges)}
               className={({ isActive }) => tab(isActive && !open)}
             >
               {({ isActive }) => (
@@ -195,7 +210,7 @@ function BottomNav() {
                     <Icon name={item.icon} />
                   </span>
                   <span className="max-w-full truncate">{item.label}</span>
-                  {item.to === "/objetivos" && overdue > 0 && (
+                  {(badges[item.to] ?? 0) > 0 && (
                     <span aria-hidden className="absolute top-1.5 right-[calc(50%-1.25rem)] size-2 rounded-full bg-warn" />
                   )}
                 </>
