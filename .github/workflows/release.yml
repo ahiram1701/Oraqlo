@@ -33,13 +33,26 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_JSON: ${{ steps.rp.outputs.pr }}
         run: |
-          branch=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --label "autorelease: pending" --json headRefName --jq '.[0].headRefName // empty')
-          [ -z "$branch" ] && { echo "No hay PR de release abierto."; exit 0; }
-          sleep 20  # da tiempo a que GitHub cree las ejecuciones del último push
-          for id in $(gh run list --repo "$GITHUB_REPOSITORY" --branch "$branch" --status action_required --json databaseId --jq '.[].databaseId'); do
-            gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$id/approve" && echo "Aprobada la ejecución $id"
+          # La rama sale de la salida de release-please; si no la hay (PR sin cambios),
+          # se busca por etiqueta. Se reintenta: las ejecuciones tardan en aparecer.
+          branch=$(printf '%s' "$PR_JSON" | jq -r '.headBranchName // empty' 2>/dev/null || true)
+          for attempt in 1 2 3 4 5 6; do
+            [ -z "$branch" ] && branch=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --label "autorelease: pending" --json headRefName --jq '.[0].headRefName // empty')
+            if [ -n "$branch" ]; then
+              sha=$(git ls-remote "https://github.com/$GITHUB_REPOSITORY" "refs/heads/$branch" | cut -f1)
+              ids=$(gh run list --repo "$GITHUB_REPOSITORY" --branch "$branch" --status action_required --json databaseId,headSha --jq ".[] | select(.headSha == \"$sha\") | .databaseId")
+              if [ -n "$ids" ]; then
+                for id in $ids; do
+                  gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$id/approve" && echo "Aprobada la ejecución $id"
+                done
+                exit 0
+              fi
+            fi
+            sleep 10
           done
+          echo "Nada que aprobar (o el CI ya corre sin aprobación)."
 
   publish:
     needs: release-please
