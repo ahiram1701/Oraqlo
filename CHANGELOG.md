@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/ahiram1701/Oraqlo/compare/v0.5.7...v0.6.0) (2026-11-16)
+
+
+### Novedades
+
+* nueva interfaz más clara y fácil de usar ([#42](https://github.com/ahiram1701/Oraqlo/issues/42)) ([7d903c1](https://github.com/ahiram1701/Oraqlo/commit/7d903c1e7bf55388f5a7f605f0cfc3e619ef491a))
+
 ## [0.5.7](https://github.com/ahiram1701/Oraqlo/compare/v0.5.6...v0.5.7) (2026-11-16)
 
 

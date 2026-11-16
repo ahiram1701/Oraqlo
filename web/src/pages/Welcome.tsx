@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ConnectionCard from "../components/ConnectionCard";
+import WebSearchCard from "../components/WebSearchCard";
 import { LOCAL_ONLY_NOTE, useSetup } from "../lib/setup";
 import { ImportCard } from "../components/SystemCards";
 import { Button, Card, ErrorNote, Notice, SectionTitle, cx, inputClass } from "../components/ui";
@@ -203,7 +204,7 @@ export default function Welcome() {
           <>
             <h2 className="text-lg font-semibold">¡Listo! Oraqlo ya puede pensar.</h2>
             <p className="mt-1 mb-4 text-sm text-muted">
-              Conectado con {providerLabel(choice ?? "")}. {result?.detail} Si quieres, abajo puedes preparar el celular o traer tu historial antiguo; también lo tienes luego en Ajustes.
+              Conectado con {providerLabel(choice ?? "")}. {result?.detail} Si quieres, abajo puedes activar la búsqueda en internet, preparar el celular o traer tu historial antiguo; todo es opcional y también lo tienes luego en Ajustes.
             </p>
             <Button onClick={finish}>Empezar a preguntar</Button>
           </>
@@ -212,6 +213,7 @@ export default function Welcome() {
 
       {step === 2 && (
         <>
+          <WebSearchCard />
           <ConnectionCard />
           <Card>
             <SectionTitle>¿Vienes de la versión anterior?</SectionTitle>

@@ -148,6 +148,8 @@ export interface ProvidersView {
   roles: RoleView[];
   /** Lo fijado a mano por rol en la configuración (sin lo heredado). */
   configured: Record<string, RoleSettings>;
+  /** Clave de la búsqueda web (ollama.com): sirve con cualquier proveedor de IA. */
+  web_search?: { api_key_env: string; key_present: boolean; key_hint: string | null };
 }
 
 export interface SetupStatus {
@@ -168,6 +170,8 @@ export interface Check {
   ok: boolean;
   detail: string;
   fix: string | null;
+  /** Función opcional: si falla se avisa, pero no es un error. */
+  optional?: boolean;
 }
 
 export type UpdateMode = ConfigView["updates_mode"];

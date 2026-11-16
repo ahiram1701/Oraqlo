@@ -10,6 +10,10 @@ from dataclasses import asdict, dataclass
 
 from oraqlo.config import ROLES, OraqloConfig
 from oraqlo.llm.registry import ProviderRegistry, provider_info
+from oraqlo.llm.websearch import OllamaWebClient
+
+WEB_SEARCH_CHECK = "Investigación web"
+WEB_SEARCH_FIX = "Pega tu clave de ollama.com en Ajustes > Búsqueda web."
 
 
 @dataclass
@@ -18,6 +22,13 @@ class Check:
     ok: bool
     detail: str
     fix: str | None = None
+    # Una función opcional que falta (p. ej. la búsqueda web) se avisa, pero no hace
+    # que el diagnóstico entero quede "con fallos".
+    optional: bool = False
+
+    @property
+    def blocking(self) -> bool:
+        return not self.ok and not self.optional
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -65,6 +76,35 @@ def probe_provider(registry: ProviderRegistry, name: str) -> Check:
     return Check(name, True, detail)
 
 
+def web_search_check(web: OllamaWebClient | None = None) -> Check:
+    """Sin gastar cuota: solo mira si hay clave. La búsqueda es opcional, así que su
+    ausencia no es un fallo grave, pero se avisa para que el usuario sepa activarla."""
+    web = web or OllamaWebClient()
+    if web.is_available():
+        return Check(WEB_SEARCH_CHECK, True, "Clave presente: Oraqlo puede investigar en internet.")
+    return Check(
+        WEB_SEARCH_CHECK,
+        False,
+        f"Sin clave ({web.api_key_env}): las preguntas se responden sin buscar en internet.",
+        WEB_SEARCH_FIX,
+        optional=True,
+    )
+
+
+def probe_web_search(web: OllamaWebClient | None = None) -> Check:
+    """Prueba real: una búsqueda mínima con la clave actual."""
+    web = web or OllamaWebClient()
+    if not web.is_available():
+        return web_search_check(web)
+    try:
+        web.search("Oraqlo", max_results=1)
+    except Exception as e:  # el error de OllamaUnavailableError ya es legible
+        return Check(
+            WEB_SEARCH_CHECK, False, str(e) or type(e).__name__, WEB_SEARCH_FIX, optional=True
+        )
+    return Check(WEB_SEARCH_CHECK, True, "La búsqueda web responde.")
+
+
 def run_checks(
     config: OraqloConfig,
     store=None,
@@ -100,4 +140,5 @@ def run_checks(
             )
         else:
             checks.append(probe_provider(registry, name))
+    checks.append(web_search_check())
     return checks
