@@ -123,13 +123,27 @@ class AnthropicProvider(LLMProvider):
             try:
                 response = api.create(**params)
             except anthropic.BadRequestError as e:
-                # Un esquema que la API no acepta no debe tumbar la llamada:
-                # se repite sin salida nativa y se valida a posteriori.
-                if "output_config" in params and "format" in params["output_config"]:
+                # Un esquema que la API no acepta no debe tumbar la llamada: se repite
+                # sin salida nativa y se valida a posteriori. Solo si el 400 trata del
+                # esquema; otro 400 (effort inválido, contexto demasiado largo) se
+                # informa tal cual en lugar de enmascararse con un reintento.
+                about_schema = any(
+                    w in str(e.message).lower() for w in ("schema", "format", "output_config")
+                )
+                if (
+                    about_schema
+                    and "output_config" in params
+                    and "format" in params["output_config"]
+                ):
                     params["output_config"].pop("format")
                     if not params["output_config"]:
                         params.pop("output_config")
-                    response = api.create(**params)
+                    try:
+                        response = api.create(**params)
+                    except anthropic.BadRequestError as again:
+                        raise LLMError(
+                            f"Petición rechazada por Anthropic: {again.message}"
+                        ) from again
                 else:
                     raise LLMError(f"Petición rechazada por Anthropic: {e.message}") from e
         except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as e:

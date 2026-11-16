@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { useEffect } from "react";
+import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useSetup } from "./components/ProvidersCard";
 import { cx } from "./components/ui";
 import { api, type Goal } from "./lib/api";
@@ -44,20 +45,20 @@ interface NavItem {
 const PRIMARY: NavItem[] = [
   { to: "/", label: "Preguntar", icon: "ask", end: true },
   { to: "/objetivos", label: "Objetivos", icon: "goals" },
-  { to: "/ledger", label: "Ledger", icon: "ledger" },
+  { to: "/ledger", label: "Predicciones", icon: "ledger" },
   { to: "/practica", label: "Práctica", icon: "practice" },
 ];
-const SECONDARY: NavItem[] = [
-  { to: "/caso", label: "Caso", icon: "case" },
-  { to: "/calibracion", label: "Calibración", icon: "calibration" },
-  { to: "/historial", label: "Historial", icon: "history" },
-  { to: "/ajustes", label: "Ajustes", icon: "settings" },
+const SECONDARY: (NavItem & { hint: string })[] = [
+  { to: "/historial", label: "Historial", icon: "history", hint: "Tus análisis e informes anteriores" },
+  { to: "/calibracion", label: "Calibración", icon: "calibration", hint: "Qué tan acertado es Oraqlo" },
+  { to: "/caso", label: "Caso", icon: "case", hint: "Avanzado: define tú las jugadas" },
+  { to: "/ajustes", label: "Ajustes", icon: "settings", hint: "Modelos, celular, avisos" },
 ];
 
 const TITLES: [RegExp, string][] = [
   [/^\/$/, "Preguntar"],
   [/^\/objetivos/, "Objetivos"],
-  [/^\/ledger/, "Ledger"],
+  [/^\/ledger/, "Predicciones"],
   [/^\/practica/, "Práctica"],
   [/^\/caso/, "Caso"],
   [/^\/calibracion/, "Calibración"],
@@ -137,6 +138,7 @@ function More() {
         <NavLink key={item.to} to={item.to} className="flex flex-col gap-2 rounded-2xl border border-line bg-surface p-4">
           <Icon name={item.icon} />
           <span className="text-sm font-medium">{item.label}</span>
+          <span className="text-xs text-muted">{item.hint}</span>
         </NavLink>
       ))}
     </div>
@@ -146,6 +148,16 @@ function More() {
 export default function App() {
   const location = useLocation();
   const title = TITLES.find(([re]) => re.test(location.pathname))?.[1] ?? "Oraqlo";
+  // Tocar un aviso con la app abierta: el service worker pide navegar sin recargar.
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    const onMessage = (e: MessageEvent) => {
+      if (e.data?.type === "navigate" && typeof e.data.url === "string") navigate(e.data.url);
+    };
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+  }, [navigate]);
   // Primer arranque: sin un modelo listo, todo empieza por la bienvenida.
   const setup = useSetup();
   if (setup.data?.needs_setup && location.pathname !== "/bienvenida") return <Navigate to="/bienvenida" replace />;

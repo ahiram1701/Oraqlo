@@ -21,7 +21,7 @@ No "predice todo" ni "controla la realidad": la realidad es caótica, parcialmen
 |---|---|
 | **Preguntar** | Previsión rápida (1 llamada), análisis completo (el LLM redacta acciones y escenarios, simula y debate) o **lograr objetivo** (plan, palancas, hitos y *uplift* medible). Con investigación web opcional. |
 | **Objetivos** | Seguimiento: check-ins en lenguaje natural, trayectoria de P(objetivo), hitos con aviso de vencidos, re-planificación y cierre. |
-| **Ledger** | Predicciones abiertas: las resuelves con un toque y alimentan la calibración. |
+| **Predicciones** | Lo que Oraqlo previó y aún no sabes cómo acabó: lo marcas con un toque y así aprende (calibración). |
 | **Práctica** | Auto-mejora con Polymarket, solo lectura. Oraqlo predice sin ver el precio y compara su Brier con el de la multitud. Corre sola en el servidor. |
 | **Calibración** | Diagrama de fiabilidad y Brier por fuente/modelo. |
 | **Caso · Historial · Ajustes** | Editor de casos, informes en Markdown, roles, proveedores, notificaciones y actualizaciones. |

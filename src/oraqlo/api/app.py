@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from pydantic import BaseModel, Field
 
 from oraqlo import __version__
-from oraqlo.api.auth import AuthError, identify
+from oraqlo.api.auth import AuthError, check_request, identify
 from oraqlo.casefile import CaseError, case_to_dict, parse_case, template_json
 from oraqlo.goaltrack import MILESTONE_STATUSES, GoalTracker
 from oraqlo.services.core import OraqloService
@@ -43,7 +43,7 @@ from oraqlo.services.network import (
 from oraqlo.services.notify import SETTING as NOTIFY_SETTING
 from oraqlo.services.notify import DesktopNotifier
 from oraqlo.services.notify import supported as notify_supported
-from oraqlo.services.push import PushService, job_notification
+from oraqlo.services.push import PushService, job_notification, practice_alert
 from oraqlo.services.scheduler import PeriodicTask, Scheduler
 from oraqlo.services.serialize import goal_json
 from oraqlo.services.userconfig import ConfigError, apply_changes, set_secret, toml_roles
@@ -108,6 +108,17 @@ class PracticeIn(BaseModel):
 # ── fábrica ──────────────────────────────────────────────────────────────
 
 
+JOB_RETENTION_DAYS = 60
+
+
+def prune_backups(backups_dir: Path, daily: int = 7, pre_update: int = 3) -> None:
+    """Conserva los últimos `daily` backups diarios y `pre_update` previos a updates."""
+    for pattern, keep in (("daily-*.db", daily), ("pre-*.db", pre_update)):
+        files = sorted(backups_dir.glob(pattern), key=lambda f: f.stat().st_mtime)
+        for old in files[: max(0, len(files) - keep)]:
+            old.unlink(missing_ok=True)
+
+
 class PortChange(BaseModel):
     port: int = Field(ge=MIN_PORT, le=MAX_PORT)
 
@@ -161,6 +172,16 @@ def create_app(
     started = time.time()
 
     def notify_job(job: dict) -> None:
+        if job.get("kind") == "practice":
+            # Corre sola cada hora: se cuentan los fallos seguidos y solo se avisa al 2.º.
+            failures = 0
+            if job.get("status") == "failed":
+                failures = int(service.store.settings.get("practice.failures", 0)) + 1
+            service.store.settings.set("practice.failures", failures)
+            alert = practice_alert(job, failures)
+            if alert:
+                push.send(*alert, tag="practice")
+            return
         note = job_notification(job)
         if note:
             push.send(*note, tag=f"job-{job.get('id')}")
@@ -307,8 +328,22 @@ def create_app(
     def daily_backup() -> None:
         stamp = time.strftime("%Y%m%d")
         service.store.db.backup_to(cfg.backups_dir / f"daily-{stamp}.db")
-        for old in sorted(cfg.backups_dir.glob("daily-*.db"))[:-7]:
-            old.unlink(missing_ok=True)
+        prune_backups(cfg.backups_dir)
+
+    def cleanup() -> None:
+        """Lo que crecería sin límite: jobs y eventos viejos, hitos ya avisados."""
+        removed = service.store.db.prune_jobs(days=JOB_RETENTION_DAYS)
+        if removed:
+            log.info("Limpieza: %d jobs de más de %d días", removed, JOB_RETENTION_DAYS)
+        notified = settings.get("push.notified_milestones", [])
+        if len(notified) > 500:
+            settings.set("push.notified_milestones", notified[-500:])
+
+    scheduler.add(
+        PeriodicTask(
+            "cleanup", lambda: timedelta(hours=24), lambda: True, cleanup, run_on_start=True
+        )
+    )
 
     scheduler.add(
         PeriodicTask(
@@ -392,6 +427,7 @@ def create_app(
     @app.middleware("http")
     async def auth(request: Request, call_next):
         try:
+            check_request(request)
             request.state.identity = identify(request, service.config.server.allowed_users)
         except AuthError as e:
             return JSONResponse({"detail": e.detail}, status_code=e.status)
@@ -433,7 +469,7 @@ def create_app(
     def update_check() -> dict:
         return check_updates()
 
-    @app.post("/api/update/apply")
+    @app.post("/api/update/apply", dependencies=[Depends(require_local)])
     def update_apply() -> dict:
         """Modo `notify`: el usuario aprueba; se prepara y se activa cuando no haya trabajos."""
         if not managed:
@@ -447,7 +483,7 @@ def create_app(
             "detail": result["detail"] + " Se activará cuando no haya análisis en curso.",
         }
 
-    @app.post("/api/update/rollback")
+    @app.post("/api/update/rollback", dependencies=[Depends(require_local)])
     def update_rollback() -> dict:
         """Vuelve a la versión anterior instalada y reinicia."""
         if not managed:
@@ -513,7 +549,7 @@ def create_app(
             set_published_https(app_dir, None)
         return tailscale_info()
 
-    @app.put("/api/server/port")
+    @app.put("/api/server/port", dependencies=[Depends(require_local)])
     def change_port(body: PortChange) -> dict:
         """Guarda el puerto nuevo y reinicia: el lanzador arranca Oraqlo en él."""
         if not managed:
@@ -652,8 +688,27 @@ def create_app(
 
     @app.get("/api/doctor")
     def doctor() -> dict:
-        checks = run_checks(service.config, service.store, ping=True, registry=service.registry)
-        return {"ok": all(c.ok for c in checks), "checks": [c.as_dict() for c in checks]}
+        checks = [
+            c.as_dict()
+            for c in run_checks(service.config, service.store, ping=True, registry=service.registry)
+        ]
+        names = {
+            "backup": "Backup diario",
+            "practice": "Práctica automática",
+            "updates": "Actualizaciones",
+            "milestones": "Avisos de hitos",
+            "cleanup": "Limpieza",
+        }
+        for task, err in scheduler.errors().items():
+            checks.append(
+                {
+                    "name": names.get(task, task),
+                    "ok": False,
+                    "detail": f"Falló la última vez ({err['at'][:16].replace('T', ' ')}): {err['error']}",
+                    "fix": "Se reintenta sola en unos minutos.",
+                }
+            )
+        return {"ok": all(c["ok"] for c in checks), "checks": checks}
 
     @app.post("/api/import-legacy", dependencies=[Depends(require_local)])
     def import_legacy_files(body: LegacyIn) -> dict:
@@ -775,13 +830,18 @@ def create_app(
             while True:
                 if await request.is_disconnected():
                     return
-                events = runner.events(job_id, cursor)
+                # SQLite es síncrono (y comparte cerrojo con los backups): fuera del
+                # bucle de eventos, para no congelar las demás peticiones.
+                events = await asyncio.to_thread(runner.events, job_id, cursor)
                 for ev in events:
                     cursor = ev["seq"]
                     payload = json.dumps(ev["data"], ensure_ascii=False)
-                    yield f"id: {ev['seq']}\nevent: {ev['type']}\ndata: {payload}\n\n"
-                job = runner.get(job_id) or {}
-                if job.get("status") in TERMINAL and not runner.events(job_id, cursor):
+                    # "error" es el evento nativo de EventSource (cortes): se renombra.
+                    kind = "job_error" if ev["type"] == "error" else ev["type"]
+                    yield f"id: {ev['seq']}\nevent: {kind}\ndata: {payload}\n\n"
+                job = await asyncio.to_thread(runner.get, job_id) or {}
+                pending = await asyncio.to_thread(runner.events, job_id, cursor)
+                if job.get("status") in TERMINAL and not pending:
                     final = {
                         "status": job["status"],
                         "error": job.get("error"),
@@ -942,10 +1002,22 @@ def create_app(
 
     @app.post("/api/push/test")
     def push_test() -> dict:
-        sent = push.send("Oraqlo", "Las notificaciones funcionan en este dispositivo.", "/ajustes")
+        """Solo Web Push (los avisos de Windows tienen su propia prueba): así el
+        resultado dice la verdad sobre los dispositivos."""
+        sent, error = push.send_web(
+            "Oraqlo", "Las notificaciones funcionan en este dispositivo.", "/ajustes", tag="test"
+        )
         if not sent:
-            raise HTTPException(409, "No hay dispositivos suscritos (o ninguno respondió).")
+            raise HTTPException(409, error or "Ningún dispositivo recibió el aviso.")
         return {"delivered": sent}
+
+    @app.get("/api/push/status")
+    def push_status(endpoint: str = "") -> dict:
+        return {
+            "subscribed": bool(endpoint) and push.is_subscribed(endpoint),
+            "devices": push.count(),
+            "last_error": settings.get("push.last_error"),
+        }
 
     # ── práctica ──────────────────────────────────────────────────────────
 

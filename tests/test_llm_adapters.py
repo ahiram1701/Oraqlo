@@ -143,7 +143,7 @@ def test_ollama_401_no_reintenta(monkeypatch):
         raise urllib.error.HTTPError(request.full_url, 401, "no", None, io.BytesIO(b""))
 
     monkeypatch.setattr(ollama.urllib.request, "urlopen", fake_urlopen)
-    with pytest.raises(ollama.OllamaUnavailableError, match="Autenticación"):
+    with pytest.raises(ollama.OllamaUnavailableError, match="Inicia sesión en Ollama"):
         ollama.OllamaProvider().chat([ChatMessage("user", "x")], "m")
     assert len(calls) == 1
 
@@ -263,3 +263,61 @@ def test_preset_desconocido():
 
     with pytest.raises(ValueError):
         OpenAICompatProvider(preset="inventado")
+
+
+def test_ollama_timeout_y_500_local_no_se_reintentan(monkeypatch):
+    from oraqlo.llm import ollama
+
+    calls = []
+
+    def slow(request, timeout):
+        calls.append(1)
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(ollama.urllib.request, "urlopen", slow)
+    with pytest.raises(ollama.OllamaUnavailableError, match="tardó más de 300 s"):
+        ollama.OllamaProvider().chat([ChatMessage("user", "x")], "m")
+    assert len(calls) == 1  # antes: 3 intentos de 5 min cada uno
+
+    calls.clear()
+
+    def no_memory(request, timeout):
+        calls.append(1)
+        raise urllib.error.HTTPError(request.full_url, 500, "x", None, io.BytesIO(b"out of memory"))
+
+    monkeypatch.setattr(ollama.urllib.request, "urlopen", no_memory)
+    with pytest.raises(ollama.OllamaUnavailableError, match="out of memory"):
+        ollama.OllamaProvider().chat([ChatMessage("user", "x")], "m")
+    assert len(calls) == 1
+
+
+def test_openai_modelo_de_razonamiento_sin_temperature():
+    import httpx
+    import openai
+
+    from oraqlo.llm.openai_compat import OpenAICompatProvider
+
+    calls: list[dict] = []
+
+    def create(**params):
+        calls.append(dict(params))
+        if "temperature" in params:
+            request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+            raise openai.BadRequestError(
+                "Unsupported value: 'temperature' does not support 0.2 with this model.",
+                response=httpx.Response(400, request=request),
+                body=None,
+            )
+        return SimpleNamespace(
+            id="c1",
+            model=params["model"],
+            choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
+        )
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    provider = OpenAICompatProvider(preset="openai", client=client)
+    assert provider.chat([ChatMessage("user", "x")], "gpt-5", temperature=0.2).content == "ok"
+    assert "temperature" in calls[0] and "temperature" not in calls[1]
+    calls.clear()
+    provider.chat([ChatMessage("user", "x")], "gpt-5", temperature=0.2)
+    assert len(calls) == 1 and "temperature" not in calls[0]  # lo recuerda por modelo

@@ -130,12 +130,29 @@ class Database:
                     f"(esquema v{current}, esta versión conoce hasta v{len(MIGRATIONS)})."
                 )
             for version, script in enumerate(MIGRATIONS[current:], start=current + 1):
-                # executescript hace COMMIT implícito: se envuelve a mano.
-                self.conn.executescript(
-                    f"BEGIN;\n{script}\nPRAGMA user_version = {version};\nCOMMIT;"
-                )
+                # executescript hace COMMIT implícito: se envuelve a mano. Si falla a
+                # medias se deshace; si no, la conexión quedaría dentro de la transacción.
+                try:
+                    self.conn.executescript(
+                        f"BEGIN;\n{script}\nPRAGMA user_version = {version};\nCOMMIT;"
+                    )
+                except Exception:
+                    if self.conn.in_transaction:
+                        self.conn.execute("ROLLBACK")
+                    raise
                 applied += 1
         return applied
+
+    def prune_jobs(self, days: int) -> int:
+        """Borra los jobs terminados hace más de `days` días (y sus eventos)."""
+        cutoff = f"-{int(days)} days"
+        old = (
+            "SELECT id FROM jobs WHERE status IN ('done', 'failed', 'cancelled') "
+            "AND COALESCE(finished_at, created_at) < datetime('now', ?)"
+        )
+        with self.tx() as conn:
+            conn.execute(f"DELETE FROM job_events WHERE job_id IN ({old})", (cutoff,))
+            return conn.execute(f"DELETE FROM jobs WHERE id IN ({old})", (cutoff,)).rowcount
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:

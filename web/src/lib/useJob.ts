@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { api, type Job, type JobEvent, type JobStatus } from "./api";
+import { ApiError, api, type Job, type JobEvent, type JobStatus } from "./api";
 
 export interface JobState<R = any> {
   events: JobEvent[];
@@ -10,12 +10,18 @@ export interface JobState<R = any> {
   runId: string | null;
 }
 
+const EVENT_TYPES = ["log", "phase", "forecast", "turn", "verdict", "revision", "fact"];
+const TERMINAL: string[] = ["done", "failed", "cancelled"];
+const REFRESH = ["ledger", "goals", "runs", "calibration", "practice", "jobs"];
+
 /**
- * Sigue un job por SSE. EventSource reconecta solo y reenvía Last-Event-ID,
- * así que una pantalla bloqueada o un cambio de red no pierden eventos:
- * el servidor reanuda desde el último recibido.
+ * Sigue un job por SSE. Ante cortes de red, EventSource reconecta solo y el
+ * servidor reanuda desde el último evento. Pero si el servidor responde algo que
+ * no es 200 (502 mientras Oraqlo se reinicia, 404 de un job que ya no existe,
+ * 401), EventSource se rinde para siempre: entonces se consulta el job y se
+ * reconecta con espera creciente, o se olvida (`onGone`) si ya no existe.
  */
-export function useJob<R = any>(jobId: string | null | undefined): JobState<R> {
+export function useJob<R = any>(jobId: string | null | undefined, onGone?: () => void): JobState<R> {
   const qc = useQueryClient();
   const [state, setState] = useState<JobState<R>>({
     events: [],
@@ -25,6 +31,8 @@ export function useJob<R = any>(jobId: string | null | undefined): JobState<R> {
     runId: null,
   });
   const seen = useRef(new Set<number>());
+  const gone = useRef(onGone);
+  gone.current = onGone;
 
   useEffect(() => {
     if (!jobId) {
@@ -33,41 +41,77 @@ export function useJob<R = any>(jobId: string | null | undefined): JobState<R> {
     }
     seen.current = new Set();
     setState({ events: [], status: "connecting", result: null, error: null, runId: null });
-    const source = new EventSource(`/api/jobs/${jobId}/events`);
     let closed = false;
+    let source: EventSource | null = null;
+    let lastSeq = 0;
+    let attempt = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-    const onEvent = (type: string) => (ev: MessageEvent) => {
-      const seq = Number(ev.lastEventId);
-      if (seq && seen.current.has(seq)) return;
-      if (seq) seen.current.add(seq);
-      const data = JSON.parse(ev.data);
-      setState((s) => ({ ...s, status: "running", events: [...s.events, { seq, type, data }] }));
-    };
-    for (const type of ["log", "phase", "forecast", "turn", "verdict", "revision", "fact", "error"]) {
-      source.addEventListener(type, onEvent(type));
-    }
-    source.addEventListener("end", async (ev) => {
+    const finish = async (status: JobStatus, error: string | null, runId: string | null) => {
       closed = true;
-      source.close();
-      const end = JSON.parse((ev as MessageEvent).data);
+      source?.close();
       let result: R | null = null;
       try {
         result = ((await api.get<Job<R>>(`/jobs/${jobId}`)).result ?? null) as R | null;
       } catch {
         /* el resultado se puede reconsultar luego */
       }
-      setState((s) => ({ ...s, status: end.status, error: end.error, runId: end.run_id, result }));
-      // Refresca las vistas que el job pudo cambiar.
-      for (const key of ["ledger", "goals", "runs", "calibration", "practice", "jobs"]) {
-        qc.invalidateQueries({ queryKey: [key] });
-      }
-    });
-    source.onerror = () => {
-      if (!closed) setState((s) => ({ ...s, status: s.status === "connecting" ? "connecting" : s.status }));
+      setState((s) => ({ ...s, status, error, runId, result }));
+      for (const key of REFRESH) qc.invalidateQueries({ queryKey: [key] });
     };
+
+    const onEvent = (type: string) => (ev: MessageEvent) => {
+      const seq = Number(ev.lastEventId);
+      if (seq && seen.current.has(seq)) return;
+      if (seq) {
+        seen.current.add(seq);
+        lastSeq = Math.max(lastSeq, seq);
+      }
+      attempt = 0;
+      const data = JSON.parse(ev.data);
+      setState((s) => ({ ...s, status: "running", events: [...s.events, { seq, type, data }] }));
+    };
+
+    const recover = async () => {
+      if (closed) return;
+      try {
+        const job = await api.get<Job<R>>(`/jobs/${jobId}`);
+        if (TERMINAL.includes(job.status)) return finish(job.status, job.error, job.run_id);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) {
+          closed = true;
+          setState({ events: [], status: "idle", result: null, error: null, runId: null });
+          gone.current?.();
+          return;
+        }
+      }
+      // Sigue en curso (o el servidor aún no responde): reintentar con espera creciente.
+      attempt += 1;
+      timer = setTimeout(open, Math.min(30_000, 1000 * 2 ** attempt));
+    };
+
+    function open() {
+      if (closed) return;
+      source = new EventSource(`/api/jobs/${jobId}/events${lastSeq ? `?after=${lastSeq}` : ""}`);
+      for (const type of EVENT_TYPES) source.addEventListener(type, onEvent(type));
+      // El servidor llama "job_error" a sus errores: "error" es el evento nativo de
+      // EventSource (cortes de conexión), que no trae datos.
+      source.addEventListener("job_error", onEvent("error"));
+      source.addEventListener("end", (ev) => {
+        const end = JSON.parse((ev as MessageEvent).data);
+        void finish(end.status, end.error, end.run_id);
+      });
+      source.onerror = () => {
+        if (closed || !source || source.readyState !== EventSource.CLOSED) return; // reconecta solo
+        void recover();
+      };
+    }
+
+    open();
     return () => {
       closed = true;
-      source.close();
+      clearTimeout(timer);
+      source?.close();
     };
   }, [jobId, qc]);
 

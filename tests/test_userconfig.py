@@ -209,3 +209,37 @@ def test_volver_a_la_version_anterior(tmp_path, monkeypatch):
         r = client.post("/api/update/rollback").json()
         assert r == {"version": "0.2.2", "restarting": True, "detail": "Volviendo a 0.2.2..."}
         assert app.state.restart_requested is True
+
+
+def test_una_web_cualquiera_no_puede_usar_oraqlo(env):
+    client, *_ = env
+    # Un sitio malicioso abierto en el PC hace fetch a 127.0.0.1:
+    cross = {"Origin": "https://malo.example", "Sec-Fetch-Site": "cross-site"}
+    assert client.post("/api/setup/skip", headers=cross).status_code == 403
+    assert (
+        client.post(
+            "/api/push/subscribe", json={}, headers={"Origin": "http://127.0.0.1:8765"}
+        ).status_code
+        == 403
+    )
+    assert client.post("/api/setup/skip", headers={"Origin": "null"}).status_code == 403
+    # DNS rebinding: llega con su propio dominio en Host.
+    assert client.get("/api/health", headers={"Host": "malo.example"}).status_code == 400
+    # La propia app (mismo origen) y las lecturas siguen funcionando.
+    same = {"Origin": "http://127.0.0.1", "Sec-Fetch-Site": "same-origin"}
+    assert client.post("/api/setup/skip", headers=same).status_code == 200
+    assert client.get("/api/health", headers=cross).status_code == 200
+
+
+def test_desde_la_tailnet_funciona_pero_no_reinicia_ni_hace_rollback(env):
+    client, *_ = env
+    phone = {**REMOTE, "Host": "pc.tail1.ts.net:8443", "Origin": "https://pc.tail1.ts.net:8443"}
+    assert client.get("/api/health", headers=phone).status_code == 200
+    assert client.post("/api/setup/skip", headers=phone).status_code == 200
+    for method, url, body in [
+        ("post", "/api/update/rollback", None),
+        ("post", "/api/update/apply", None),
+        ("put", "/api/server/port", {"port": 8800}),
+    ]:
+        r = client.request(method, url, json=body, headers=phone)
+        assert r.status_code == 403, url

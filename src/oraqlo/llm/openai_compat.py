@@ -61,6 +61,7 @@ class OpenAICompatProvider(LLMProvider):
         self.timeout_s = timeout_s
         self.max_retries = max_retries
         self._client = client
+        self._fixed_temperature: set[str] = set()  # modelos que no aceptan temperature
 
     def _get_client(self) -> Any:
         if self._client is None:
@@ -92,8 +93,9 @@ class OpenAICompatProvider(LLMProvider):
         params: dict[str, Any] = {
             "model": model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
-            "temperature": temperature,
         }
+        if model not in self._fixed_temperature:
+            params["temperature"] = temperature
         schema = kwargs.get("json_schema")
         if schema is not None and self.supports_json_schema:
             params["response_format"] = {
@@ -106,7 +108,7 @@ class OpenAICompatProvider(LLMProvider):
             params["max_tokens"] = kwargs["max_tokens"]
 
         try:
-            response = self._get_client().chat.completions.create(**params)
+            response = self._create(params)
         except (openai.AuthenticationError, openai.PermissionDeniedError) as e:
             raise ProviderUnavailableError(
                 f"{self.name} rechazó la credencial: revisa {self.api_key_env}."
@@ -124,6 +126,26 @@ class OpenAICompatProvider(LLMProvider):
         return LLMResponse(
             content=choice.message.content or "", model=response.model, raw={"id": response.id}
         )
+
+    def _create(self, params: dict[str, Any]) -> Any:
+        """Crea la respuesta adaptándose a los modelos de razonamiento (o-series,
+        gpt-5…), que rechazan `temperature` y `max_tokens` con un 400."""
+        import openai
+
+        client = self._get_client()
+        for _ in range(3):
+            try:
+                return client.chat.completions.create(**params)
+            except openai.BadRequestError as e:
+                message = str(e.message).lower()
+                if "temperature" in message and "temperature" in params:
+                    params.pop("temperature")
+                    self._fixed_temperature.add(params["model"])
+                elif "max_tokens" in message and "max_tokens" in params:
+                    params["max_completion_tokens"] = params.pop("max_tokens")
+                else:
+                    raise LLMError(f"{self.name} rechazó la petición: {e.message}") from e
+        return client.chat.completions.create(**params)
 
     def list_models(self) -> list[str]:
         import openai

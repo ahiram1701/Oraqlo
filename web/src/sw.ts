@@ -55,29 +55,56 @@ self.addEventListener("push", (event) => {
   } catch {
     data = { body: event.data?.text() };
   }
-  event.waitUntil(
-    self.registration.showNotification(data.title ?? "Oraqlo", {
-      body: data.body ?? "",
-      icon: "/icons/icon-192.png",
-      badge: "/icons/icon-192.png",
-      tag: data.tag,
-      data: { url: data.url ?? "/" },
-    }),
-  );
+  const options: NotificationOptions = {
+    body: data.body ?? "",
+    icon: "/icons/icon-192.png",
+    badge: "/icons/icon-192.png",
+    data: { url: data.url ?? "/" },
+  };
+  if (data.tag) options.tag = data.tag; // un tag vacío haría que unos avisos taparan a otros
+  event.waitUntil(self.registration.showNotification(data.title ?? "Oraqlo", options));
 });
 
+// Al tocar un aviso: si la app ya está abierta, se le pide que navegue dentro de
+// la SPA (sin recargar); si no, se abre en esa pantalla.
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const url = (event.notification.data?.url as string) ?? "/";
   event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
-      for (const client of list) {
-        if ("focus" in client) {
-          client.navigate(url);
-          return client.focus();
+    (async () => {
+      const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      const client = windows.find((c) => c.visibilityState === "visible") ?? windows[0];
+      if (client) {
+        client.postMessage({ type: "navigate", url });
+        try {
+          await client.focus();
+          return;
+        } catch {
+          /* sin permiso para enfocar: se abre una ventana */
         }
       }
-      return self.clients.openWindow(url);
-    }),
+      await self.clients.openWindow(url);
+    })().catch(() => self.clients.openWindow(url)),
+  );
+});
+
+// El navegador puede renovar la suscripción por su cuenta: se rehace con la clave
+// del servidor y se registra, para no dejar de recibir avisos sin saberlo.
+self.addEventListener("pushsubscriptionchange", (event) => {
+  const change = event as Event & { waitUntil(p: Promise<unknown>): void };
+  change.waitUntil(
+    (async () => {
+      const res = await fetch("/api/push/key");
+      const { public_key } = (await res.json()) as { public_key: string };
+      const padding = "=".repeat((4 - (public_key.length % 4)) % 4);
+      const raw = atob((public_key + padding).replace(/-/g, "+").replace(/_/g, "/"));
+      const key = Uint8Array.from(raw, (c) => c.charCodeAt(0));
+      const sub = await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+      await fetch("/api/push/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(sub.toJSON()),
+      });
+    })().catch(() => undefined),
   );
 });

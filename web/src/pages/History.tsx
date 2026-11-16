@@ -1,3 +1,5 @@
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { ProbBars } from "../components/ProbBars";
@@ -12,7 +14,11 @@ export function HistoryList() {
     <Card>
       <SectionTitle>Historial de análisis</SectionTitle>
       <ErrorNote error={error} />
-      {data && data.length === 0 && <Empty>Todavía no hay análisis.</Empty>}
+      {data && data.length === 0 && (
+        <Empty>
+          Todavía no hay análisis. Lanza uno en <Link to="/" className="text-accent underline">Preguntar</Link>: su informe completo quedará aquí.
+        </Empty>
+      )}
       <ul className="divide-y divide-line">
         {data?.map((r) => (
           <li key={r.id}>
@@ -80,7 +86,9 @@ export function RunDetail() {
       )}
       <Card>
         <SectionTitle>Informe</SectionTitle>
-        <pre className="overflow-x-auto text-xs whitespace-pre-wrap text-fg/90">{d.markdown}</pre>
+        <div className="prose-report text-sm text-fg/90">
+          <Markdown remarkPlugins={[remarkGfm]}>{d.markdown}</Markdown>
+        </div>
       </Card>
     </div>
   );

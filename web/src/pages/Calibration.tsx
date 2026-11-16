@@ -19,7 +19,7 @@ export default function Calibration() {
           por debajo, exceso de confianza.
         </p>
         {data && data.n === 0 ? (
-          <Empty>Resuelve predicciones en el Ledger para ver la calibración.</Empty>
+          <Empty>Aún no hay datos. Cuando sepas cómo acabó una previsión, márcalo en Predicciones y aquí verás qué tan acertado es Oraqlo.</Empty>
         ) : (
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">

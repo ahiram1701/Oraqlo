@@ -8,9 +8,9 @@ import { ask, pct, type AskMode } from "../lib/api";
 import { useJob, useStoredJob } from "../lib/useJob";
 
 const MODES: { id: AskMode; title: string; hint: string }[] = [
-  { id: "forecast", title: "Previsión", hint: "Escenarios con probabilidad · 1 llamada" },
-  { id: "full", title: "Análisis completo", hint: "Acciones, simulación y debate del panel" },
-  { id: "goal", title: "Lograr objetivo", hint: "Plan, hitos y uplift medible" },
+  { id: "forecast", title: "Previsión", hint: "Qué puede pasar, con la probabilidad de cada escenario. Rápido." },
+  { id: "full", title: "Análisis completo", hint: "Propone jugadas, simula futuros y un panel las debate hasta recomendar una. Tarda unos minutos." },
+  { id: "goal", title: "Lograr objetivo", hint: "Un plan con hitos y cuánto sube tu probabilidad de lograrlo. Luego lo sigues en Objetivos." },
 ];
 
 const HORIZONS = [7, 30, 90, 180, 365];
@@ -21,7 +21,7 @@ export default function Ask() {
   const [horizon, setHorizon] = useState(90);
   const [research, setResearch] = useState(true);
   const [jobId, setJobId] = useStoredJob("ask");
-  const job = useJob(jobId);
+  const job = useJob(jobId, () => setJobId(null));
 
   const submit = useMutation({
     mutationFn: () => ask(question.trim(), mode, horizon, research),
@@ -57,11 +57,13 @@ export default function Ask() {
                 : "Escribe tu pregunta. Ej.: ¿Bajará el precio del alquiler en mi ciudad este año?"
             }
             value={question}
+            maxLength={2000}
             onChange={(e) => setQuestion(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) e.currentTarget.form?.requestSubmit();
             }}
           />
+          {question.length > 1800 && <p className="-mt-2 text-right text-xs text-muted">{question.length} / 2000</p>}
           <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Modo">
             {MODES.map((m) => (
               <button
@@ -76,10 +78,10 @@ export default function Ask() {
                 )}
               >
                 <span className="block text-sm font-medium">{m.title}</span>
-                <span className="hidden text-xs text-muted sm:block">{m.hint}</span>
               </button>
             ))}
           </div>
+          <p className="-mt-2 text-xs text-muted">{MODES.find((m) => m.id === mode)?.hint}</p>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <label className="flex items-center gap-2 text-sm text-muted">
               Horizonte
