@@ -2,9 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ConnectionCard from "../components/ConnectionCard";
-import { LOCAL_ONLY_NOTE, useSetup } from "../components/ProvidersCard";
+import { LOCAL_ONLY_NOTE, useSetup } from "../lib/setup";
 import { ImportCard } from "../components/SystemCards";
-import { Button, Card, ErrorNote, SectionTitle, cx, inputClass } from "../components/ui";
+import { Button, Card, ErrorNote, Notice, SectionTitle, cx, inputClass } from "../components/ui";
 import { api, PROVIDER_INFO, providerLabel, type Check, type ProvidersView } from "../lib/api";
 
 const FEATURED = ["anthropic", "openai", "gemini", "openrouter", "ollama-local"];
@@ -87,7 +87,11 @@ export default function Welcome() {
               Oraqlo piensa con un modelo de inteligencia artificial. Elige cuál usar: puedes cambiarlo cuando quieras en
               Ajustes, incluso uno distinto para cada rol del debate.
             </p>
-            {!local && <p className="mb-3 rounded-xl bg-warn/10 p-3 text-sm text-warn">{LOCAL_ONLY_NOTE}</p>}
+            {!local && (
+              <Notice tone="warn" className="mb-3">
+                {LOCAL_ONLY_NOTE}
+              </Notice>
+            )}
             <div className="grid gap-2 sm:grid-cols-2">
               {[...FEATURED, ...(more ? OTHERS : [])].map((name) => (
                 <button
@@ -167,9 +171,9 @@ export default function Welcome() {
                     </select>
                   </label>
                 ) : models.isError || models.data ? (
-                  <p className="rounded-xl bg-warn/10 p-3 text-sm text-warn">
+                  <Notice tone="warn">
                     No encuentro modelos. Abre {providerLabel(entry.name)} y descarga uno; luego vuelve a intentarlo.
-                  </p>
+                  </Notice>
                 ) : (
                   <p className="text-sm text-muted">Buscando tus modelos…</p>
                 )}
@@ -199,7 +203,7 @@ export default function Welcome() {
           <>
             <h2 className="text-lg font-semibold">¡Listo! Oraqlo ya puede pensar.</h2>
             <p className="mt-1 mb-4 text-sm text-muted">
-              Conectado con {providerLabel(choice ?? "")}. {result?.detail} Dos cosas opcionales antes de empezar:
+              Conectado con {providerLabel(choice ?? "")}. {result?.detail} Si quieres, abajo puedes preparar el celular o traer tu historial antiguo; también lo tienes luego en Ajustes.
             </p>
             <Button onClick={finish}>Empezar a preguntar</Button>
           </>

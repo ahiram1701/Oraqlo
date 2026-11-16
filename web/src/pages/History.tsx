@@ -1,30 +1,82 @@
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
-import { ProbBars } from "../components/ProbBars";
-import { Badge, Card, Empty, ErrorNote, SectionTitle } from "../components/ui";
+import { useMemo, useState } from "react";
+import Markdown from "react-markdown";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import remarkGfm from "remark-gfm";
+import { Icon } from "../components/icons";
+import { Turn } from "../components/JobView";
+import { ResultCard } from "../components/ResultCard";
+import { Badge, Button, Card, Empty, ErrorNote, LinkButton, SectionTitle, Skeleton, cx, inputClass } from "../components/ui";
 import { api, fmtDate, type RunSummary } from "../lib/api";
 
-const KIND = { forecast: "Previsión", cycle: "Análisis", goal: "Objetivo" } as const;
+const KIND: Record<string, string> = { forecast: "Previsión", cycle: "Análisis", goal: "Objetivo" };
+const MODE_FOR_KIND: Record<string, string> = { forecast: "forecast", cycle: "full", goal: "goal" };
 
 export function HistoryList() {
-  const { data, error } = useQuery({ queryKey: ["runs"], queryFn: () => api.get<RunSummary[]>("/runs") });
+  const { data, error, isLoading } = useQuery({ queryKey: ["runs"], queryFn: () => api.get<RunSummary[]>("/runs") });
+  const [query, setQuery] = useState("");
+  const [kind, setKind] = useState<string>("all");
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return (data ?? []).filter((r) => (kind === "all" || r.kind === kind) && (!q || r.title.toLowerCase().includes(q)));
+  }, [data, query, kind]);
+
   return (
     <Card>
-      <SectionTitle>Historial de análisis</SectionTitle>
       <ErrorNote error={error} />
+      {data && data.length > 0 && (
+        <div className="mb-3 space-y-2">
+          <label className="relative block">
+            <span className="sr-only">Buscar en el historial</span>
+            <Icon name="search" className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" />
+            <input
+              className={cx(inputClass, "pl-9")}
+              placeholder="Buscar…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </label>
+          <div className="no-scrollbar flex gap-2 overflow-x-auto" role="group" aria-label="Tipo">
+            {[["all", "Todo"], ["forecast", "Previsiones"], ["cycle", "Análisis"], ["goal", "Objetivos"]].map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={kind === value}
+                onClick={() => setKind(value)}
+                className={cx(
+                  "min-h-9 shrink-0 rounded-full border px-3 text-sm transition",
+                  kind === value ? "border-accent bg-accent/15 text-accent" : "border-line text-muted hover:text-fg",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {isLoading && (
+        <div className="space-y-3">
+          <Skeleton className="h-12" />
+          <Skeleton className="h-12" />
+          <Skeleton className="h-12" />
+        </div>
+      )}
       {data && data.length === 0 && (
         <Empty>
-          Todavía no hay análisis. Lanza uno en <Link to="/" className="text-accent underline">Preguntar</Link>: su informe completo quedará aquí.
+          Todavía no hay análisis. Lanza uno en{" "}
+          <Link to="/" className="text-accent underline">
+            Preguntar
+          </Link>
+          : su informe completo quedará aquí.
         </Empty>
       )}
+      {data && data.length > 0 && shown.length === 0 && <Empty>Nada coincide con la búsqueda.</Empty>}
       <ul className="divide-y divide-line">
-        {data?.map((r) => (
+        {shown.map((r) => (
           <li key={r.id}>
-            <Link to={`/historial/${r.id}`} className="flex items-center justify-between gap-3 py-3">
+            <Link to={`/historial/${r.id}`} className="flex min-h-14 items-center justify-between gap-3 py-3">
               <span className="min-w-0">
-                <span className="block truncate text-sm">{r.title}</span>
+                <span className="line-clamp-2 text-sm">{r.title}</span>
                 <span className="text-xs text-muted">{fmtDate(r.created_at)}</span>
               </span>
               <Badge tone="accent">{KIND[r.kind] ?? r.kind}</Badge>
@@ -38,58 +90,63 @@ export function HistoryList() {
 
 export function RunDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { data, error } = useQuery({
     queryKey: ["runs", id],
     queryFn: () => api.get<{ id: string; title: string; kind: string; created_at: string; data: any }>(`/runs/${id}`),
   });
   if (error) return <ErrorNote error={error} />;
-  if (!data) return null;
+  if (!data)
+    return (
+      <div className="space-y-4" role="status" aria-label="cargando">
+        <Skeleton className="h-24" />
+        <Skeleton className="h-48" />
+      </div>
+    );
   const d = data.data;
+  const transcript: [string, string][] = d.verdict?.transcript ?? [];
   return (
     <div className="space-y-4">
-      <Card>
-        <div className="flex items-start justify-between gap-3">
-          <h1 className="text-lg font-semibold">{data.title}</h1>
-          <a className="shrink-0 text-sm text-accent underline" href={`/api/runs/${data.id}/report.md`}>
-            Descargar .md
-          </a>
+      <Card className="overflow-hidden">
+        <h2 className="text-lg leading-snug font-semibold">{data.title}</h2>
+        <p className="mb-4 text-xs text-muted">
+          {KIND[data.kind] ?? data.kind} · {fmtDate(data.created_at)}
+        </p>
+        <div className="border-t border-line pt-4">
+          <ResultCard result={d} />
         </div>
-        <p className="text-xs text-muted">{fmtDate(data.created_at)}</p>
-      </Card>
-      {d.forecast && (
-        <Card>
-          <SectionTitle>Previsión</SectionTitle>
-          <ProbBars outcomes={d.forecast.outcomes} />
-        </Card>
-      )}
-      {d.verdict && (
-        <Card>
-          <SectionTitle>Veredicto del panel</SectionTitle>
-          <p className="text-sm">
-            <Badge tone={d.verdict.decision === "emitir" ? "good" : d.verdict.decision === "revisar" ? "warn" : "bad"}>{d.verdict.decision}</Badge>{" "}
-            {d.verdict.rationale}
-          </p>
-          {d.verdict.transcript?.length > 0 && (
-            <details className="mt-3">
-              <summary className="cursor-pointer text-sm text-accent">Ver el debate completo</summary>
-              <div className="mt-2 space-y-2">
-                {d.verdict.transcript.map(([role, text]: [string, string], i: number) => (
-                  <div key={i} className="rounded-xl bg-surface-2 p-3 text-sm">
-                    <p className="mb-1 font-semibold">{role}</p>
-                    <p className="whitespace-pre-wrap text-fg/90">{text}</p>
-                  </div>
-                ))}
-              </div>
-            </details>
-          )}
-        </Card>
-      )}
-      <Card>
-        <SectionTitle>Informe</SectionTitle>
-        <div className="prose-report text-sm text-fg/90">
-          <Markdown remarkPlugins={[remarkGfm]}>{d.markdown}</Markdown>
+        <div className="mt-4 flex flex-wrap gap-2 border-t border-line pt-3">
+          <Button
+            variant="secondary"
+            onClick={() => navigate("/", { state: { question: data.title, mode: MODE_FOR_KIND[data.kind] } })}
+          >
+            <Icon name="repeat" className="size-4" /> Repetir pregunta
+          </Button>
+          <LinkButton variant="ghost" href={`/api/runs/${data.id}/report.md`}>
+            Descargar informe
+          </LinkButton>
         </div>
       </Card>
+      {transcript.length > 0 && (
+        <Card>
+          <SectionTitle>El debate del panel</SectionTitle>
+          <div className="space-y-2">
+            {transcript.map(([role, text], i) => (
+              <Turn key={i} role={role} text={text} />
+            ))}
+          </div>
+        </Card>
+      )}
+      {d.markdown && (
+        <Card>
+          <details>
+            <summary className="cursor-pointer text-sm font-semibold tracking-wide text-muted uppercase">Informe completo</summary>
+            <div className="prose-report mt-3 text-sm text-fg/90">
+              <Markdown remarkPlugins={[remarkGfm]}>{d.markdown}</Markdown>
+            </div>
+          </details>
+        </Card>
+      )}
     </div>
   );
 }

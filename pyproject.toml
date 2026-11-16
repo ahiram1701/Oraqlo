@@ -86,6 +86,7 @@ ignore = [
 # Fixtures compartidas importadas desde otro módulo de tests.
 "tests/test_userconfig.py" = ["F811"]
 "tests/test_desktop.py" = ["F811"]
+"tests/test_goals_edit.py" = ["F811"]
 
 # --- tipos ---
 [tool.pyright]

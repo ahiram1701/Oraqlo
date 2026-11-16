@@ -1,71 +1,72 @@
 import { useQuery } from "@tanstack/react-query";
-import type { ReactNode } from "react";
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect, useRef } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { useSetup } from "./components/ProvidersCard";
-import { cx } from "./components/ui";
+import { Icon, type IconName } from "./components/icons";
+import { cx, PageSkeleton } from "./components/ui";
 import { api, type Goal } from "./lib/api";
+import { useSetup } from "./lib/setup";
 import Ask from "./pages/Ask";
-import Calibration from "./pages/Calibration";
-import CaseEditor from "./pages/CaseEditor";
-import { GoalDetail, GoalsList } from "./pages/Goals";
-import { HistoryList, RunDetail } from "./pages/History";
 import Ledger from "./pages/Ledger";
-import Practice from "./pages/Practice";
-import Settings from "./pages/Settings";
-import Welcome from "./pages/Welcome";
 
-const ICONS: Record<string, ReactNode> = {
-  ask: <path d="M12 3a9 9 0 1 0 9 9M12 7v5l3 2" />,
-  goals: <path d="M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18Zm0-5a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0-3.5a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1Z" />,
-  ledger: <path d="M5 4h14v16H5zM9 8h6M9 12h6M9 16h3" />,
-  practice: <path d="M4 19V9m5 10V5m5 14v-7m5 7V8" />,
-  more: <path d="M5 12h.01M12 12h.01M19 12h.01" />,
-  case: <path d="M4 7h16v12H4zM9 7V5h6v2" />,
-  calibration: <path d="M4 20 20 4M4 4h4M4 4v4M20 20h-4M20 20v-4" />,
-  history: <path d="M4 12a8 8 0 1 0 2.3-5.6L4 8.7M4 4v4.7h4.7M12 8v4l3 2" />,
-  settings: <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3a7.4 7.4 0 0 0-.1-1.3l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-2.2-1.3L14.4 2h-4.8l-.3 2.4a7.6 7.6 0 0 0-2.2 1.3l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2.6l-2 1.6 2 3.4 2.4-1a7.6 7.6 0 0 0 2.2 1.3l.3 2.4h4.8l.3-2.4a7.6 7.6 0 0 0 2.2-1.3l2.4 1 2-3.4-2-1.6c.1-.4.1-.9.1-1.3Z" />,
-};
-
-function Icon({ name }: { name: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      {ICONS[name]}
-    </svg>
-  );
-}
+// Lo pesado (gráficos, Markdown, QR) se carga solo al abrir esa pantalla.
+const GoalsList = lazy(() => import("./pages/Goals").then((m) => ({ default: m.GoalsList })));
+const HistoryList = lazy(() => import("./pages/History").then((m) => ({ default: m.HistoryList })));
+const GoalDetail = lazy(() => import("./pages/Goals").then((m) => ({ default: m.GoalDetail })));
+const RunDetail = lazy(() => import("./pages/History").then((m) => ({ default: m.RunDetail })));
+const Practice = lazy(() => import("./pages/Practice"));
+const Calibration = lazy(() => import("./pages/Calibration"));
+const CaseEditor = lazy(() => import("./pages/CaseEditor"));
+const Settings = lazy(() => import("./pages/Settings"));
+const Welcome = lazy(() => import("./pages/Welcome"));
 
 interface NavItem {
   to: string;
   label: string;
-  icon: string;
+  icon: IconName;
   end?: boolean;
 }
 
-const PRIMARY: NavItem[] = [
-  { to: "/", label: "Preguntar", icon: "ask", end: true },
-  { to: "/objetivos", label: "Objetivos", icon: "goals" },
-  { to: "/ledger", label: "Predicciones", icon: "ledger" },
-  { to: "/practica", label: "Práctica", icon: "practice" },
+/** Todas las secciones; en el celular, la barra inferior las muestra todas y se desliza. */
+export const NAV: { group: string; items: NavItem[] }[] = [
+  {
+    group: "Usar",
+    items: [
+      { to: "/", label: "Preguntar", icon: "ask", end: true },
+      { to: "/objetivos", label: "Objetivos", icon: "goals" },
+      { to: "/predicciones", label: "Predicciones", icon: "ledger" },
+      { to: "/historial", label: "Historial", icon: "history" },
+    ],
+  },
+  {
+    group: "Precisión y ajustes",
+    items: [
+      { to: "/practica", label: "Práctica", icon: "practice" },
+      { to: "/calibracion", label: "Calibración", icon: "calibration" },
+      { to: "/caso", label: "Caso", icon: "case" },
+      { to: "/ajustes", label: "Ajustes", icon: "settings" },
+    ],
+  },
 ];
-const SECONDARY: (NavItem & { hint: string })[] = [
-  { to: "/historial", label: "Historial", icon: "history", hint: "Tus análisis e informes anteriores" },
-  { to: "/calibracion", label: "Calibración", icon: "calibration", hint: "Qué tan acertado es Oraqlo" },
-  { to: "/caso", label: "Caso", icon: "case", hint: "Avanzado: define tú las jugadas" },
-  { to: "/ajustes", label: "Ajustes", icon: "settings", hint: "Modelos, celular, avisos" },
-];
+const ALL = NAV.flatMap((g) => g.items);
 
 const TITLES: [RegExp, string][] = [
   [/^\/$/, "Preguntar"],
+  [/^\/objetivos\/.+/, "Objetivo"],
   [/^\/objetivos/, "Objetivos"],
-  [/^\/ledger/, "Predicciones"],
+  [/^\/predicciones/, "Predicciones"],
   [/^\/practica/, "Práctica"],
   [/^\/caso/, "Caso"],
   [/^\/calibracion/, "Calibración"],
+  [/^\/historial\/.+/, "Resultado"],
   [/^\/historial/, "Historial"],
   [/^\/ajustes/, "Ajustes"],
-  [/^\/mas/, "Más"],
   [/^\/bienvenida/, "Bienvenida"],
+];
+
+/** Pantallas de detalle → a qué lista vuelve el botón atrás. */
+const PARENT: [RegExp, string][] = [
+  [/^\/objetivos\/.+/, "/objetivos"],
+  [/^\/historial\/.+/, "/historial"],
 ];
 
 function useOverdueCount() {
@@ -73,83 +74,136 @@ function useOverdueCount() {
   return data?.reduce((n, g) => n + (g.status === "activo" ? g.overdue.length : 0), 0) ?? 0;
 }
 
+function navLabel(item: NavItem, overdue: number) {
+  return item.to === "/objetivos" && overdue > 0 ? `${item.label} (${overdue} hitos vencidos)` : item.label;
+}
+
 function SideNav() {
   const overdue = useOverdueCount();
   return (
-    <nav className="sticky top-0 hidden h-dvh w-56 shrink-0 flex-col gap-1 border-r border-line p-4 md:flex">
-      <div className="mb-6 flex items-center gap-2 px-2">
-        <img src="/icons/icon-192.png" alt="" className="size-7 rounded-lg" />
-        <span className="text-lg font-semibold">Oraqlo</span>
+    <nav className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col gap-1 border-r border-line p-4 md:flex" aria-label="Secciones">
+      <div className="mb-6 flex items-center gap-2.5 px-2">
+        <img src="/icons/icon-192.png" alt="" className="size-8 rounded-xl" />
+        <span className="brand-text text-xl font-semibold tracking-tight">Oraqlo</span>
       </div>
-      {[...PRIMARY, ...SECONDARY].map((item) => (
-        <NavLink
-          key={item.to}
-          to={item.to}
-          end={item.end}
-          className={({ isActive }) =>
-            cx("flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition", isActive ? "bg-accent/15 text-accent" : "text-muted hover:text-fg")
-          }
-        >
-          <Icon name={item.icon} />
-          {item.label}
-          {item.to === "/objetivos" && overdue > 0 && <span className="ml-auto rounded-full bg-warn px-1.5 text-xs text-black">{overdue}</span>}
-        </NavLink>
+      {NAV.map((group) => (
+        <div key={group.group} className="mb-3">
+          <p className="mb-1 px-3 text-[11px] font-semibold tracking-wider text-muted uppercase">{group.group}</p>
+          {group.items.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              aria-label={navLabel(item, overdue)}
+              className={({ isActive }) =>
+                cx(
+                  "flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition",
+                  isActive ? "bg-accent/15 font-medium text-accent" : "text-muted hover:bg-surface-2 hover:text-fg",
+                )
+              }
+            >
+              <Icon name={item.icon} />
+              {item.label}
+              {item.to === "/objetivos" && overdue > 0 && (
+                <span aria-hidden className="ml-auto rounded-full bg-warn px-1.5 text-xs font-semibold text-black">
+                  {overdue}
+                </span>
+              )}
+            </NavLink>
+          ))}
+        </div>
       ))}
     </nav>
   );
 }
 
+/** Barra inferior deslizante: todas las secciones a un toque; la activa siempre a la vista. */
 function BottomNav() {
   const overdue = useOverdueCount();
   const location = useLocation();
-  const inMore = SECONDARY.some((s) => location.pathname.startsWith(s.to)) || location.pathname === "/mas";
+  const scroller = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const active = scroller.current?.querySelector<HTMLElement>('[aria-current="page"]');
+    active?.scrollIntoView?.({ inline: "center", block: "nearest", behavior: "smooth" });
+  }, [location.pathname]);
+
   return (
     <nav
-      className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t border-line bg-surface/95 backdrop-blur md:hidden"
+      aria-label="Secciones"
+      className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-surface/95 backdrop-blur md:hidden"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
-      {[...PRIMARY, { to: "/mas", label: "Más", icon: "more" } as NavItem].map((item) => (
-        <NavLink
-          key={item.to}
-          to={item.to}
-          end={item.end}
-          className={({ isActive }) =>
-            cx(
-              "relative flex flex-col items-center gap-0.5 py-2 text-[11px]",
-              isActive || (item.to === "/mas" && inMore) ? "text-accent" : "text-muted",
-            )
-          }
-        >
-          <Icon name={item.icon} />
-          {item.label}
-          {item.to === "/objetivos" && overdue > 0 && (
-            <span className="absolute top-1 right-[calc(50%-18px)] size-2 rounded-full bg-warn" aria-label={`${overdue} hitos vencidos`} />
-          )}
-        </NavLink>
-      ))}
+      <div className="relative">
+        <div ref={scroller} className="no-scrollbar flex snap-x snap-mandatory overflow-x-auto overscroll-x-contain px-1">
+          {ALL.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              aria-label={navLabel(item, overdue)}
+              className={({ isActive }) =>
+                cx(
+                  "relative flex min-w-[4.75rem] shrink-0 snap-start flex-col items-center gap-0.5 px-2 py-2 text-[11px]",
+                  isActive ? "text-accent" : "text-muted",
+                )
+              }
+            >
+              {({ isActive }) => (
+                <>
+                  <span className={cx("rounded-full px-3 py-0.5 transition", isActive && "bg-accent/15")}>
+                    <Icon name={item.icon} />
+                  </span>
+                  {item.label}
+                  {item.to === "/objetivos" && overdue > 0 && (
+                    <span aria-hidden className="absolute top-1.5 right-4 size-2 rounded-full bg-warn" />
+                  )}
+                </>
+              )}
+            </NavLink>
+          ))}
+        </div>
+        {/* Degradados en los bordes: hay más secciones al deslizar. */}
+        <div aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-4 bg-gradient-to-r from-surface to-transparent" />
+        <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-surface to-transparent" />
+      </div>
     </nav>
   );
 }
 
-function More() {
+function Header({ title }: { title: string }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const parent = PARENT.find(([re]) => re.test(location.pathname))?.[1];
   return (
-    <div className="grid grid-cols-2 gap-3">
-      {SECONDARY.map((item) => (
-        <NavLink key={item.to} to={item.to} className="flex flex-col gap-2 rounded-2xl border border-line bg-surface p-4">
-          <Icon name={item.icon} />
-          <span className="text-sm font-medium">{item.label}</span>
-          <span className="text-xs text-muted">{item.hint}</span>
-        </NavLink>
-      ))}
-    </div>
+    <header className="mb-4 flex min-h-11 items-center gap-2 md:mb-6">
+      {parent ? (
+        <button
+          type="button"
+          aria-label="Volver"
+          onClick={() => (window.history.length > 1 ? navigate(-1) : navigate(parent))}
+          className="-ml-2 inline-flex size-11 items-center justify-center rounded-xl text-muted hover:text-fg"
+        >
+          <Icon name="back" />
+        </button>
+      ) : (
+        <img src="/icons/icon-192.png" alt="" className="size-7 rounded-lg md:hidden" />
+      )}
+      <h1 className="text-[1.375rem] font-semibold tracking-tight">{title}</h1>
+    </header>
   );
 }
 
 export default function App() {
   const location = useLocation();
   const title = TITLES.find(([re]) => re.test(location.pathname))?.[1] ?? "Oraqlo";
-  // Tocar un aviso con la app abierta: el service worker pide navegar sin recargar.
   const navigate = useNavigate();
+
+  useEffect(() => {
+    document.title = title === "Preguntar" ? "Oraqlo" : `${title} · Oraqlo`;
+  }, [title]);
+
+  // Tocar un aviso con la app abierta: el service worker pide navegar sin recargar.
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
     const onMessage = (e: MessageEvent) => {
@@ -158,34 +212,47 @@ export default function App() {
     navigator.serviceWorker.addEventListener("message", onMessage);
     return () => navigator.serviceWorker.removeEventListener("message", onMessage);
   }, [navigate]);
+
   // Primer arranque: sin un modelo listo, todo empieza por la bienvenida.
   const setup = useSetup();
   if (setup.data?.needs_setup && location.pathname !== "/bienvenida") return <Navigate to="/bienvenida" replace />;
+  const welcome = location.pathname === "/bienvenida";
+
   return (
     <div className="flex min-h-dvh">
-      <SideNav />
+      {!welcome && <SideNav />}
       <main className="safe-bottom mx-auto w-full max-w-3xl px-4 pt-[calc(env(safe-area-inset-top)+1rem)] sm:px-6">
-        <header className="mb-4 flex items-center gap-2 md:mb-6">
-          <img src="/icons/icon-192.png" alt="" className="size-7 rounded-lg md:hidden" />
-          <h1 className="text-xl font-semibold">{title}</h1>
-        </header>
-        <Routes>
-          <Route path="/" element={<Ask />} />
-          <Route path="/objetivos" element={<GoalsList />} />
-          <Route path="/objetivos/:id" element={<GoalDetail />} />
-          <Route path="/ledger" element={<Ledger />} />
-          <Route path="/practica" element={<Practice />} />
-          <Route path="/caso" element={<CaseEditor />} />
-          <Route path="/calibracion" element={<Calibration />} />
-          <Route path="/historial" element={<HistoryList />} />
-          <Route path="/historial/:id" element={<RunDetail />} />
-          <Route path="/ajustes" element={<Settings />} />
-          <Route path="/mas" element={<More />} />
-          <Route path="/bienvenida" element={<Welcome />} />
-          <Route path="*" element={<p className="text-muted">Página no encontrada.</p>} />
-        </Routes>
+        <Header title={title} />
+        <Suspense fallback={<PageSkeleton />}>
+          <Routes>
+            <Route path="/" element={<Ask />} />
+            <Route path="/objetivos" element={<GoalsList />} />
+            <Route path="/objetivos/:id" element={<GoalDetail />} />
+            <Route path="/predicciones" element={<Ledger />} />
+            <Route path="/ledger" element={<Navigate to="/predicciones" replace />} />
+            <Route path="/practica" element={<Practice />} />
+            <Route path="/caso" element={<CaseEditor />} />
+            <Route path="/calibracion" element={<Calibration />} />
+            <Route path="/historial" element={<HistoryList />} />
+            <Route path="/historial/:id" element={<RunDetail />} />
+            <Route path="/ajustes" element={<Settings />} />
+            <Route path="/mas" element={<Navigate to="/" replace />} />
+            <Route path="/bienvenida" element={<Welcome />} />
+            <Route
+              path="*"
+              element={
+                <div className="rounded-2xl border border-dashed border-line p-8 text-center">
+                  <p className="font-medium">Esta página no existe.</p>
+                  <NavLink to="/" className="mt-2 inline-block text-sm text-accent underline">
+                    Ir a Preguntar
+                  </NavLink>
+                </div>
+              }
+            />
+          </Routes>
+        </Suspense>
       </main>
-      <BottomNav />
+      {!welcome && <BottomNav />}
     </div>
   );
 }

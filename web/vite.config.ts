@@ -34,7 +34,28 @@ export default defineConfig({
       injectManifest: { globPatterns: ["**/*.{js,css,html,png,svg,woff2}"] },
     }),
   ],
-  build: { outDir: "../src/oraqlo/api/static", emptyOutDir: true },
+  build: {
+    outDir: "../src/oraqlo/api/static",
+    emptyOutDir: true,
+    rolldownOptions: {
+      output: {
+        // Gráficos y Markdown solo se descargan al abrir las pantallas que los usan.
+        // React va aparte (y con más prioridad): si no, acabaría dentro del primer
+        // grupo que lo usa y la pantalla inicial tendría que descargar los gráficos.
+        codeSplitting: {
+          groups: [
+            { name: "vendor", test: /node_modules[\/](react|react-dom|scheduler|react-router|react-router-dom|@tanstack)[\/]/, priority: 30 },
+            { name: "charts", test: /node_modules[\/](recharts|d3-|victory-vendor|decimal\.js)/, priority: 20 },
+            {
+              name: "markdown",
+              test: /node_modules[\/](react-markdown|remark-|mdast-|micromark|unified|hast-|unist-|vfile|property-information)/,
+              priority: 10,
+            },
+          ],
+        },
+      },
+    },
+  },
   server: { proxy: { "/api": { target: "http://127.0.0.1:8765", changeOrigin: false } } },
   test: { environment: "jsdom", setupFiles: ["./src/test-setup.ts"], globals: true },
 });

@@ -44,6 +44,13 @@ class GoalTrackError(RuntimeError):
     """La operación de seguimiento no pudo completarse."""
 
 
+def _check_date(value: str) -> None:
+    try:
+        date.fromisoformat(value)
+    except ValueError as e:
+        raise GoalTrackError(f"Fecha inválida: {value!r} (usa AAAA-MM-DD).") from e
+
+
 @dataclass
 class TrackedMilestone:
     text: str
@@ -286,6 +293,38 @@ class GoalTracker:
         g.milestones[index].status = status
         self.store.update(g)
         return g.milestones[index]
+
+    def edit(
+        self, goal_id: str, goal: str | None = None, deadline: str | None = None
+    ) -> TrackedGoal:
+        """Corrige el texto o la fecha límite del objetivo (sin re-planificar)."""
+        g = self.store.get(goal_id)
+        if goal is not None:
+            if not goal.strip():
+                raise GoalTrackError("El objetivo no puede quedar vacío.")
+            g.goal = goal.strip()
+        if deadline is not None:
+            _check_date(deadline)
+            g.deadline = deadline
+        self.store.update(g)
+        return g
+
+    def edit_milestone(
+        self, goal_id: str, index: int, text: str | None = None, target_date: str | None = None
+    ) -> TrackedMilestone:
+        g = self.store.get(goal_id)
+        if not 0 <= index < len(g.milestones):
+            raise GoalTrackError(f"No existe el hito {index} en '{g.goal[:40]}'.")
+        m = g.milestones[index]
+        if text is not None:
+            if not text.strip():
+                raise GoalTrackError("El hito no puede quedar vacío.")
+            m.text = text.strip()
+        if target_date is not None:
+            _check_date(target_date)
+            m.target_date = target_date
+        self.store.update(g)
+        return m
 
     def replan(self, goal_id: str) -> TrackedGoal:
         """Re-genera pasos e hitos pendientes con el estado actual; conserva los cumplidos."""

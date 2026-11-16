@@ -2,9 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { api, type PortChangeResult, type ServerInfo } from "../lib/api";
-import { LOCAL_ONLY_NOTE } from "./ProvidersCard";
+import { LOCAL_ONLY_NOTE } from "../lib/setup";
 import { AllowedUsers } from "./SystemCards";
-import { Badge, Button, Card, ErrorNote, SectionTitle, cx, inputClass } from "./ui";
+import { Badge, Button, Card, ErrorNote, LinkButton, SectionTitle, cx, inputClass } from "./ui";
 
 const isLocal = () => ["127.0.0.1", "localhost", "[::1]"].includes(window.location.hostname);
 
@@ -50,9 +50,9 @@ function PhoneAccess({ info, local }: { info: ServerInfo; local: boolean }) {
           misma cuenta.
         </p>
         <div className="flex flex-wrap gap-2">
-          <a className="inline-flex min-h-11 items-center rounded-xl bg-accent px-4 font-medium text-white" href="https://tailscale.com/download" target="_blank" rel="noreferrer">
+          <LinkButton href="https://tailscale.com/download" target="_blank" rel="noreferrer">
             Descargar Tailscale
-          </a>
+          </LinkButton>
           <Button variant="secondary" onClick={refresh}>
             Ya lo instalé
           </Button>

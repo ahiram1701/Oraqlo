@@ -1,16 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { JobTimeline } from "../components/JobView";
-import { Badge, Button, Card, ErrorNote, SectionTitle, Toggle, cx, inputClass } from "../components/ui";
+import { Button, Card, ErrorNote, Notice, SectionTitle, StatusBadge, Toggle, cx, inputClass } from "../components/ui";
 import { api, fmtDate, type PracticeState } from "../lib/api";
 import { useJob, useStoredJob } from "../lib/useJob";
-
-const STATUS_LABELS: Record<string, string> = {
-  queued: "en cola",
-  running: "en curso",
-  done: "lista",
-  failed: "falló",
-  cancelled: "cancelada",
-};
 
 export default function Practice() {
   const qc = useQueryClient();
@@ -32,19 +24,31 @@ export default function Practice() {
 
   const o = s?.reliability_oraqlo;
   const m = s?.reliability_market;
-  const verdict = o == null || m == null ? null : o < m ? "Oraqlo supera a la multitud" : "La multitud va por delante";
+  const verdict =
+    o == null || m == null
+      ? null
+      : o < m
+        ? "Oraqlo acierta más que el mercado en las mismas preguntas."
+        : "El mercado va por delante: Oraqlo aún está aprendiendo.";
 
   return (
     <div className="space-y-4">
       <ErrorNote error={error} />
       <Card>
-        <SectionTitle>Oraqlo vs. mercado (Brier, menor es mejor)</SectionTitle>
+        <SectionTitle>Oraqlo contra el mercado</SectionTitle>
+        <p className="-mt-1 mb-3 text-xs text-muted">
+          Puntuación de error (Brier): 0 es perfecto, 0,25 es lo que sacaría tirar una moneda. Menos es mejor.
+        </p>
         <div className="grid grid-cols-2 gap-3">
           <Stat label="Oraqlo" value={o} better={o != null && m != null && o < m} />
           <Stat label="Polymarket" value={m} better={o != null && m != null && m <= o} />
         </div>
-        {verdict && <p className="mt-3 text-sm text-muted">{verdict}.</p>}
-        {s?.advice && <p className="mt-3 rounded-xl bg-accent/10 p-3 text-sm text-accent">Consejo de calibración: {s.advice}</p>}
+        {verdict && <p className="mt-3 text-sm">{verdict}</p>}
+        {s?.advice && (
+          <Notice tone="info" className="mt-3">
+            Consejo: {s.advice}
+          </Notice>
+        )}
       </Card>
 
       <Card>
@@ -94,9 +98,7 @@ export default function Practice() {
               <li key={j.id} className="py-2">
                 <div className="flex justify-between gap-2">
                   <span>{fmtDate(j.created_at)}</span>
-                  <Badge tone={j.status === "done" ? "good" : j.status === "failed" ? "bad" : "accent"}>
-                    {STATUS_LABELS[j.status] ?? j.status}
-                  </Badge>
+                  <StatusBadge status={j.status} />
                 </div>
                 {j.error && <p className="mt-1 text-xs text-bad">{j.error}</p>}
               </li>
@@ -112,7 +114,10 @@ function Stat({ label, value, better }: { label: string; value: number | null | 
   return (
     <div className={cx("rounded-xl border p-3", better ? "border-good/40 bg-good/5" : "border-line bg-surface-2")}>
       <p className="text-xs text-muted">{label}</p>
-      <p className="text-2xl font-semibold tabular-nums">{value == null ? "—" : value.toFixed(3)}</p>
+      <p className={cx("mt-1 text-3xl font-semibold tracking-tight tabular-nums", better && "text-good")}>
+        {value == null ? "—" : value.toFixed(3)}
+      </p>
+      {better && <p className="text-[11px] text-good">va ganando</p>}
     </div>
   );
 }
