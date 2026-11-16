@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/ahiram1701/Oraqlo/compare/v0.2.2...v0.3.0) (2026-11-16)
+
+
+### Novedades
+
+* puerto automático y configurable desde Ajustes ([#21](https://github.com/ahiram1701/Oraqlo/issues/21)) ([6e72ba7](https://github.com/ahiram1701/Oraqlo/commit/6e72ba77997ce904ceaaf7a7084bca2d66f8f43a))
+
 ## [0.2.2](https://github.com/ahiram1701/Oraqlo/compare/v0.2.1...v0.2.2) (2026-11-16)
 
 
