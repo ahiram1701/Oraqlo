@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/ahiram1701/Oraqlo/compare/v0.2.0...v0.2.1) (2026-11-16)
+
+
+### Correcciones
+
+* no confundir otra app en el puerto con Oraqlo e instalar sin clonar ([#16](https://github.com/ahiram1701/Oraqlo/issues/16)) ([b0b905a](https://github.com/ahiram1701/Oraqlo/commit/b0b905a45bdfb7d388c774ab5338a9ad23605a7b))
+
 ## [0.2.0](https://github.com/ahiram1701/Oraqlo/compare/v0.1.0...v0.2.0) (2026-11-16)
 
 
