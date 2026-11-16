@@ -16,11 +16,18 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import timedelta
+from html import escape
 from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    StreamingResponse,
+)
 from pydantic import BaseModel, Field
 
 from oraqlo import __version__
@@ -1120,15 +1127,26 @@ def create_app(
 
     index = STATIC_DIR / "index.html"
 
+    def index_page() -> HTMLResponse:
+        # La versión va dentro del HTML: el service worker guarda este HTML junto con
+        # su interfaz, así que la página sabe de qué versión es y puede notar que el
+        # servidor ya es otra (ver web/src/lib/appVersion.ts).
+        html = index.read_text(encoding="utf-8").replace(
+            "</head>", f'<meta name="oraqlo-version" content="{escape(__version__)}" />\n</head>', 1
+        )
+        return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+
     @app.get("/{path:path}", include_in_schema=False)
     def spa(path: str):
         if path.startswith("api/"):
             raise HTTPException(404, "Ruta de API desconocida")
         target = (STATIC_DIR / path).resolve()
+        if target == index.resolve():
+            return index_page()
         if path and target.is_file() and STATIC_DIR.resolve() in target.parents:
             return FileResponse(target)
         if index.exists():
-            return FileResponse(index, headers={"Cache-Control": "no-cache"})
+            return index_page()
         return PlainTextResponse(
             "Oraqlo API en marcha. El frontend no está compilado (cd web && npm run build).",
             status_code=200,

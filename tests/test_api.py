@@ -302,6 +302,21 @@ def test_spa_y_rutas_desconocidas(env):
     assert client.get("/objetivos").status_code == 200
 
 
+def test_el_html_dice_de_que_version_es(env):
+    """La interfaz guardada por el service worker sabe su versión y nota si el
+    servidor ya es otra (tras una actualización automática)."""
+    from oraqlo import __version__
+    from oraqlo.api.app import STATIC_DIR
+
+    if not (STATIC_DIR / "index.html").exists():
+        pytest.skip("frontend sin compilar")
+    client, *_ = env
+    for route in ("/", "/objetivos", "/index.html"):
+        r = client.get(route)
+        assert f'<meta name="oraqlo-version" content="{__version__}"' in r.text
+        assert r.headers["cache-control"] == "no-cache"
+
+
 def test_proveedores_sin_exponer_claves(env, monkeypatch):
     client, *_ = env
     monkeypatch.setenv("GROQ_API_KEY", "secreto-que-no-debe-salir")
