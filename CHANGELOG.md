@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.12.0](https://github.com/ahiram1701/Oraqlo/compare/v0.11.0...v0.12.0) (2026-11-17)
+
+
+### Novedades
+
+* editar los roles sin escribir nombres de modelo ([#65](https://github.com/ahiram1701/Oraqlo/issues/65)) ([a9ea63a](https://github.com/ahiram1701/Oraqlo/commit/a9ea63a6a4785980062baff0fd5c59a1f3484ce8))
+* Ollama en la nube sin líos ([#64](https://github.com/ahiram1701/Oraqlo/issues/64)) ([56e9924](https://github.com/ahiram1701/Oraqlo/commit/56e9924855fd704547f4404c146beb3c697009f0))
+
+
+### Correcciones
+
+* previsiones más certeras ([#66](https://github.com/ahiram1701/Oraqlo/issues/66)) ([f08a88c](https://github.com/ahiram1701/Oraqlo/commit/f08a88ccfb205a439db855452ba015b71c37f6f1))
+
 ## [0.11.0](https://github.com/ahiram1701/Oraqlo/compare/v0.10.0...v0.11.0) (2026-11-17)
 
 
