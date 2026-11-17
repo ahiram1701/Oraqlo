@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/ahiram1701/Oraqlo/compare/v0.12.1...v0.13.0) (2026-11-17)
+
+
+### Novedades
+
+* Oraqlo te pregunta lo que internet no sabe ([#70](https://github.com/ahiram1701/Oraqlo/issues/70)) ([08654d2](https://github.com/ahiram1701/Oraqlo/commit/08654d21e76f86d81d58269aa27a620d0d5a15e0))
+
 ## [0.12.1](https://github.com/ahiram1701/Oraqlo/compare/v0.12.0...v0.12.1) (2026-11-17)
 
 
