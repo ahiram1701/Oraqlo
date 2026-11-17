@@ -12,14 +12,26 @@ import { useSetup } from "../lib/setup";
 import { useJob, useStoredJob } from "../lib/useJob";
 
 const MODES: { id: AskMode; title: string; hint: string }[] = [
-  { id: "forecast", title: "Previsión", hint: "Qué puede pasar, con la probabilidad de cada escenario. Rápido." },
+  { id: "forecast", title: "Previsión", hint: "Si algo pasará, cuándo o cuánto, con su probabilidad. Tarda segundos." },
   {
     id: "full",
     title: "Análisis completo",
-    hint: "Propone jugadas, simula futuros y un panel las debate hasta recomendar una. Tarda unos minutos.",
+    hint: "Para decidir qué hacer: compara opciones y un panel de expertos recomienda una. Tarda unos minutos.",
   },
   { id: "goal", title: "Lograr objetivo", hint: "Un plan con hitos y cuánto sube tu probabilidad de lograrlo. Luego lo sigues en Objetivos." },
 ];
+
+/** ¿Solo quiere saber si o cuándo pasará algo? Para eso basta una Previsión. */
+export function looksInformational(question: string): boolean {
+  const q = question
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // sin tildes
+    .replace(/^[¿\s]+/, "");
+  if (/\b(debo|deberia|conviene|que hago|que hacer|me conviene|como puedo|como hago|vale la pena)\b/.test(q)) return false;
+  return /^(cuando|habra|sera|va a|van a|es posible|hay posibilidad|que probabilidad|cuantas? |cuanto |bajara|subira|ganara|llegara|pasara|ocurrira)/.test(q);
+}
 
 const LAST_KEY = "oraqlo.ask.last";
 const HORIZON_KEY = "oraqlo.ask.horizon";
@@ -215,6 +227,15 @@ export default function Ask() {
             ))}
           </div>
           <p className="-mt-2 text-xs text-muted">{MODES.find((m) => m.id === mode)?.hint}</p>
+          {mode === "full" && looksInformational(question) && (
+            <Notice>
+              ¿Solo quieres saber si o cuándo pasará? <b>Previsión</b> responde eso en segundos; el análisis completo sirve
+              para decidir qué hacer.{" "}
+              <button type="button" className="font-medium underline" onClick={() => setMode("forecast")}>
+                Usar Previsión
+              </button>
+            </Notice>
+          )}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             {mode === "goal" ? (
               <label className="flex items-center gap-2 text-sm whitespace-nowrap text-muted">

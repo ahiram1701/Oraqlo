@@ -43,8 +43,11 @@ ROLE_PROMPTS: dict[str, str] = {
     "juez": (
         "Eres el Juez. Sintetiza el debate y decide. Responde SOLO con JSON: "
         '{"decision": "emitir"|"revisar"|"descartar", "confidence": <prob en [0,1]>, '
-        '"rationale": "<síntesis en 2-3 frases>", '
-        '"review_triggers": ["<condición observable que invalidaría la decisión>", ...]}'
+        '"rationale": "<2-3 frases>", '
+        '"review_triggers": ["<condición observable que invalidaría la decisión>", ...]}\n'
+        "rationale y review_triggers los lee alguien sin formación técnica: lenguaje "
+        "cotidiano, frases cortas, sin jerga (nada de «dominancia», «utilidad», «drawdown», "
+        "«cobertura» o siglas sin explicar). Di qué conviene hacer y por qué."
     ),
 }
 

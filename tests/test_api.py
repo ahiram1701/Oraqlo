@@ -30,7 +30,9 @@ class RoleAwareFake(LLMProvider):
         if self.fail:
             raise RuntimeError("proveedor caído a propósito")
         system = messages[0].content
-        if "p_logro" in system:
+        if "Explicas previsiones" in system:
+            out = {"answer": "Probablemente sube: 70%.", "why": "Lo empuja la demanda."}
+        elif "p_logro" in system:
             out = {"p_logro": 0.55, "comment": "va bien", "replan_recommended": False}
         elif '"outcomes"' in system:
             out = {"outcomes": {"sube": 0.7, "baja": 0.3}, "assumptions": ["a1"], "rationale": "r"}

@@ -24,6 +24,7 @@ from oraqlo.drafter import draft_case
 from oraqlo.forecaster.aggregate import clamp
 from oraqlo.forecaster.base import Distribution, Forecast, Forecaster
 from oraqlo.forecaster.ensemble import resolve_group
+from oraqlo.forecaster.explain import explain
 from oraqlo.forecaster.llm import LLMForecaster
 from oraqlo.goals import GoalStrategist
 from oraqlo.goaltrack import GoalTracker
@@ -158,6 +159,8 @@ class OraqloService:
         provider, r = self._role("oraculo")
         oracle = self._oracle(r.model, provider, self.config.forecast.samples, emit)
         forecast = oracle.forecast(self._state_from(brief), question, timedelta(days=horizon_days))
+        emit("log", {"msg": "Redactando la respuesta en palabras llanas…"})
+        forecast = explain(provider, r.model, question, forecast)
         self.store.ledger.record(forecast)
         emit("forecast", forecast_json(forecast))
         facts = [(f.text, f.source_url) for f in brief.facts] if brief else None
@@ -286,6 +289,8 @@ class OraqloService:
         forecast = self._oracle(
             oracle_role.model, oracle_provider, self.config.forecast.samples, emit
         ).forecast(world.current(), question, timedelta(days=horizon_days))
+        emit("log", {"msg": "Redactando la respuesta en palabras llanas…"})
+        forecast = explain(oracle_provider, oracle_role.model, question, forecast)
         emit("phase", {"name": "redactar"})
         provider, r = self._role("redactor")
         context = "\n\n".join(

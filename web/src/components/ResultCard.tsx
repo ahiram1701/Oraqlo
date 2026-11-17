@@ -40,7 +40,8 @@ export function resultText(question: string, result: any): string {
   const lines = Object.entries(result?.forecast?.outcomes ?? {})
     .sort((a: any, b: any) => b[1] - a[1])
     .map(([k, v]) => `• ${k}: ${pct(v as number)}`);
-  const answer = [top ? `Lo más probable: ${top[0]} (${pct(top[1])})` : "", ...lines].filter(Boolean);
+  const plain = splitAnswer(result?.forecast?.assumptions ?? []).answer;
+  const answer = [plain ?? "", top ? `Lo más probable: ${top[0]} (${pct(top[1])})` : "", ...lines].filter(Boolean);
   if (result?.kind === "cycle") {
     const v = verdictInfo(result.verdict?.decision);
     const todo = [`Qué hacer (${v.label}): ${result.recommendation?.action?.description ?? ""}`, result.verdict?.rationale ?? ""];
@@ -120,14 +121,14 @@ export function ResultCard({ result }: { result: any }) {
         )}
         {v.rationale && <p className="text-sm">{v.rationale}</p>}
         {v.review_triggers?.length > 0 && (
-          <div className="rounded-xl bg-surface-2 p-3">
-            <p className="mb-1 text-xs font-semibold tracking-wide text-muted uppercase">Vuelve a pensarlo si…</p>
-            <ul className="list-disc space-y-1 pl-5 text-sm">
+          <details className="rounded-xl bg-surface-2 p-3 text-sm">
+            <summary className="cursor-pointer text-muted">Vuelve a pensarlo si… ({v.review_triggers.length})</summary>
+            <ul className="mt-1 list-disc space-y-1 pl-5">
               {v.review_triggers.map((t: string) => (
                 <li key={t}>{t}</li>
               ))}
             </ul>
-          </div>
+          </details>
         )}
         </section>
       </div>
@@ -149,17 +150,38 @@ export function ResultCard({ result }: { result: any }) {
 }
 
 /** La respuesta a la pregunta: lo más probable, las probabilidades, cuándo se sabrá y en qué se basa. */
+const ANSWER = "Respuesta: ";
+const WHY = "En pocas palabras: ";
+
+/** Separa la respuesta en palabras llanas y su porqué del resto de supuestos. */
+export function splitAnswer(assumptions: string[]): { answer: string | null; why: string | null; rest: string[] } {
+  const find = (prefix: string) => assumptions.find((a) => a.startsWith(prefix))?.slice(prefix.length).trim() || null;
+  return {
+    answer: find(ANSWER),
+    why: find(WHY),
+    rest: assumptions.filter((a) => !a.startsWith(ANSWER) && !a.startsWith(WHY)),
+  };
+}
+
+function Label({ children }: { children: string }) {
+  return <p className="mb-1 text-xs font-semibold tracking-wide text-muted uppercase">{children}</p>;
+}
+
+/** La respuesta a la pregunta: en palabras llanas si las hay, los escenarios, cuándo se sabrá y el porqué. */
 export function ForecastAnswer({ forecast }: { forecast: any }) {
   const outcomes = forecast.outcomes ?? {};
   const top = topOutcome(outcomes);
   const interval: [number, number] | null = Array.isArray(forecast.interval) ? forecast.interval : null;
   const when = resolvesOn(forecast);
-  const assumptions = rankAssumptions(forecast.assumptions ?? []);
-  const shown = assumptions.slice(0, 3);
-  const folded = assumptions.slice(3);
+  const { answer, why, rest } = splitAnswer(forecast.assumptions ?? []);
+  const assumptions = rankAssumptions(rest);
+  // Con respuesta llana, los supuestos técnicos van plegados; sin ella, como antes.
+  const shown = answer ? [] : assumptions.slice(0, 3);
+  const folded = answer ? assumptions : assumptions.slice(3);
   return (
     <>
-      {top && (
+      {answer && <p className="text-xl leading-snug font-semibold">{answer}</p>}
+      {!answer && top && (
         <div>
           <p className="text-sm text-muted">Lo más probable</p>
           <p className="mt-1 text-xl leading-snug font-semibold">{top[0]}</p>
@@ -181,32 +203,45 @@ export function ForecastAnswer({ forecast }: { forecast: any }) {
           )}
         </div>
       )}
-      {top && <ProbBars outcomes={outcomes} />}
+      {top && (
+        <div>
+          {answer && <Label>Escenarios</Label>}
+          <ProbBars outcomes={outcomes} />
+        </div>
+      )}
       {when && (
         <p className="flex items-center gap-1.5 text-sm text-muted">
           <Icon name="calendar" className="size-4" />
           Se sabrá hacia el {when}.
         </p>
       )}
+      {why && (
+        <div className="text-sm">
+          <Label>Por qué</Label>
+          <p>{why}</p>
+        </div>
+      )}
       {shown.length > 0 && (
         <div className="text-sm">
-          <p className="mb-1 text-xs font-semibold tracking-wide text-muted uppercase">En qué se basa</p>
+          <Label>En qué se basa</Label>
           <ul className="list-disc space-y-1 pl-5">
             {shown.map((a) => (
               <li key={a}>{a}</li>
             ))}
           </ul>
-          {folded.length > 0 && (
-            <details className="mt-1">
-              <summary className="cursor-pointer text-muted">Ver {folded.length} supuesto(s) más</summary>
-              <ul className="mt-1 list-disc space-y-1 pl-5 text-muted">
-                {folded.map((a) => (
-                  <li key={a}>{a}</li>
-                ))}
-              </ul>
-            </details>
-          )}
         </div>
+      )}
+      {folded.length > 0 && (
+        <details className="text-sm">
+          <summary className="cursor-pointer text-muted">
+            {answer ? `Ver en qué se basa (${folded.length})` : `Ver ${folded.length} supuesto(s) más`}
+          </summary>
+          <ul className="mt-1 list-disc space-y-1 pl-5 text-muted">
+            {folded.map((a) => (
+              <li key={a}>{a}</li>
+            ))}
+          </ul>
+        </details>
       )}
     </>
   );
