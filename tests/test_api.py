@@ -130,7 +130,11 @@ def test_pregunta_rapida_job_sse_e_informe(env):
     assert r.status_code == 202
     job = wait_job(client, r.json()["job_id"])
     assert job["status"] == "done", job
-    assert job["result"]["forecast"]["outcomes"] == {"sube": 0.7, "baja": 0.3}
+    # Sin investigación, el 70/30 del modelo se suaviza hacia el reparto igual.
+    from oraqlo.forecaster.aggregate import temper_without_data
+
+    expected = temper_without_data({"sube": 0.7, "baja": 0.3})
+    assert job["result"]["forecast"]["outcomes"] == pytest.approx(expected)
     assert len(service.store.ledger.open_forecasts) == 1
 
     stream = client.get(f"/api/jobs/{job['id']}/events").text
@@ -215,9 +219,14 @@ def test_ledger_resolver_descartar_y_calibracion(env):
     assert client.post("/api/ledger/nope/resolve", json={"outcome": "x"}).status_code == 404
     view = client.get("/api/ledger").json()
     assert [f["id"] for f in view["open"]] == [ids[2]]
-    assert view["resolved"][0]["brier"] == pytest.approx(0.18)
+    from oraqlo.forecaster.aggregate import temper_without_data
+    from oraqlo.memory.calibration import multiclass_brier
+
+    tempered = temper_without_data({"sube": 0.7, "baja": 0.3})
+    assert view["resolved"][0]["brier"] == pytest.approx(multiclass_brier(tempered, "sube"))
     cal = client.get("/api/calibration").json()
-    assert cal["n"] == 1 and cal["sources"][0]["brier"] == pytest.approx(0.18)
+    assert cal["n"] == 1
+    assert cal["sources"][0]["brier"] == pytest.approx(multiclass_brier(tempered, "sube"))
     assert sum(b["n"] for b in cal["reliability"]) == 1  # un punto por previsión, no por etiqueta
     assert client.delete(f"/api/ledger/resolved/{ids[0]}").status_code == 204
 
@@ -380,7 +389,7 @@ def test_aviso_al_terminar_un_job(env, monkeypatch):
     while not sent and time.monotonic() < deadline:
         time.sleep(0.05)
     assert sent and sent[0]["title"] == "Previsión lista"
-    assert "¿Lloverá?: sube 70%" in sent[0]["body"] and sent[0]["url"].startswith("/historial/")
+    assert "¿Lloverá?: sube 66%" in sent[0]["body"] and sent[0]["url"].startswith("/historial/")
 
 
 def test_aviso_de_hito_vencido_una_sola_vez(env, monkeypatch):

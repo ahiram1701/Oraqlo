@@ -19,7 +19,7 @@ from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from oraqlo.forecaster.aggregate import clamp, pool_log_odds
+from oraqlo.forecaster.aggregate import NO_DATA_NOTE, clamp, pool_log_odds, temper_without_data
 from oraqlo.forecaster.base import Distribution, Forecast, Forecaster
 from oraqlo.llm.base import ChatMessage, LLMProvider
 from oraqlo.llm.structured import extract_json_object
@@ -39,7 +39,7 @@ _SYSTEM_PROMPT = (
     "pregunta; evita 0 y 1 salvo imposibilidad lógica.\n"
     "Reglas: entre 2 y 5 escenarios mutuamente excluyentes y exhaustivos; las "
     "probabilidades deben sumar 1.0; a mayor horizonte temporal, reparte más la "
-    "probabilidad (más incertidumbre); los supuestos son las condiciones de las "
+    "probabilidad (más incertidumbre); Si no tienes datos concretos de ESTE caso (ranking, forma, cuotas, encuestas, cifras recientes), quédate en la tasa base o cerca del reparto igual: una ventaja que solo intuyes no pasa del 55-60%. Los supuestos son las condiciones de las "
     "que depende tu estimación; escribe escenarios y supuestos en el idioma de "
     "la pregunta."
 )
@@ -221,6 +221,9 @@ class LLMForecaster(Forecaster):
 
         outcomes = clamp(pool_log_odds(draws))
         notes: list[str] = []
+        if not state.entities:  # nada investigado ni observado: solo intuición
+            outcomes = temper_without_data(outcomes)
+            notes.append(NO_DATA_NOTE)
         if base_rate:
             notes.append(f"Tasa base: {base_rate}")
         if rationale:

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { DuelsCard, duelHeadline } from "../components/Duels";
+import { Link } from "react-router-dom";
+import { DuelsCard, decidedNote, duelHeadline } from "../components/Duels";
 import { JobTimeline } from "../components/JobView";
 import { ChipGroup, FilteredEmpty, countLabel } from "../components/listControls";
 import { Button, Card, ErrorNote, Notice, SectionTitle, StatusBadge, Toggle, cx, inputClass } from "../components/ui";
@@ -37,7 +38,8 @@ export default function Practice() {
       <ErrorNote error={error} />
       <Card>
         <SectionTitle>Oraqlo contra el mercado</SectionTitle>
-        <p className="mb-3 text-base font-medium">{duelHeadline(summary)}</p>
+        <p className="mb-1 text-base font-medium">{duelHeadline(summary)}</p>
+        {decidedNote(summary) && <p className="mb-3 text-xs text-muted">{decidedNote(summary)}</p>}
         <div className="grid grid-cols-2 gap-3">
           <Stat label="Oraqlo" value={o} better={o != null && m != null && o < m} />
           <Stat label="Polymarket" value={m} better={o != null && m != null && m <= o} />
@@ -47,6 +49,15 @@ export default function Practice() {
           {chance != null && ` Repartir la probabilidad por igual sacaría ${chance.toFixed(3)}.`}
           {o != null && chance != null && o >= chance - 0.01 && " Oraqlo aún no supera al azar en estas preguntas."}
         </p>
+        {s?.research === false && (
+          <Notice tone="warn" className="mt-3">
+            Predice sin investigar en internet, así que va casi a ciegas en preguntas como partidos poco conocidos.{" "}
+            <Link to="/ajustes#busqueda-web" className="font-medium underline">
+              Añade la clave de Ollama
+            </Link>{" "}
+            (gratis) para que busque datos antes de predecir.
+          </Notice>
+        )}
         {s?.advice && (
           <Notice tone="info" className="mt-3">
             Consejo: {s.advice}

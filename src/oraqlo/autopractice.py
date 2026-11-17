@@ -18,7 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
-from oraqlo.forecaster.aggregate import clamp
+from oraqlo.forecaster.aggregate import NO_DATA_NOTE, clamp, temper_without_data
 from oraqlo.forecaster.base import Distribution, Forecast
 from oraqlo.llm.base import LLMProvider
 from oraqlo.llm.jsonchat import JsonChatError, chat_json
@@ -35,7 +35,7 @@ _FORECAST_PROMPT = (
     "Asigna probabilidad a CADA UNO de los resultados dados, usando EXACTAMENTE "
     "esas etiquetas (ni una más, ni una menos); deben sumar 1.0. Empieza por la "
     "tasa base (en casos parecidos, con qué frecuencia pasa cada cosa), ajústala con "
-    "lo específico y evita 0 y 1. Responde SOLO con JSON: "
+    "lo específico y evita 0 y 1. Si no tienes datos concretos de ESTE caso (ranking, forma, cuotas, encuestas, cifras recientes), quédate en la tasa base o cerca del reparto igual: una ventaja que solo intuyes no pasa del 55-60%. Responde SOLO con JSON: "
     '{"base_rate": "<clase de referencia y frecuencia>", '
     '"outcomes": {"<etiqueta>": <prob>, ...}, "assumptions": ["<supuesto>", ...]}'
 )
@@ -186,6 +186,9 @@ class PracticeEngine:
             raise PracticeError("Probabilidades no positivas.")
         outcomes = clamp({k: v / total for k, v in probs.items()})
         assumptions = [str(a) for a in data.get("assumptions", [])]
+        if not context:  # sin investigación: solo intuición
+            outcomes = temper_without_data(outcomes)
+            assumptions.append(NO_DATA_NOTE)
         base_rate = str(data.get("base_rate") or "").strip()
         if base_rate:
             assumptions.append(f"Tasa base: {base_rate}")
@@ -362,6 +365,9 @@ if __name__ == "__main__":
 # ── duelos: Oraqlo frente al mercado, pregunta a pregunta ─────────────────
 
 TIE = 0.005  # diferencias de Brier menores son un empate
+# Si el mercado ya daba ≥98,5% al predecir, el resultado ya se sabía (p. ej. un
+# partido ya jugado y aún abierto en Polymarket): ese duelo no mide nada.
+DECIDED = 0.985
 
 
 def strip_tag(question: str) -> str:
@@ -404,6 +410,7 @@ def duels(ledger: CalibrationLedger) -> dict:
             continue
         (fo, ro), (fm, rm) = pair["oraqlo"], pair["market"]
         done = ro is not None and rm is not None
+        decided = max(fm.distribution.outcomes.values(), default=0.0) >= DECIDED
         actual = ro.actual_outcome if ro is not None and done else None
         label = _focus_label(fo, fm, actual)
         item = {
@@ -421,14 +428,15 @@ def duels(ledger: CalibrationLedger) -> dict:
             "market_brier": rm.brier if done and rm else None,
             "chance_brier": chance_brier(ro) if done and ro else None,
             "winner": None,
+            "already_decided": decided,
         }
-        if done and ro and rm:
+        if done and ro and rm and not decided:
             diff = ro.brier - rm.brier
             item["winner"] = "empate" if abs(diff) < TIE else ("oraqlo" if diff < 0 else "mercado")
         items.append(item)
 
     items.sort(key=lambda d: d["resolved_at"] or d["created_at"] or "", reverse=True)
-    resolved = [d for d in items if d["status"] == "resuelto"]
+    resolved = [d for d in items if d["status"] == "resuelto" and not d["already_decided"]]
 
     def mean(key: str) -> float | None:
         return sum(d[key] for d in resolved) / len(resolved) if resolved else None
@@ -437,7 +445,8 @@ def duels(ledger: CalibrationLedger) -> dict:
         "items": items,
         "summary": {
             "resolved": len(resolved),
-            "open": len(items) - len(resolved),
+            "open": sum(d["status"] == "abierto" for d in items),
+            "already_decided": sum(d["already_decided"] for d in items),
             "won": sum(d["winner"] == "oraqlo" for d in resolved),
             "lost": sum(d["winner"] == "mercado" for d in resolved),
             "tied": sum(d["winner"] == "empate" for d in resolved),

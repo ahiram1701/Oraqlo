@@ -146,6 +146,8 @@ export interface PracticeState {
   last_run: string | null;
   next_run: string | null;
   running: boolean;
+  /** ¿Investiga en internet antes de predecir? (necesita la clave de Ollama) */
+  research?: boolean;
   reliability_oraqlo: number | null;
   reliability_market: number | null;
   advice: string | null;
@@ -170,6 +172,8 @@ export interface Duel {
   market_brier: number | null;
   chance_brier: number | null;
   winner: "oraqlo" | "mercado" | "empate" | null;
+  /** El mercado ya daba el resultado por hecho al predecir: no cuenta. */
+  already_decided?: boolean;
 }
 
 export interface DuelSummary {
@@ -178,6 +182,7 @@ export interface DuelSummary {
   won: number;
   lost: number;
   tied: number;
+  already_decided?: number;
   oraqlo_brier: number | null;
   market_brier: number | null;
   chance_brier: number | null;
