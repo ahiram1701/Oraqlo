@@ -28,6 +28,7 @@ from oraqlo.forecaster.explain import explain
 from oraqlo.forecaster.llm import LLMForecaster
 from oraqlo.goals import GoalStrategist
 from oraqlo.goaltrack import GoalTracker
+from oraqlo.llm.ollama import is_cloud_model
 from oraqlo.llm.registry import ProviderRegistry, provider_info
 from oraqlo.llm.websearch import WEB_SEARCH_KEY_ENV, OllamaWebClient
 from oraqlo.memory import recalibration, scorecard
@@ -549,9 +550,31 @@ class OraqloService:
             except Exception:
                 return True
             have = set(models) | {m.removesuffix(":latest") for m in models}
-            if not wanted <= have:
+            # Un modelo en la nube («…:cloud») no se descarga: basta con que Ollama responda.
+            if not {m for m in wanted if not is_cloud_model(m)} <= have:
                 return True
         return False
+
+    def ollama_status(self) -> dict:
+        """Lo que hace falta saber de Ollama en una pantalla: el del PC, la clave de
+        ollama.com y la búsqueda web (que usa esa misma clave)."""
+        import os
+
+        from oraqlo.services.userconfig import key_hint
+
+        try:
+            self.registry.get("ollama-local").list_models()
+            local = True
+        except Exception:
+            local = False
+        key = os.environ.get(WEB_SEARCH_KEY_ENV)
+        return {
+            "local": local,
+            "key_present": bool(key),
+            "key_hint": key_hint(key) if key else None,
+            "key_env": WEB_SEARCH_KEY_ENV,
+            "web_search": bool(key),
+        }
 
     def report_filename(self, run: dict) -> str:
         return f"{run['created_at'][:10]}-{slugify(run['title'])}.md"

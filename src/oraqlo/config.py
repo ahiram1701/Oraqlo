@@ -130,7 +130,7 @@ class OraqloConfig(BaseModel):
 def default_model_for(provider: str) -> str:
     return {
         "anthropic": "claude-opus-5-5",
-        "ollama-cloud": "gpt-oss:120b-cloud",
+        "ollama-cloud": "gpt-oss:120b",  # en ollama.com, sin el sufijo «-cloud» del PC
         "ollama-local": "llama3.1",
         "openai": "gpt-5",
         "gemini": "gemini-2.5-pro",

@@ -92,6 +92,7 @@ ignore = [
 "tests/test_scorecard.py" = ["F811"]
 "tests/test_duelos.py" = ["F811"]
 "tests/test_explicar.py" = ["F811"]
+"tests/test_ollama_nube.py" = ["F811"]
 "tests/test_prediccion.py" = ["F811"]
 
 # --- tipos ---

@@ -129,12 +129,14 @@ test("la clave de búsqueda web se guarda y se prueba aunque se use Ollama local
       return view();
     },
     "POST /websearch/test": { name: "Investigación web", ok: true, detail: "La búsqueda web responde.", fix: null },
+    "/ollama": () => ({ local: true, key_present: present, key_hint: null, key_env: "OLLAMA_API_KEY", web_search: present }),
   });
   renderAt("/ajustes", <WebSearchCard />);
+  expect(await screen.findByText("Cuenta de Ollama")).toBeInTheDocument();
   const add = await screen.findByRole("button", { name: "Añadir clave" });
   await waitFor(() => expect(add).toBeEnabled()); // se habilita al saber que es el propio PC
   fireEvent.click(add);
-  fireEvent.change(screen.getByLabelText("Clave de búsqueda web (ollama.com)"), { target: { value: "ollama-key-123456" } });
+  fireEvent.change(screen.getByLabelText("Clave de ollama.com"), { target: { value: "ollama-key-123456" } });
   fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
   expect(await screen.findByText(/La búsqueda web responde/)).toBeInTheDocument();
   expect(calls.find((c) => c.method === "PUT")).toMatchObject({ path: "/keys/OLLAMA_API_KEY", body: { value: "ollama-key-123456" } });
@@ -152,4 +154,18 @@ test("Preguntar avisa si se quiere investigar y falta la clave de búsqueda", as
   renderAt("/");
   const link = await screen.findByRole("link", { name: "Añádela en Ajustes" });
   expect(link).toHaveAttribute("href", "/ajustes#busqueda-web");
+});
+
+test("quitar la clave de Ollama avisa de lo que se apaga", async () => {
+  const calls = mockApi({
+    "/setup": { ready: true, needs_setup: false, local: true, legacy_imported: false },
+    "/providers": { ...PROVIDERS, web_search: { api_key_env: "OLLAMA_API_KEY", key_present: true, key_hint: "olla…3456" } },
+    "/ollama": { local: true, key_present: true, key_hint: "olla…3456", key_env: "OLLAMA_API_KEY", web_search: true },
+    "DELETE /keys/OLLAMA_API_KEY": {},
+  });
+  renderAt("/ajustes", <WebSearchCard />);
+  expect(await screen.findByText(/Investigar en internet/)).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: "Quitar" }));
+  expect(await screen.findByText(/Se apagarán la búsqueda en internet/)).toBeInTheDocument();
+  expect(calls.some((c) => c.method === "DELETE")).toBe(false); // aún no: falta confirmar
 });
