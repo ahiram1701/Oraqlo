@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/ahiram1701/Oraqlo/compare/v0.12.0...v0.12.1) (2026-11-17)
+
+
+### Correcciones
+
+* dos detalles de Ajustes ([#68](https://github.com/ahiram1701/Oraqlo/issues/68)) ([bde8e6f](https://github.com/ahiram1701/Oraqlo/commit/bde8e6fd71eeea5e6b4c50acded179e4356b0d8c))
+
 ## [0.12.0](https://github.com/ahiram1701/Oraqlo/compare/v0.11.0...v0.12.0) (2026-11-17)
 
 
