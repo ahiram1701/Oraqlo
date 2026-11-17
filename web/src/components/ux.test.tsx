@@ -40,7 +40,8 @@ describe("ResultCard", () => {
 describe("plainProbability", () => {
   it("usa palabras y frecuencias", () => {
     expect(plainProbability(0.95)).toBe("Casi seguro · ≈10 de cada 10");
-    expect(plainProbability(0.5)).toBe("Incierto · ≈5 de cada 10");
+    expect(plainProbability(0.5)).toBe("Como lanzar una moneda · ≈5 de cada 10");
+    expect(plainProbability(0.61)).toBe("Probable · ≈6 de cada 10"); // antes: «Algo más probable que no»
   });
 });
 

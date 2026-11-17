@@ -210,7 +210,17 @@ export function VerdictBadge({ decision }: { decision: string | undefined }) {
 /** "≈7 de cada 10" y una palabra para la probabilidad: más fácil que un porcentaje solo. */
 export function plainProbability(p: number): string {
   const word =
-    p >= 0.9 ? "Casi seguro" : p >= 0.7 ? "Probable" : p >= 0.55 ? "Algo más probable que no" : p >= 0.45 ? "Incierto" : p >= 0.3 ? "Poco probable" : "Improbable";
+    p >= 0.9
+      ? "Casi seguro"
+      : p >= 0.75
+        ? "Muy probable"
+        : p >= 0.55
+          ? "Probable"
+          : p >= 0.45
+            ? "Como lanzar una moneda"
+            : p >= 0.25
+              ? "Poco probable"
+              : "Muy improbable";
   return `${word} · ≈${Math.round(p * 10)} de cada 10`;
 }
 
