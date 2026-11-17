@@ -10,7 +10,7 @@ export interface JobState<R = any> {
   runId: string | null;
 }
 
-const EVENT_TYPES = ["log", "phase", "forecast", "turn", "verdict", "revision", "fact"];
+const EVENT_TYPES = ["log", "phase", "forecast", "turn", "verdict", "revision", "fact", "questions", "answers"];
 const TERMINAL: string[] = ["done", "failed", "cancelled"];
 const REFRESH = ["ledger", "goals", "runs", "calibration", "practice", "jobs"];
 

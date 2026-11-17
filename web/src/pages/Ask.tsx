@@ -1,13 +1,14 @@
 import { useMutation } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { ClarifyCard } from "../components/Clarify";
 import { HorizonPicker, daysUntil, fromDays, horizonDays, isoInDays, type Horizon } from "../components/HorizonPicker";
 import { Icon } from "../components/icons";
 import { JobTimeline } from "../components/JobView";
 import { ResultCard, resultText } from "../components/ResultCard";
 import { WEB_SEARCH_ANCHOR, useWebSearch } from "../components/WebSearchCard";
 import { Button, Card, ErrorNote, Notice, Toggle, cx, inputClass, useFeedback } from "../components/ui";
-import { ask, type AskMode } from "../lib/api";
+import { ask, isQuestions, type AskMode } from "../lib/api";
 import { useSetup } from "../lib/setup";
 import { useJob, useStoredJob } from "../lib/useJob";
 
@@ -83,6 +84,20 @@ export default function Ask() {
   const [jobId, setJobId] = useStoredJob("ask");
   const [last, setLast] = useState<LastAsk | null>(loadLast);
   const job = useJob(jobId, () => setJobId(null));
+  // El aviso «Oraqlo necesita tu respuesta» abre /?job=<id>: puede venir de otro dispositivo.
+  const location = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    const linked = new URLSearchParams(location.search).get("job");
+    if (!linked) return;
+    setJobId(linked);
+    navigate(location.pathname, { replace: true, state: location.state });
+  }, [location.search]);
+  const questions = job.status === "done" && isQuestions(job.result) ? job.result : null;
+  // Si ya se respondió (quizá desde el otro dispositivo), seguir al análisis que continuó.
+  useEffect(() => {
+    if (questions?.answered_by) setJobId(questions.answered_by);
+  }, [questions?.answered_by]);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const { toast } = useFeedback();
   const setup = useSetup();
@@ -131,7 +146,7 @@ export default function Ask() {
     }
   }
 
-  const done = job.status === "done" && job.result;
+  const done = job.status === "done" && job.result && !questions;
 
   return (
     <div className="space-y-4">
@@ -148,11 +163,16 @@ export default function Ask() {
       {jobId && (
         <Card className="overflow-hidden">
           {done && <ResultCard result={job.result} />}
-          {!done && last?.question && <p className="mb-3 text-sm text-muted">«{last.question}»</p>}
-          <div className={cx(done && "mt-4")}>
-            <JobTimeline job={job} kind={last?.mode} jobId={jobId} research={last?.research} />
+          {!done && (questions?.question ?? last?.question) && (
+            <p className="mb-3 text-sm text-muted">«{questions?.question ?? last?.question}»</p>
+          )}
+          {questions && jobId && !questions.answered_by && (
+            <ClarifyCard key={jobId} jobId={jobId} result={questions} onContinue={setJobId} />
+          )}
+          <div className={cx((done || questions) && "mt-4")}>
+            <JobTimeline job={job} kind={questions?.mode ?? last?.mode} jobId={jobId} research={last?.research} />
           </div>
-          {!busy && (
+          {!busy && !questions && (
             <div className="mt-3 flex flex-wrap gap-2 border-t border-line pt-3">
               <Button
                 variant="secondary"
