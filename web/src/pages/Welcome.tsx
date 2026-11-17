@@ -6,10 +6,10 @@ import WebSearchCard from "../components/WebSearchCard";
 import { LOCAL_ONLY_NOTE, useSetup } from "../lib/setup";
 import { ImportCard } from "../components/SystemCards";
 import { Button, Card, ErrorNote, Notice, SectionTitle, cx, inputClass } from "../components/ui";
-import { api, PROVIDER_INFO, providerLabel, type Check, type ProvidersView } from "../lib/api";
+import { api, PROVIDER_INFO, providerLabel, type Check, type ModelList, type ProvidersView } from "../lib/api";
 
-const FEATURED = ["anthropic", "openai", "gemini", "openrouter", "ollama-local"];
-const OTHERS = ["ollama-cloud", "mistral", "xai", "deepseek", "groq", "lmstudio"];
+const FEATURED = ["anthropic", "openai", "gemini", "openrouter", "ollama-local", "ollama-cloud"];
+const OTHERS = ["mistral", "xai", "deepseek", "groq", "lmstudio"];
 
 function Steps({ step }: { step: number }) {
   return (
@@ -44,19 +44,25 @@ export default function Welcome() {
   // Sin clave (Ollama, LM Studio): se elige uno de los modelos que ya tiene descargados.
   const models = useQuery({
     queryKey: ["models", choice],
-    queryFn: () => api.get<{ models: string[] }>(`/providers/${choice}/models`),
+    queryFn: () => api.get<ModelList>(`/providers/${choice}/models`),
     enabled: step === 1 && !!entry && !needsKey,
     retry: false,
   });
+  const catalog = models.data?.catalog ?? (models.data?.models ?? []).map((name) => ({ name, cloud: false, installed: true }));
   const [model, setModel] = useState("");
-  const pickedModel = model || models.data?.models[0] || null;
+  // Por defecto, uno ya descargado; si no hay, el primero de la nube.
+  const pickedModel = model || catalog.find((m) => m.installed)?.name || catalog[0]?.name || null;
 
   const connect = useMutation({
     mutationFn: async () => {
       if (!entry) throw new Error("Elige un proveedor.");
       if (needsKey && key.trim()) await api.put(`/keys/${entry.api_key_env}`, { value: key });
       await api.put("/config", { roles: { default: { provider: entry.name, model: needsKey ? null : pickedModel } } });
-      return api.post<Check>(`/providers/${entry.name}/test`);
+      // Con un modelo elegido, una prueba de verdad (un mensaje): listar no basta para
+      // un modelo en la nube sin la sesión iniciada en Ollama.
+      return needsKey
+        ? api.post<Check>(`/providers/${entry.name}/test`)
+        : api.post<Check>(`/providers/${entry.name}/test`, { model: pickedModel });
     },
     onSuccess: (check) => {
       setResult(check);
@@ -158,17 +164,35 @@ export default function Welcome() {
             ) : (
               <>
                 <p className="mt-1 mb-3 text-sm text-muted">
-                  No necesita clave. Asegúrate de tenerlo abierto en este PC con al menos un modelo descargado.
+                  No necesita clave. Usa los modelos descargados en este PC y, con la sesión iniciada en la app de
+                  Ollama, también los de la nube (más potentes, sin descargar nada).
                 </p>
-                {models.data?.models.length ? (
+                {catalog.length ? (
                   <label className="grid gap-1 text-sm">
                     <span className="text-muted">Modelo</span>
                     <select className={inputClass} value={pickedModel ?? ""} onChange={(e) => setModel(e.target.value)}>
-                      {models.data.models.map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
-                      ))}
+                      {catalog.some((m) => m.installed) && (
+                        <optgroup label="Descargados en este PC">
+                          {catalog
+                            .filter((m) => m.installed)
+                            .map((m) => (
+                              <option key={m.name} value={m.name}>
+                                {m.name}
+                              </option>
+                            ))}
+                        </optgroup>
+                      )}
+                      {catalog.some((m) => !m.installed) && (
+                        <optgroup label="En la nube (sesión iniciada en Ollama)">
+                          {catalog
+                            .filter((m) => !m.installed)
+                            .map((m) => (
+                              <option key={m.name} value={m.name}>
+                                {m.name}
+                              </option>
+                            ))}
+                        </optgroup>
+                      )}
                     </select>
                   </label>
                 ) : models.isError || models.data ? (

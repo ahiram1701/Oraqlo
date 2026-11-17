@@ -72,7 +72,7 @@ class ProviderRegistry:
         return sorted({*BUILTIN, *self.config.providers})
 
     def get(self, name: str, effort: str | None = None) -> LLMProvider:
-        key = (name, effort if self._kind(name) == "anthropic" else None)
+        key = (name, effort if self._kind(name) in ("anthropic", "ollama") else None)
         if key not in self._cache:
             self._cache[key] = self._build(name, effort)
         return self._cache[key]
@@ -95,7 +95,7 @@ class ProviderRegistry:
                 cfg = OllamaBackendConfig(
                     host=custom.base_url or "http://localhost:11434", api_key_env=custom.api_key_env
                 )
-                return OllamaProvider(cfg)
+                return OllamaProvider(cfg, effort=effort)
             provider = OpenAICompatProvider(
                 preset=custom.preset or name,
                 base_url=custom.base_url,
@@ -106,9 +106,9 @@ class ProviderRegistry:
         if name == "anthropic":
             return AnthropicProvider(effort=effort)
         if name == "ollama-local":
-            return OllamaProvider(OllamaBackendConfig.local())
+            return OllamaProvider(OllamaBackendConfig.local(), effort=effort)
         if name == "ollama-cloud":
-            return OllamaProvider(OllamaBackendConfig.cloud())
+            return OllamaProvider(OllamaBackendConfig.cloud(), effort=effort)
         if name in PRESETS:
             return OpenAICompatProvider(preset=name)
         raise KeyError(f"Proveedor desconocido: {name!r}. Incorporados: {BUILTIN}")

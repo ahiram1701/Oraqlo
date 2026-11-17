@@ -9,11 +9,12 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 
 from oraqlo.config import ROLES, OraqloConfig
+from oraqlo.llm.ollama import is_cloud_model
 from oraqlo.llm.registry import ProviderRegistry, provider_info
 from oraqlo.llm.websearch import OllamaWebClient
 
 WEB_SEARCH_CHECK = "Investigación web"
-WEB_SEARCH_FIX = "Pega tu clave de ollama.com en Ajustes > Búsqueda web."
+WEB_SEARCH_FIX = "Pega tu clave de ollama.com en Ajustes > Cuenta de Ollama."
 
 
 @dataclass
@@ -57,9 +58,9 @@ def probe_provider(registry: ProviderRegistry, name: str) -> Check:
     if info.kind == "ollama" and models:
         have = set(models) | {m.removesuffix(":latest") for m in models}
         config = registry.config
-        missing = sorted(
-            {config.role(r).model for r in ROLES if config.role(r).provider == name} - have
-        )
+        # Los modelos en la nube no se descargan: no tienen por qué estar en la lista.
+        wanted = {config.role(r).model for r in ROLES if config.role(r).provider == name}
+        missing = sorted({m for m in wanted if not is_cloud_model(m)} - have)
         if missing:
             return Check(
                 name,
@@ -74,6 +75,50 @@ def probe_provider(registry: ProviderRegistry, name: str) -> Check:
         else "Responde."
     )
     return Check(name, True, detail)
+
+
+def probe_model(registry: ProviderRegistry, name: str, model: str) -> dict:
+    """Prueba de verdad un modelo: un mensaje mínimo. Listar modelos no basta (un
+    modelo en la nube sin sesión iniciada en Ollama aparece, pero no responde)."""
+    import time
+
+    from oraqlo.llm.base import ChatMessage
+
+    info = provider_info(name, registry.config)
+    if info.key_present is False:
+        return {"ok": False, "detail": f"Falta la clave ({info.api_key_env}).", "seconds": None}
+    start = time.monotonic()
+    try:
+        registry.get(name).chat(
+            [ChatMessage(role="user", content="Responde solo: ok")],
+            model,
+            temperature=0.0,
+            max_tokens=8,
+        )
+    except Exception as e:  # cualquier fallo se explica, no se lanza
+        return {
+            "ok": False,
+            "detail": explain_model_error(str(e) or type(e).__name__),
+            "seconds": None,
+        }
+    seconds = round(time.monotonic() - start, 1)
+    return {"ok": True, "detail": f"Responde ({seconds} s).", "seconds": seconds}
+
+
+def explain_model_error(message: str) -> str:
+    """El error de un modelo, en palabras de la app."""
+    low = message.lower()
+    if "sign in" in low or "inicia sesión" in low:
+        return "Ollama necesita que inicies sesión: abre la app de Ollama → Sign in."
+    if "401" in low or "403" in low or ("clave" in low and "revisa" in low):
+        return "La clave no es válida o no tiene acceso a ese modelo."
+    if "404" in low or "not found" in low:
+        return "Ese modelo no existe con ese nombre. Elige uno del catálogo."
+    if "no se pudo conectar" in low or "connection" in low:
+        return "No responde: ¿está Ollama abierto en este PC?"
+    if "tardó más" in low:
+        return message
+    return f"No responde: {message[:240]}"
 
 
 def web_search_check(web: OllamaWebClient | None = None) -> Check:

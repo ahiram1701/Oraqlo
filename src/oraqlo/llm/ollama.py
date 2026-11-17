@@ -25,6 +25,54 @@ class OllamaUnavailableError(ProviderUnavailableError):
     """El backend no está accesible (Ollama apagado, sin red, o falta la API key)."""
 
 
+# ── modelos en la nube de Ollama ──────────────────────────────────────────
+#
+# Se llega a ellos de dos formas: con el Ollama del PC (sesión iniciada en la app) y
+# un nombre con sufijo («deepseek-v4.1-flash:cloud», «gpt-oss:120b-cloud»), o con la
+# clave contra ollama.com, donde el mismo modelo se llama sin sufijo («gpt-oss:120b»).
+
+CLOUD_HOST = "https://ollama.com"
+_CLOUD_SUFFIXES = (":cloud", "-cloud")
+
+
+def is_cloud_model(name: str) -> bool:
+    """¿Es un modelo en la nube usado a través del Ollama del PC?"""
+    return name.endswith(_CLOUD_SUFFIXES)
+
+
+def api_cloud_name(name: str) -> str:
+    """El nombre que espera ollama.com (sin «:cloud»/«-cloud»)."""
+    for suffix in _CLOUD_SUFFIXES:
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
+def local_cloud_name(name: str) -> str:
+    """El nombre con que el Ollama del PC llama a un modelo de ollama.com."""
+    return f"{name}-cloud" if ":" in name else f"{name}:cloud"
+
+
+def _think(model: str, effort: str | None) -> bool | str | None:
+    """El «esfuerzo» del rol, en el parámetro `think` de Ollama: gpt-oss acepta niveles;
+    los demás modelos que razonan, solo encendido o apagado."""
+    if not effort:
+        return None
+    if api_cloud_name(model).startswith("gpt-oss"):
+        return {"xhigh": "high", "max": "high"}.get(effort, effort)
+    return True
+
+
+def fetch_cloud_catalog(timeout_s: float = 8.0) -> list[dict]:
+    """Catálogo público de modelos en la nube de ollama.com (no necesita clave)."""
+    try:
+        with urllib.request.urlopen(f"{CLOUD_HOST}/api/tags", timeout=timeout_s) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return []
+    return [m for m in data.get("models", []) if isinstance(m, dict) and m.get("name")]
+
+
 @dataclass
 class OllamaBackendConfig:
     """Configuración de un backend Ollama.
@@ -45,7 +93,7 @@ class OllamaBackendConfig:
 
     @classmethod
     def cloud(cls, api_key_env: str = "OLLAMA_API_KEY") -> OllamaBackendConfig:
-        return cls(host="https://ollama.com", api_key_env=api_key_env)
+        return cls(host=CLOUD_HOST, api_key_env=api_key_env)
 
 
 class OllamaProvider(LLMProvider):
@@ -53,9 +101,16 @@ class OllamaProvider(LLMProvider):
 
     supports_json_schema = True  # `format` acepta un JSON Schema completo
 
-    def __init__(self, config: OllamaBackendConfig | None = None) -> None:
+    def __init__(
+        self, config: OllamaBackendConfig | None = None, effort: str | None = None
+    ) -> None:
         self.config = config or OllamaBackendConfig.local()
         self.name = "ollama-cloud" if self.config.api_key_env else "ollama-local"
+        self.effort = effort
+
+    @property
+    def is_cloud(self) -> bool:
+        return self.config.host.rstrip("/") == CLOUD_HOST
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -78,12 +133,17 @@ class OllamaProvider(LLMProvider):
         json_mode: bool = False,
         **kwargs: Any,
     ) -> LLMResponse:
+        if self.is_cloud:
+            model = api_cloud_name(model)  # ollama.com no usa el sufijo del Ollama del PC
         payload: dict = {
             "model": model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
             "stream": False,
             "options": {"temperature": temperature},
         }
+        think = _think(model, self.effort)
+        if think is not None:
+            payload["think"] = think
         schema = kwargs.get("json_schema")
         if schema is not None:
             payload["format"] = schema
@@ -179,3 +239,30 @@ class OllamaProvider(LLMProvider):
         return sorted(
             str(m["name"]) for m in data.get("models", []) if isinstance(m, dict) and m.get("name")
         )
+
+    def catalog(self) -> list[dict]:
+        """Modelos para elegir, con `cloud` y tamaño. En el Ollama del PC, además de los
+        descargados, los de la nube de ollama.com (con el nombre que el PC entiende)."""
+        out: dict[str, dict] = {}
+        for m in self._get_json("/api/tags").get("models", []):
+            if isinstance(m, dict) and m.get("name"):
+                name = str(m["name"])
+                out[name] = {
+                    "name": name,
+                    "cloud": self.is_cloud or is_cloud_model(name),
+                    "size": m.get("size") or None,
+                    "installed": not self.is_cloud,
+                }
+        if not self.is_cloud:
+            for m in fetch_cloud_catalog():
+                name = local_cloud_name(str(m["name"]))
+                out.setdefault(
+                    name,
+                    {
+                        "name": name,
+                        "cloud": True,
+                        "size": m.get("size") or None,
+                        "installed": False,
+                    },
+                )
+        return sorted(out.values(), key=lambda m: (m["cloud"], m["name"]))
