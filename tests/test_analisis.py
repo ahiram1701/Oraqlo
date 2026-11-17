@@ -49,12 +49,17 @@ def test_analisis_completo_ancla_el_borrador_y_no_repite_la_prevision(env, monke
     )
     # El redactor recibe la previsión calibrada como ancla.
     assert contexts and "Previsión calibrada de Oraqlo" in (contexts[0] or "")
-    assert "- sube: 70%" in (contexts[0] or "")
+    # Sin investigación el 70% del modelo se suaviza (prudencia sin datos): 66%.
+    assert "- sube: 66%" in (contexts[0] or "")
     # Se previó una sola vez (3 muestras), antes de redactar.
     assert phases.index("prever") < phases.index("redactar")
     sources = [f.source for f in service.store.ledger.open_forecasts]
     assert sum(s.endswith(":prevision") for s in sources) == 1
-    assert result["forecast"]["outcomes"] == {"sube": 0.7, "baja": 0.3}
+    from oraqlo.forecaster.aggregate import temper_without_data
+
+    assert result["forecast"]["outcomes"] == pytest.approx(
+        temper_without_data({"sube": 0.7, "baja": 0.3})
+    )
 
 
 def test_la_probabilidad_del_panel_queda_en_predicciones(env, monkeypatch):

@@ -86,3 +86,14 @@ def power(outcomes: dict[str, float], a: float) -> dict[str, float]:
     weights = {k: p**a for k, p in safe.items()}
     total = sum(weights.values())
     return {k: w / total for k, w in weights.items()}
+
+
+# Sin datos concretos (ni investigación ni observaciones), la seguridad del modelo
+# es intuición: en la práctica real, con dos tenistas que no conocía daba 70% y
+# fallaba con Brier ~0.9. Se suaviza hacia el reparto igual antes de recalibrar.
+NO_DATA_FACTOR = 0.8
+NO_DATA_NOTE = f"Sin datos concretos: probabilidades suavizadas hacia el reparto igual (factor {NO_DATA_FACTOR})."
+
+
+def temper_without_data(outcomes: dict[str, float]) -> dict[str, float]:
+    return clamp(power(outcomes, NO_DATA_FACTOR))

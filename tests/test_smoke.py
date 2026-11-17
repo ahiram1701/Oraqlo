@@ -804,8 +804,13 @@ def test_practice_resuelve_ambas_con_el_ganador():
     resolved = engine.resolve_due()
     assert len(resolved) == 2 and ledger.open_forecasts == []
     briers = {r.forecast.source: r.brier for r in resolved}
-    # Oraqlo dijo 80% Yes y salió No: castigo fuerte. El mercado (35% Yes) sufre menos.
-    assert briers["llm:fake"] == pytest.approx(1.28)
+    # Oraqlo dijo 80% Yes (suavizado por predecir sin investigar) y salió No: castigo
+    # fuerte, aunque menor que sin la prudencia (1.28). El mercado (35% Yes) sufre menos.
+    from oraqlo.forecaster.aggregate import temper_without_data
+    from oraqlo.memory.calibration import multiclass_brier
+
+    expected = multiclass_brier(temper_without_data({"Yes": 0.8, "No": 0.2}), "No")
+    assert briers["llm:fake"] == pytest.approx(expected) and expected < 1.28
     assert briers["polymarket:mercado"] == pytest.approx(2 * 0.35**2)
 
 

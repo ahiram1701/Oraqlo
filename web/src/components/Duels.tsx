@@ -21,6 +21,14 @@ export function duelHeadline(s: DuelSummary | undefined): string {
   return `Oraqlo gana ${s.won} de ${s.resolved} duelos${ties}.`;
 }
 
+/** Los duelos que no cuentan: el mercado ya sabía el resultado al predecir. */
+export function decidedNote(s: DuelSummary | undefined): string | null {
+  const n = s?.already_decided ?? 0;
+  return n
+    ? `${n} no cuenta${n > 1 ? "n" : ""}: cuando Oraqlo predijo, el mercado ya sabía el resultado (p. ej. un partido ya jugado).`
+    : null;
+}
+
 export function filterDuels(items: Duel[], filter: DuelFilter): Duel[] {
   if (filter === "ganados") return items.filter((d) => d.winner === "oraqlo");
   if (filter === "perdidos") return items.filter((d) => d.winner === "mercado");
@@ -55,6 +63,8 @@ function DuelRow({ d }: { d: Duel }) {
       <Badge tone="bad">Ganó el mercado</Badge>
     ) : d.winner === "empate" ? (
       <Badge>Empate</Badge>
+    ) : d.already_decided ? (
+      <Badge>Ya se sabía</Badge>
     ) : (
       <Badge tone="accent">Abierto</Badge>
     );

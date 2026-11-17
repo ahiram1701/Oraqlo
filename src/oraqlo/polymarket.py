@@ -37,6 +37,30 @@ class Market:
     raw: dict = field(default_factory=dict)
 
 
+DECIDED_PRICE = 0.97
+
+
+def already_decided(market: Market, now: datetime) -> bool:
+    """Polymarket deja abiertos hasta su fecha de cierre partidos ya jugados: el precio
+    ya marca el resultado y predecirlos no enseña nada (ni el duelo con el mercado es
+    justo). Se descartan los de precio casi seguro, los que ya no aceptan órdenes y
+    los partidos que ya empezaron."""
+    if market.outcomes and max(market.outcomes.values()) >= DECIDED_PRICE:
+        return True
+    raw = market.raw or {}
+    if raw.get("acceptingOrders") is False:
+        return True
+    start = raw.get("gameStartTime") or raw.get("eventStartTime")
+    if start:
+        with contextlib.suppress(ValueError, TypeError):
+            when = datetime.fromisoformat(str(start).replace("Z", "+00:00").replace(" ", "T"))
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=UTC)
+            if when <= now:
+                return True
+    return False
+
+
 def _parse_market(data: dict) -> Market:
     try:
         labels = json.loads(data.get("outcomes") or "[]")
@@ -119,6 +143,8 @@ class PolymarketClient:
             if not min_days_to_close <= days <= max_days_to_close:
                 continue
             if market.volume_24h < min_volume_24h:
+                continue
+            if already_decided(market, now):
                 continue
             markets.append(market)
             if len(markets) >= limit:

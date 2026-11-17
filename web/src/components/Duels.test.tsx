@@ -55,3 +55,14 @@ describe("Duelos con el mercado", () => {
     expect(displayQuestion("¿Lloverá?")).toBe("¿Lloverá?");
   });
 });
+
+describe("Duelos ya decididos al predecir", () => {
+  it("se explican y no cuentan", async () => {
+    const { decidedNote } = await import("./Duels");
+    const s = { resolved: 7, open: 14, won: 1, lost: 6, tied: 0, already_decided: 11, oraqlo_brier: 0.43, market_brier: 0.29, chance_brier: 0.5 };
+    expect(decidedNote(s)).toMatch(/^11 no cuentan: cuando Oraqlo predijo, el mercado ya sabía el resultado/);
+    expect(decidedNote({ ...s, already_decided: 0 })).toBeNull();
+    render(<DuelsCard items={[duel("9", { winner: null, already_decided: true })]} />);
+    expect(screen.getByText("Ya se sabía")).toBeInTheDocument();
+  });
+});
