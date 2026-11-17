@@ -247,13 +247,32 @@ export interface Check {
 export type UpdateMode = ConfigView["updates_mode"];
 
 /** Nombres amables y dónde conseguir la clave de cada proveedor. */
+/** Modelos de un proveedor: nombres y, en Ollama, el catálogo con los de la nube. */
+export interface CatalogModel {
+  name: string;
+  cloud: boolean;
+  size?: number | null;
+  installed: boolean;
+}
+export interface ModelList {
+  models: string[];
+  catalog?: CatalogModel[];
+}
+
 export const PROVIDER_INFO: Record<string, { label: string; keyUrl?: string; note?: string }> = {
   anthropic: { label: "Claude (Anthropic)", keyUrl: "https://console.anthropic.com/settings/keys", note: "Recomendado" },
   openai: { label: "OpenAI (ChatGPT)", keyUrl: "https://platform.openai.com/api-keys" },
   gemini: { label: "Google Gemini", keyUrl: "https://aistudio.google.com/apikey" },
   openrouter: { label: "OpenRouter", keyUrl: "https://openrouter.ai/keys", note: "Muchos modelos con una clave" },
-  "ollama-cloud": { label: "Ollama Cloud", keyUrl: "https://ollama.com/settings/keys" },
-  "ollama-local": { label: "Ollama en este PC", note: "Gratis y sin clave; necesita Ollama abierto" },
+  "ollama-cloud": {
+    label: "Ollama Cloud",
+    keyUrl: "https://ollama.com/settings/keys",
+    note: "Modelos en la nube con la clave de tu Cuenta de Ollama; no hace falta instalar nada",
+  },
+  "ollama-local": {
+    label: "Ollama en este PC",
+    note: "Gratis y sin clave; con la sesión iniciada en la app de Ollama también usa modelos «:cloud»",
+  },
   mistral: { label: "Mistral", keyUrl: "https://console.mistral.ai/api-keys" },
   xai: { label: "xAI (Grok)", keyUrl: "https://console.x.ai" },
   deepseek: { label: "DeepSeek", keyUrl: "https://platform.deepseek.com/api_keys" },

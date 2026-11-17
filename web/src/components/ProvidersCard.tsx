@@ -139,7 +139,7 @@ export default function ProvidersCard() {
   const used = new Set(providers.data?.roles.map((r) => r.provider));
   const local = setup.data?.local ?? false;
   const list = (providers.data?.providers ?? [])
-    .filter((p) => all || used.has(p.name) || p.key_present || ["anthropic", "openai", "gemini"].includes(p.name))
+    .filter((p) => all || used.has(p.name) || p.key_present || ["anthropic", "openai", "gemini", "ollama-cloud"].includes(p.name))
     .sort((a, b) => Number(used.has(b.name)) - Number(used.has(a.name)));
 
   return (

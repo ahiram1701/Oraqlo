@@ -36,7 +36,7 @@ from oraqlo.api.auth import AuthError, check_request, identify
 from oraqlo.casefile import CaseError, case_to_dict, parse_case, template_json
 from oraqlo.goaltrack import MILESTONE_STATUSES, GoalTracker, GoalTrackError
 from oraqlo.services.core import OraqloService
-from oraqlo.services.doctor import probe_provider, probe_web_search, run_checks
+from oraqlo.services.doctor import probe_model, probe_provider, probe_web_search, run_checks
 from oraqlo.services.jobs import TERMINAL, JobRunner
 from oraqlo.services.network import (
     HTTPS_PORT,
@@ -63,6 +63,10 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 
 # ── esquemas de entrada ──────────────────────────────────────────────────
+
+
+class ModelTestIn(BaseModel):
+    model: str | None = Field(None, max_length=200)
 
 
 class AskIn(BaseModel):
@@ -647,17 +651,33 @@ def create_app(
     @app.get("/api/providers/{name}/models")
     def provider_models(name: str) -> dict:
         try:
-            return {"models": service.registry.get(name).list_models()}
+            provider = service.registry.get(name)
+            models = provider.list_models()
         except KeyError as e:
             raise HTTPException(404, _message(e)) from e
         except Exception as e:
             raise HTTPException(502, str(e)) from e
+        # Ollama: con los modelos de la nube y si están en el PC (para elegir sin teclear).
+        catalog_fn = getattr(provider, "catalog", None)
+        try:
+            catalog = catalog_fn() if callable(catalog_fn) else None
+        except Exception:
+            catalog = None
+        if catalog is None:
+            catalog = [{"name": m, "cloud": False, "size": None, "installed": True} for m in models]
+        return {"models": models, "catalog": catalog}
 
     @app.post("/api/providers/{name}/test")
-    def provider_test(name: str) -> dict:
+    def provider_test(name: str, body: ModelTestIn | None = None) -> dict:
         if name not in service.registry.names():
             raise HTTPException(404, f"Proveedor desconocido: {name}")
+        if body is not None and body.model:
+            return probe_model(service.registry, name, body.model)
         return probe_provider(service.registry, name).as_dict()
+
+    @app.get("/api/ollama")
+    def ollama_status() -> dict:
+        return service.ollama_status()
 
     @app.post("/api/websearch/test")
     def websearch_test() -> dict:
