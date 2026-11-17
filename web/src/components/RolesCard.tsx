@@ -1,8 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { api, providerLabel, ROLE_LABELS, type ConfigView, type ProvidersView, type RoleSettings } from "../lib/api";
+import {
+  api,
+  providerLabel,
+  ROLE_LABELS,
+  type CatalogModel,
+  type ConfigView,
+  type ModelList,
+  type ProvidersView,
+  type RoleSettings,
+} from "../lib/api";
 import { LOCAL_ONLY_NOTE, useSetup } from "../lib/setup";
-import { Button, Card, ErrorNote, SectionTitle, cx, inputClass } from "./ui";
+import { Badge, Button, Card, ErrorNote, SectionTitle, cx, inputClass, useFeedback } from "./ui";
 
 const EFFORTS: [string, string][] = [
   ["low", "Bajo (rápido)"],
@@ -12,14 +21,102 @@ const EFFORTS: [string, string][] = [
   ["max", "Máximo (más lento)"],
 ];
 
+const OTHER = "__otro__";
+
 function useModels(provider: string | undefined) {
   return useQuery({
     queryKey: ["models", provider],
-    queryFn: () => api.get<{ models: string[] }>(`/providers/${provider}/models`),
+    queryFn: () => api.get<ModelList>(`/providers/${provider}/models`),
     enabled: !!provider,
     retry: false,
     staleTime: 5 * 60_000,
   });
+}
+
+/** El catálogo del proveedor; sin él (proveedores que solo listan nombres), los nombres. */
+export function catalogOf(data: ModelList | undefined): CatalogModel[] {
+  return data?.catalog ?? (data?.models ?? []).map((name) => ({ name, cloud: false, installed: true }));
+}
+
+/** Los proveedores que entienden el «esfuerzo de razonamiento». */
+export function supportsEffort(kind: string | undefined): boolean {
+  return kind === "anthropic" || kind === "ollama";
+}
+
+function sizeLabel(bytes?: number | null) {
+  if (!bytes) return "";
+  const gb = bytes / 1e9;
+  return gb >= 1 ? ` · ${gb >= 100 ? Math.round(gb) : gb.toFixed(1)} GB` : "";
+}
+
+function ModelPicker({
+  catalog,
+  value,
+  placeholder,
+  onChange,
+}: {
+  catalog: CatalogModel[];
+  value: string;
+  placeholder: string;
+  onChange: (v: string) => void;
+}) {
+  const known = catalog.some((m) => m.name === value);
+  const [typing, setTyping] = useState(!!value && !known && catalog.length > 0);
+  const installed = catalog.filter((m) => m.installed);
+  const remote = catalog.filter((m) => !m.installed);
+
+  if (!catalog.length || typing) {
+    return (
+      <>
+        <input
+          className={inputClass}
+          aria-label="Modelo"
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        {catalog.length > 0 && (
+          <span className="text-xs text-muted">
+            {value && !known && "Ese nombre no está en el catálogo: compruébalo con «Probar». "}
+            <button type="button" className="underline" onClick={() => setTyping(false)}>
+              Elegir de la lista
+            </button>
+          </span>
+        )}
+      </>
+    );
+  }
+  return (
+    <select
+      className={inputClass}
+      aria-label="Modelo"
+      value={value}
+      onChange={(e) => (e.target.value === OTHER ? (setTyping(true), onChange("")) : onChange(e.target.value))}
+    >
+      <option value="">{placeholder}</option>
+      {installed.length > 0 && (
+        <optgroup label={remote.length ? "Descargados en este PC" : "Disponibles"}>
+          {installed.map((m) => (
+            <option key={m.name} value={m.name}>
+              {m.name}
+              {m.cloud ? " (nube)" : ""}
+              {sizeLabel(m.size)}
+            </option>
+          ))}
+        </optgroup>
+      )}
+      {remote.length > 0 && (
+        <optgroup label="En la nube de Ollama">
+          {remote.map((m) => (
+            <option key={m.name} value={m.name}>
+              {m.name}
+            </option>
+          ))}
+        </optgroup>
+      )}
+      <option value={OTHER}>Otro (escribir el nombre)…</option>
+    </select>
+  );
 }
 
 function RoleEditor({
@@ -32,6 +129,7 @@ function RoleEditor({
   onClose: () => void;
 }) {
   const qc = useQueryClient();
+  const { confirm } = useFeedback();
   const own = view.configured[role] ?? {};
   const resolved = view.roles.find((r) => r.name === role) ?? view.roles[0];
   const [form, setForm] = useState<RoleSettings>({
@@ -41,7 +139,17 @@ function RoleEditor({
     temperature: own.temperature ?? null,
   });
   const provider = form.provider || resolved?.provider;
+  const kind = view.providers.find((p) => p.name === provider)?.kind;
   const models = useModels(provider);
+  const catalog = catalogOf(models.data);
+  // El modelo que se usará de verdad si se deja vacío.
+  const fallback = form.provider && form.provider !== resolved?.provider ? "el recomendado del proveedor" : resolved?.model;
+  const effective = form.model || (form.provider && form.provider !== resolved?.provider ? "" : resolved?.model) || "";
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ["providers"] });
+    qc.invalidateQueries({ queryKey: ["setup"] });
+  };
   const save = useMutation({
     mutationFn: () =>
       api.put<ConfigView>("/config", {
@@ -55,18 +163,38 @@ function RoleEditor({
         },
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["providers"] });
-      qc.invalidateQueries({ queryKey: ["setup"] });
+      refresh();
       onClose();
     },
+  });
+  // «Todos» → aplicar a todos: los roles dejan de tener ajustes propios y heredan.
+  const applyAll = useMutation({
+    mutationFn: async () => {
+      const reset = Object.fromEntries(
+        view.roles.map((r) => [r.name, { provider: null, model: null, effort: null, temperature: null }]),
+      );
+      await api.put<ConfigView>("/config", {
+        roles: {
+          ...reset,
+          default: { provider: form.provider || null, model: form.model || null, effort: form.effort || null, temperature: form.temperature ?? null },
+        },
+      });
+    },
+    onSuccess: () => {
+      refresh();
+      onClose();
+    },
+  });
+  const test = useMutation({
+    mutationFn: () => api.post<{ ok: boolean; detail: string }>(`/providers/${provider}/test`, { model: effective }),
   });
   // Al cambiar de proveedor, el modelo anterior ya no aplica.
   useEffect(() => {
     if (form.provider !== (own.provider ?? "")) setForm((f) => ({ ...f, model: "" }));
+    test.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.provider]);
 
-  const listId = `models-${role}`;
   return (
     <form
       className="mt-2 grid gap-3 rounded-xl bg-surface-2 p-3"
@@ -82,7 +210,7 @@ function RoleEditor({
           value={form.provider ?? ""}
           onChange={(e) => setForm({ ...form, provider: e.target.value })}
         >
-          <option value="">{role === "default" ? "Automático (según tus claves)" : "Igual que «Todos»"}</option>
+          <option value="">{role === "default" ? "Automático (según tus claves)" : `Igual que «Todos» (${providerLabel(resolved?.provider ?? "")})`}</option>
           {view.providers.map((p) => (
             <option key={p.name} value={p.name}>
               {providerLabel(p.name)}
@@ -91,23 +219,21 @@ function RoleEditor({
           ))}
         </select>
       </label>
-      <label className="grid gap-1 text-sm">
+      <div className="grid gap-1 text-sm">
         <span className="text-muted">Modelo</span>
-        <input
-          className={inputClass}
-          list={listId}
-          placeholder={form.provider ? "El recomendado" : resolved?.model}
+        <ModelPicker
+          key={provider}
+          catalog={catalog}
           value={form.model ?? ""}
-          onChange={(e) => setForm({ ...form, model: e.target.value })}
+          placeholder={`Sin cambiar: ${fallback ?? "—"}`}
+          onChange={(model) => {
+            setForm({ ...form, model });
+            test.reset();
+          }}
         />
-        <datalist id={listId}>
-          {models.data?.models.map((m) => (
-            <option key={m} value={m} />
-          ))}
-        </datalist>
-        {models.isError && <span className="text-xs text-muted">No pude listar los modelos (¿falta la clave?).</span>}
-      </label>
-      {provider === "anthropic" ? (
+        {models.isError && <span className="text-xs text-muted">No pude listar los modelos (¿falta la clave o está cerrado Ollama?).</span>}
+      </div>
+      {supportsEffort(kind) ? (
         <label className="grid gap-1 text-sm">
           <span className="text-muted">Esfuerzo de razonamiento</span>
           <select className={inputClass} value={form.effort ?? ""} onChange={(e) => setForm({ ...form, effort: e.target.value })}>
@@ -118,8 +244,10 @@ function RoleEditor({
               </option>
             ))}
           </select>
+          {kind === "ollama" && <span className="text-xs text-muted">Solo en modelos que razonan (gpt-oss, deepseek, qwen3…).</span>}
         </label>
-      ) : (
+      ) : null}
+      {kind !== "anthropic" && (
         <label className="grid gap-1 text-sm">
           <span className="text-muted">Temperatura (creatividad, 0–2)</span>
           <input
@@ -134,38 +262,77 @@ function RoleEditor({
           />
         </label>
       )}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button type="submit" disabled={save.isPending}>
           Guardar
         </Button>
+        <Button type="button" variant="secondary" disabled={!effective || test.isPending} onClick={() => test.mutate()}>
+          {test.isPending ? "Probando…" : "Probar"}
+        </Button>
+        {role === "default" && view.roles.some((r) => Object.keys(view.configured[r.name] ?? {}).length > 0) && (
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={applyAll.isPending}
+            onClick={async () => {
+              const ok = await confirm({
+                title: "¿Usar esto en todos los roles?",
+                body: "Los roles que tenían su propio modelo volverán a usar el de «Todos».",
+                confirm: "Aplicar a todos",
+              });
+              if (ok) applyAll.mutate();
+            }}
+          >
+            Aplicar a todos los roles
+          </Button>
+        )}
         <Button type="button" variant="ghost" onClick={onClose}>
           Cancelar
         </Button>
       </div>
-      <ErrorNote error={save.error} />
+      {test.data && (
+        <p className={cx("text-sm", test.data.ok ? "text-good" : "text-bad")}>
+          {test.data.ok ? "✓ " : "✗ "}
+          {effective} · {test.data.detail}
+        </p>
+      )}
+      <ErrorNote error={save.error ?? applyAll.error ?? test.error} />
     </form>
   );
 }
 
+/** ¿Tiene el rol ajustes propios (o hereda todo de «Todos»)? */
+export function hasOwnSettings(settings: RoleSettings | undefined): boolean {
+  return !!settings && Object.values(settings).some((v) => v !== null && v !== undefined && v !== "");
+}
+
 export default function RolesCard() {
+  const qc = useQueryClient();
   const providers = useQuery({ queryKey: ["providers"], queryFn: () => api.get<ProvidersView>("/providers") });
   const setup = useSetup();
   const [open, setOpen] = useState<string | null>(null);
   const view = providers.data;
   const local = setup.data?.local ?? false;
   const def = view?.configured.default;
+  const reset = useMutation({
+    mutationFn: (role: string) =>
+      api.put<ConfigView>("/config", { roles: { [role]: { provider: null, model: null, effort: null, temperature: null } } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["providers"] }),
+  });
 
   return (
     <Card>
       <SectionTitle>Modelos del panel</SectionTitle>
       <p className="mb-2 text-sm text-muted">
-        Cada rol del debate puede usar un proveedor y un modelo distinto. Lo que no cambies usa el de «Todos».
+        Cada rol del debate puede usar un proveedor y un modelo distinto. Lo que no cambies usa el de «Todos» (si un rol
+        cambia de proveedor, usa el modelo recomendado de ese proveedor).
         {!local && ` ${LOCAL_ONLY_NOTE}`}
       </p>
       {view && (
         <ul className="divide-y divide-line text-sm">
           {["default", ...view.roles.map((r) => r.name)].map((role) => {
             const r = role === "default" ? null : view.roles.find((x) => x.name === role);
+            const mine = role !== "default" && hasOwnSettings(view.configured[role]);
             const summary =
               role === "default"
                 ? def?.provider
@@ -176,11 +343,27 @@ export default function RolesCard() {
               <li key={role} className="py-2">
                 <div className="flex items-center gap-2">
                   <span className={cx("font-medium", role === "default" && "text-accent")}>{ROLE_LABELS[role] ?? role}</span>
-                  <span className="ml-auto min-w-0 truncate text-muted">{summary}</span>
+                  {mine && <Badge tone="accent">propio</Badge>}
+                  <span className="ml-auto min-w-0 truncate text-muted" title={summary}>
+                    {summary}
+                  </span>
                   {local && open !== role && (
-                    <Button variant="ghost" className="-my-2 shrink-0 px-2" onClick={() => setOpen(role)}>
-                      Cambiar
-                    </Button>
+                    <>
+                      {mine && (
+                        <Button
+                          variant="ghost"
+                          className="-my-2 shrink-0 px-2"
+                          title="Volver a usar el de «Todos»"
+                          disabled={reset.isPending}
+                          onClick={() => reset.mutate(role)}
+                        >
+                          Restablecer
+                        </Button>
+                      )}
+                      <Button variant="ghost" className="-my-2 shrink-0 px-2" onClick={() => setOpen(role)}>
+                        Cambiar
+                      </Button>
+                    </>
                   )}
                 </div>
                 {open === role && <RoleEditor role={role} view={view} onClose={() => setOpen(null)} />}
@@ -189,7 +372,7 @@ export default function RolesCard() {
           })}
         </ul>
       )}
-      <ErrorNote error={providers.error} />
+      <ErrorNote error={providers.error ?? reset.error} />
     </Card>
   );
 }
