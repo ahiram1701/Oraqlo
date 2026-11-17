@@ -83,3 +83,28 @@ describe("Modelos del panel", () => {
     expect(calls.find((c) => c.path === "/providers/ollama-local/test")?.body).toEqual({ model: "gpt-oss:120b-cloud" });
   });
 });
+
+describe("Probar usa lo que se aplicará de verdad", () => {
+  const base = {
+    providers: [],
+    roles: [],
+    auto: { provider: "anthropic", model: "claude-opus-5-5" },
+    default_models: { "ollama-local": "llama3.1", "ollama-cloud": "gpt-oss:120b", anthropic: "claude-opus-5-5" },
+    configured: { default: { provider: "ollama-local", model: "deepseek-v4.1-flash:cloud" }, oraculo: { model: "viejo:cloud" } },
+  } as any;
+
+  it("un rol que borra su modelo propio hereda el de «Todos», no el que tenía", async () => {
+    const { resolveRole } = await import("./RolesCard");
+    expect(resolveRole(base, "oraculo", { model: "" })).toEqual({ provider: "ollama-local", model: "deepseek-v4.1-flash:cloud" });
+  });
+
+  it("si cambia de proveedor, usa el recomendado de ese proveedor", async () => {
+    const { resolveRole } = await import("./RolesCard");
+    expect(resolveRole(base, "juez", { provider: "ollama-cloud", model: "" })).toEqual({ provider: "ollama-cloud", model: "gpt-oss:120b" });
+  });
+
+  it("«Todos» sin proveedor usa la elección automática", async () => {
+    const { resolveRole } = await import("./RolesCard");
+    expect(resolveRole(base, "default", { provider: "", model: "" })).toEqual({ provider: "anthropic", model: "claude-opus-5-5" });
+  });
+});

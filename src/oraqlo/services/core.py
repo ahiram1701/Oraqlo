@@ -19,7 +19,12 @@ from typing import Any
 
 from oraqlo.agent import OraqloAgent
 from oraqlo.casefile import CaseSpec, case_to_dict, parse_case
-from oraqlo.config import OraqloConfig, load_config
+from oraqlo.config import (
+    OraqloConfig,
+    default_model_for,
+    default_provider_and_model,
+    load_config,
+)
 from oraqlo.drafter import draft_case
 from oraqlo.forecaster.aggregate import clamp
 from oraqlo.forecaster.base import Distribution, Forecast, Forecaster
@@ -508,6 +513,10 @@ class OraqloService:
             "providers": [entry(n) for n in self.registry.names()],
             "roles": [self.config.role(r).model_dump() for r in ROLES],
             "configured": toml_roles(self.config.home),
+            # Para que la app resuelva un rol igual que config.role() con cambios aún
+            # sin guardar (p. ej. qué modelo se usará si el campo queda vacío).
+            "auto": dict(zip(("provider", "model"), default_provider_and_model(), strict=True)),
+            "default_models": {n: default_model_for(n) for n in self.registry.names()},
             "web_search": {
                 "api_key_env": WEB_SEARCH_KEY_ENV,
                 "key_present": bool(web_key),

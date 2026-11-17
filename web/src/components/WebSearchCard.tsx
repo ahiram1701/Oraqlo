@@ -33,6 +33,14 @@ function Row({ ok, label, detail }: { ok: boolean; label: string; detail: string
 export const WEB_SEARCH_KEY_URL = "https://ollama.com/settings/keys";
 export const WEB_SEARCH_ANCHOR = "busqueda-web";
 
+/** Quitar la clave de Ollama apaga dos cosas: se avisa igual venga de donde venga. */
+export const OLLAMA_KEY_REMOVAL = {
+  title: "¿Quitar la clave de Ollama?",
+  body: "Se apagarán la búsqueda en internet y los modelos de «Ollama Cloud». Los modelos del Ollama de este PC siguen funcionando.",
+  confirm: "Quitar",
+  danger: true,
+};
+
 /** Estado de la clave de búsqueda web (es la misma con cualquier modelo de IA). */
 export function useWebSearch() {
   const providers = useQuery({ queryKey: ["providers"], queryFn: () => api.get<ProvidersView>("/providers") });
@@ -178,12 +186,7 @@ export default function WebSearchCard() {
               variant="ghost"
               disabled={remove.isPending}
               onClick={async () => {
-                const ok = await confirm({
-                  title: "¿Quitar la clave de Ollama?",
-                  body: "Se apagarán la búsqueda en internet y los modelos de «Ollama Cloud». Los modelos del Ollama de este PC siguen funcionando.",
-                  confirm: "Quitar",
-                  danger: true,
-                });
+                const ok = await confirm(OLLAMA_KEY_REMOVAL);
                 if (ok) remove.mutate();
               }}
             >

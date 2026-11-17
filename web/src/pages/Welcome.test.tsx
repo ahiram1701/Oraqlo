@@ -141,7 +141,7 @@ test("la clave de búsqueda web se guarda y se prueba aunque se use Ollama local
   expect(await screen.findByText(/La búsqueda web responde/)).toBeInTheDocument();
   expect(calls.find((c) => c.method === "PUT")).toMatchObject({ path: "/keys/OLLAMA_API_KEY", body: { value: "ollama-key-123456" } });
   expect(await screen.findByText("clave olla…3456")).toBeInTheDocument();
-});
+}, 15_000); // varios pasos con red simulada: holgura cuando corre toda la suite
 
 test("Preguntar avisa si se quiere investigar y falta la clave de búsqueda", async () => {
   mockApi({
@@ -168,4 +168,19 @@ test("quitar la clave de Ollama avisa de lo que se apaga", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Quitar" }));
   expect(await screen.findByText(/Se apagarán la búsqueda en internet/)).toBeInTheDocument();
   expect(calls.some((c) => c.method === "DELETE")).toBe(false); // aún no: falta confirmar
+});
+
+test("en Proveedores, quitar la clave de Ollama Cloud también pide confirmación", async () => {
+  const calls = mockApi({
+    "/setup": { ready: true, needs_setup: false, local: true, legacy_imported: false },
+    "/providers": {
+      ...PROVIDERS,
+      providers: [{ name: "ollama-cloud", kind: "ollama", api_key_env: "OLLAMA_API_KEY", key_present: true, key_hint: "olla…3456" }],
+    },
+    "DELETE /keys/OLLAMA_API_KEY": {},
+  });
+  renderAt("/ajustes", <ProvidersCard />);
+  fireEvent.click(await screen.findByRole("button", { name: "Quitar" }));
+  expect(await screen.findByText(/Se apagarán la búsqueda en internet/)).toBeInTheDocument();
+  expect(calls.some((c) => c.method === "DELETE")).toBe(false);
 });

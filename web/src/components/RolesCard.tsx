@@ -33,6 +33,23 @@ function useModels(provider: string | undefined) {
   });
 }
 
+/**
+ * Proveedor y modelo de un rol con los cambios del formulario aún sin guardar. Es la
+ * misma regla que `config.role()` en el servidor: lo propio, si no lo de «Todos»
+ * (su modelo solo si el proveedor coincide), si no el recomendado del proveedor.
+ * Antes se usaba el rol ya resuelto, que podía traer un modelo propio anterior.
+ */
+export function resolveRole(view: ProvidersView, role: string, form: RoleSettings): { provider: string; model: string } {
+  const isDefault = role === "default";
+  const base = isDefault ? form : (view.configured.default ?? {});
+  const own = isDefault ? {} : form;
+  const baseProvider = base.provider || view.auto?.provider || "";
+  const provider = own.provider || baseProvider;
+  const inherited = provider === baseProvider ? base.model : null;
+  const model = own.model || inherited || view.default_models?.[provider] || view.auto?.model || "";
+  return { provider, model };
+}
+
 /** El catálogo del proveedor; sin él (proveedores que solo listan nombres), los nombres. */
 export function catalogOf(data: ModelList | undefined): CatalogModel[] {
   return data?.catalog ?? (data?.models ?? []).map((name) => ({ name, cloud: false, installed: true }));
@@ -143,8 +160,9 @@ function RoleEditor({
   const models = useModels(provider);
   const catalog = catalogOf(models.data);
   // El modelo que se usará de verdad si se deja vacío.
-  const fallback = form.provider && form.provider !== resolved?.provider ? "el recomendado del proveedor" : resolved?.model;
-  const effective = form.model || (form.provider && form.provider !== resolved?.provider ? "" : resolved?.model) || "";
+  // Lo que usará de verdad, con los cambios aún sin guardar (igual que el servidor).
+  const target = resolveRole(view, role, form);
+  const effective = target.model;
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["providers"] });
@@ -186,7 +204,7 @@ function RoleEditor({
     },
   });
   const test = useMutation({
-    mutationFn: () => api.post<{ ok: boolean; detail: string }>(`/providers/${provider}/test`, { model: effective }),
+    mutationFn: () => api.post<{ ok: boolean; detail: string }>(`/providers/${target.provider}/test`, { model: effective }),
   });
   // Al cambiar de proveedor, el modelo anterior ya no aplica.
   useEffect(() => {
@@ -225,7 +243,7 @@ function RoleEditor({
           key={provider}
           catalog={catalog}
           value={form.model ?? ""}
-          placeholder={`Sin cambiar: ${fallback ?? "—"}`}
+          placeholder={`Sin cambiar: ${resolveRole(view, role, { ...form, model: "" }).model || "—"}`}
           onChange={(model) => {
             setForm({ ...form, model });
             test.reset();
