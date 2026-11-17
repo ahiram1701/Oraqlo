@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import type { JobEvent } from "../lib/api";
+import type { ClarifyItem, JobEvent } from "../lib/api";
 import { ROLE_LABELS, api, pct } from "../lib/api";
 import type { JobState } from "../lib/useJob";
 import { Icon } from "./icons";
@@ -29,6 +29,7 @@ const ROLE_TONE: Record<string, string> = {
 
 export const PHASE_LABEL: Record<string, string> = {
   investigar: "Investigando en internet",
+  preguntar: "Preguntándote lo que internet no sabe",
   redactar: "Planteando las opciones",
   observar: "Ordenando lo que se sabe",
   prever: "Estimando probabilidades",
@@ -149,6 +150,24 @@ function Stepper({ events, expected, running }: { events: JobEvent[]; expected: 
   );
 }
 
+/** Lo que el usuario contestó cuando Oraqlo le preguntó. */
+function AnswersList({ items }: { items: ClarifyItem[] }) {
+  if (items.length === 0) return null;
+  return (
+    <div>
+      <p className="mb-1.5 text-xs font-semibold tracking-wide text-muted uppercase">Lo que nos contaste</p>
+      <ul className="space-y-1.5 text-sm">
+        {items.map((q) => (
+          <li key={q.id}>
+            <span className="text-muted">{q.text}</span>{" "}
+            {q.answer ? <span className="font-medium">{q.answer}</span> : <span className="text-muted italic">sin responder</span>}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** El contenido del proceso: hallazgos, debate, veredictos y detalles técnicos. */
 function Process({ job, showForecast }: { job: JobState; showForecast: boolean }) {
   const turns = job.events.filter((e) => e.type === "turn");
@@ -187,6 +206,8 @@ function Process({ job, showForecast }: { job: JobState; showForecast: boolean }
       )}
       {job.events.map((ev) => {
         switch (ev.type) {
+          case "answers":
+            return <AnswersList key={ev.seq} items={ev.data.items ?? []} />;
           case "forecast":
             return showForecast ? (
               <div key={ev.seq} className="rounded-xl bg-surface-2 p-3">

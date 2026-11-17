@@ -444,6 +444,32 @@ export type AskMode = "forecast" | "full" | "goal";
 export const ask = (question: string, mode: AskMode, horizon_days: number, research: boolean) =>
   api.post<{ job_id: string }>("/ask", { question, mode, horizon_days, research });
 
+/** Una pregunta de Oraqlo al usuario, cuando internet no basta. */
+export interface ClarifyItem {
+  id: string;
+  text: string;
+  why: string;
+  options: string[];
+  answer?: string | null;
+}
+
+/** Resultado de un análisis en pausa: espera tus respuestas. */
+export interface QuestionsResult {
+  kind: "questions";
+  mode: AskMode;
+  question: string;
+  questions: ClarifyItem[];
+  /** Si ya se respondió (quizá desde otro dispositivo): el análisis que siguió. */
+  answered_by?: string;
+}
+
+export const isQuestions = (result: unknown): result is QuestionsResult =>
+  (result as { kind?: string } | null)?.kind === "questions";
+
+/** Responde (o, con `null`, sigue sin responder) y devuelve el análisis que continúa. */
+export const answerJob = (jobId: string, answers: Record<string, string> | null) =>
+  api.post<{ job_id: string }>(`/jobs/${jobId}/answer`, { answers });
+
 export const pct = (p: number | null | undefined, digits = 0) =>
   p == null ? "—" : `${(p * 100).toFixed(digits)}%`;
 

@@ -37,6 +37,19 @@ def _pretty_turn(role: str, text: str) -> str:
     return stripped
 
 
+def _clarifications_md(clarifications: list[tuple[str, str | None]] | None) -> list[str]:
+    """Lo que Oraqlo le preguntó al usuario porque internet no bastaba."""
+    if not clarifications:
+        return []
+    lines = ["", "## Lo que nos contaste", ""]
+    lines += [f"- **{q}** {a}" for q, a in clarifications if a]
+    unanswered = [q for q, a in clarifications if not a]
+    if unanswered:
+        lines += ["", "*Sin responder (Oraqlo supuso lo más habitual):*", ""]
+        lines += [f"- {q}" for q in unanswered]
+    return lines
+
+
 def render_report_markdown(
     question: str,
     forecast: Forecast,
@@ -45,8 +58,10 @@ def render_report_markdown(
     model: str,
     backend: str,
     research_facts: list[tuple[str, str]] | None = None,
+    clarifications: list[tuple[str, str | None]] | None = None,
 ) -> str:
-    """`research_facts`: pares (hecho, url) del investigador web, si hubo investigación."""
+    """`research_facts`: pares (hecho, url) del investigador web, si hubo investigación.
+    `clarifications`: pares (pregunta, respuesta o None) que se le hicieron al usuario."""
     now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     lines: list[str] = [
         "# Informe estratégico de Oraqlo",
@@ -71,6 +86,7 @@ def render_report_markdown(
     if research_facts:
         lines += ["", "## Fuentes consultadas (investigación web)", ""]
         lines += [f"- {text} — <{url}>" for text, url in research_facts]
+    lines += _clarifications_md(clarifications)
 
     lines += [
         "",
@@ -133,6 +149,7 @@ def render_goal_report_markdown(
     backend: str,
     research_facts: list[tuple[str, str]] | None = None,
     tracked: TrackedGoal | None = None,
+    clarifications: list[tuple[str, str | None]] | None = None,
 ) -> str:
     """Informe del modo objetivo: línea base, palancas, plan, hitos, debate y uplift."""
     now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
@@ -244,6 +261,7 @@ def render_goal_report_markdown(
     if research_facts:
         lines += ["", "## Fuentes consultadas (investigación web)", ""]
         lines += [f"- {text} — <{url}>" for text, url in research_facts]
+    lines += _clarifications_md(clarifications)
 
     lines += [
         "",

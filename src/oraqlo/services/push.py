@@ -188,6 +188,12 @@ def job_notification(job: dict) -> tuple[str, str, str] | None:
     if status != "done":
         return None
     result = job.get("result") or {}
+    if result.get("kind") == "questions":  # pausa: internet no bastó
+        questions = result.get("questions") or []
+        first = str((questions[0] if questions else {}).get("text", ""))
+        n = len(questions)
+        body = f"{subject}: {first}" + (f" (y {n - 1} más)" if n > 1 else "")
+        return "Oraqlo necesita tu respuesta", body[:180], f"/?job={job.get('id')}"
     url = f"/historial/{job['run_id']}" if job.get("run_id") else _origin_url(job)
     if kind == "goal":
         url = f"/objetivos/{result.get('goal_id')}"

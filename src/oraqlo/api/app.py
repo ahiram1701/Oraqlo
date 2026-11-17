@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from html import escape
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import (
@@ -74,6 +74,12 @@ class AskIn(BaseModel):
     mode: Literal["forecast", "full", "goal"] = "forecast"
     horizon_days: int = Field(90, ge=1, le=3650)
     research: bool = True
+
+
+class AnswerIn(BaseModel):
+    """Respuestas a las preguntas de un análisis en pausa; None = continuar sin responder."""
+
+    answers: dict[str, Annotated[str, Field(max_length=2000)]] | None = Field(None, max_length=20)
 
 
 class CaseRunIn(BaseModel):
@@ -837,6 +843,7 @@ def create_app(
             "question" if body.mode != "goal" else "goal": body.question,
             "horizon_days": body.horizon_days,
             "research": body.research,
+            "ask_user": True,  # si internet no basta, pausa y te pregunta
         }
         return {"job_id": runner.submit(body.mode, params)}
 
@@ -916,6 +923,15 @@ def create_app(
         if new_id is None:
             raise HTTPException(409, "Solo se puede reintentar un trabajo que falló o se canceló.")
         return {"job_id": new_id}
+
+    @app.post("/api/jobs/{job_id}/answer", status_code=202)
+    def jobs_answer(job_id: str, body: AnswerIn) -> dict:
+        try:
+            return {"job_id": runner.answer(job_id, body.answers)}
+        except LookupError as e:
+            raise HTTPException(404, "Trabajo no encontrado") from e
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from e
 
     @app.get("/api/jobs/{job_id}/events")
     async def jobs_events(job_id: str, request: Request, after: int = 0) -> StreamingResponse:

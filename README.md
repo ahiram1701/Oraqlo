@@ -19,7 +19,7 @@ No "predice todo" ni "controla la realidad": la realidad es caótica, parcialmen
 
 | Pantalla | Para qué |
 |---|---|
-| **Preguntar** | Previsión rápida (1 llamada), análisis completo (el LLM redacta acciones y escenarios, simula y debate) o **lograr objetivo** (plan, palancas, hitos y *uplift* medible). Con investigación web opcional. |
+| **Preguntar** | Previsión rápida (1 llamada), análisis completo (el LLM redacta acciones y escenarios, simula y debate) o **lograr objetivo** (plan, palancas, hitos y *uplift* medible). Con investigación web opcional; si internet no basta, te pregunta lo que solo tú sabes (o sigue sin preguntar si lo prefieres). |
 | **Objetivos** | Seguimiento: check-ins en lenguaje natural, trayectoria de P(objetivo), hitos con aviso de vencidos, re-planificación y cierre. |
 | **Predicciones** | Lo que Oraqlo previó y aún no sabes cómo acabó: lo marcas con un toque y así aprende (calibración). |
 | **Práctica** | Auto-mejora con Polymarket, solo lectura. Oraqlo predice sin ver el precio y compara su Brier con el de la multitud. Corre sola en el servidor. |

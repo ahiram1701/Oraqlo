@@ -5,7 +5,8 @@ largo recibe `emit(tipo, datos)` para informar progreso en vivo; el JobRunner
 lo persiste como eventos del trabajo y la web los recibe por SSE.
 
 Tipos de evento: "log" {msg}, "phase" {name}, "forecast", "turn" {role, text},
-"verdict", "revision", "fact" {text, url}.
+"verdict", "revision", "fact" {text, url}, "questions" {items} (el flujo se pausa
+para preguntar al usuario), "answers" {items} (lo que respondió, al reanudar).
 """
 
 from __future__ import annotations
@@ -54,6 +55,18 @@ Emit = Callable[[str, dict[str, Any]], None]
 
 class PracticeFailed(RuntimeError):
     """La pasada de práctica no logró ni predecir ni resolver nada."""
+
+
+class NeedsInput(Exception):  # no es un error: es una pausa
+    """El flujo se detiene para preguntarle algo al usuario.
+
+    `result` es el resultado de este tramo (kind "questions"): las preguntas y el
+    checkpoint para reanudar. El JobRunner lo guarda como resultado del job; al
+    responder se lanza un job nuevo con `clarify` (ver `JobRunner.answer`)."""
+
+    def __init__(self, result: dict) -> None:
+        super().__init__("El análisis necesita datos del usuario.")
+        self.result = result
 
 
 def _noop(kind: str, data: dict[str, Any]) -> None:
@@ -115,9 +128,15 @@ class OraqloService:
         )
 
     def research(
-        self, question: str, horizon_days: int, emit: Emit = _noop
+        self,
+        question: str,
+        horizon_days: int,
+        emit: Emit = _noop,
+        resume: ResearchBrief | None = None,
     ) -> ResearchBrief | None:
-        """Investigación web (opcional). Degrada con aviso; nunca bloquea el flujo."""
+        """Investigación web (opcional). Degrada con aviso; nunca bloquea el flujo.
+
+        `resume`: brief de un tramo anterior con las respuestas del usuario."""
         web = OllamaWebClient()
         if not web.is_available():
             emit(
@@ -136,6 +155,7 @@ class OraqloService:
                 question,
                 timedelta(days=horizon_days),
                 on_progress=lambda msg: emit("log", {"msg": msg}),
+                resume=resume,
             )
         except Exception as e:  # la investigación es opcional por diseño
             emit(
@@ -146,6 +166,60 @@ class OraqloService:
         for fact in brief.facts:
             emit("fact", {"text": fact.text, "url": fact.source_url})
         return brief
+
+    def gather(
+        self,
+        kind: str,
+        question: str,
+        horizon_days: int,
+        research: bool,
+        emit: Emit = _noop,
+        ask_user: bool = False,
+        clarify: dict | None = None,
+    ) -> ResearchBrief | None:
+        """Investiga y, si internet no basta y `ask_user`, pausa para preguntar.
+
+        `clarify` llega al reanudar: {"brief": checkpoint, "skip": bool}. Con
+        `skip` (el usuario pulsó «Continuar sin responder») no se vuelve a preguntar.
+        Lanza `NeedsInput` cuando hay preguntas; si no, devuelve el brief (con las
+        respuestas del usuario dentro, si las hubo) o None.
+        """
+        resume = ResearchBrief.from_dict(clarify["brief"]) if clarify else None
+        if resume is not None:
+            emit("answers", {"items": [q.to_dict() for q in resume.clarifications]})
+        brief = self.research(question, horizon_days, emit, resume=resume) if research else None
+        if brief is None:
+            brief = resume  # sin internet: al menos lo que contó el usuario
+        if not ask_user or (clarify and clarify.get("skip")):
+            return brief
+        provider, r = self._role("investigador")
+        try:
+            questions = Researcher(OllamaWebClient(), provider, r.model).clarify(
+                question, timedelta(days=horizon_days), brief
+            )
+        except Exception as e:  # preguntar es una ayuda: si falla, se sigue sin ella
+            emit("log", {"msg": f"No pude decidir si preguntarte algo ({e}).", "level": "warn"})
+            return brief
+        if not questions:
+            return brief
+        emit("phase", {"name": "preguntar"})
+        items = [q.to_dict() for q in questions]
+        emit("questions", {"items": items})
+        checkpoint = (brief or ResearchBrief(facts=[], queries=[])).to_dict()
+        params = {"goal" if kind == "goal" else "question": question}
+        raise NeedsInput(
+            {
+                "kind": "questions",
+                "mode": kind,
+                "question": question,
+                "params": {**params, "horizon_days": horizon_days, "research": research},
+                "questions": items,
+                "checkpoint": checkpoint,
+                "facts": [{"text": f.text, "url": f.source_url} for f in brief.facts]
+                if brief
+                else [],
+            }
+        )
 
     @staticmethod
     def _state_from(brief: ResearchBrief | None) -> WorldState:
@@ -158,9 +232,15 @@ class OraqloService:
     # ── flujos (los ejecuta el JobRunner) ─────────────────────────────────
 
     def ask_forecast(
-        self, question: str, horizon_days: int = 90, research: bool = True, emit: Emit = _noop
+        self,
+        question: str,
+        horizon_days: int = 90,
+        research: bool = True,
+        emit: Emit = _noop,
+        ask_user: bool = False,
+        clarify: dict | None = None,
     ) -> dict:
-        brief = self.research(question, horizon_days, emit) if research else None
+        brief = self.gather("forecast", question, horizon_days, research, emit, ask_user, clarify)
         emit("phase", {"name": "prever"})
         provider, r = self._role("oraculo")
         oracle = self._oracle(r.model, provider, self.config.forecast.samples, emit)
@@ -171,13 +251,21 @@ class OraqloService:
         emit("forecast", forecast_json(forecast))
         facts = [(f.text, f.source_url) for f in brief.facts] if brief else None
         markdown = render_report_markdown(
-            question, forecast, [], None, r.model, r.provider, research_facts=facts
+            question,
+            forecast,
+            [],
+            None,
+            r.model,
+            r.provider,
+            research_facts=facts,
+            clarifications=_qa(brief),
         )
         result = {
             "kind": "forecast",
             "question": question,
             "forecast": forecast_json(forecast),
             "facts": [{"text": t, "url": u} for t, u in facts or []],
+            "clarifications": _qa_json(brief),
             "model": self._label("oraculo"),
             "markdown": markdown,
         }
@@ -235,6 +323,7 @@ class OraqloService:
             self._label("juez"),
             "panel",
             research_facts=facts,
+            clarifications=_qa(brief),
         )
         result = {
             "kind": "cycle",
@@ -246,6 +335,7 @@ class OraqloService:
             "revisions": report.revisions,
             "candidates_tried": report.candidates_tried,
             "facts": [{"text": t, "url": u} for t, u in facts or []],
+            "clarifications": _qa_json(brief),
             "markdown": markdown,
         }
         result["run_id"] = self._save_run("cycle", spec.question, result)
@@ -281,11 +371,17 @@ class OraqloService:
         return outcomes["sí"]
 
     def ask_full(
-        self, question: str, horizon_days: int = 90, research: bool = True, emit: Emit = _noop
+        self,
+        question: str,
+        horizon_days: int = 90,
+        research: bool = True,
+        emit: Emit = _noop,
+        ask_user: bool = False,
+        clarify: dict | None = None,
     ) -> dict:
         """Análisis completo: previsión calibrada → el LLM redacta el caso anclado en
         ella → ciclo con panel (que reutiliza esa misma previsión)."""
-        brief = self.research(question, horizon_days, emit) if research else None
+        brief = self.gather("full", question, horizon_days, research, emit, ask_user, clarify)
         emit("phase", {"name": "prever"})
         oracle_provider, oracle_role = self._role("oraculo")
         world = WorldModel()
@@ -314,9 +410,15 @@ class OraqloService:
         return self.run_case(spec, emit=emit, brief=brief, forecast=forecast)
 
     def achieve_goal(
-        self, goal: str, horizon_days: int = 90, research: bool = True, emit: Emit = _noop
+        self,
+        goal: str,
+        horizon_days: int = 90,
+        research: bool = True,
+        emit: Emit = _noop,
+        ask_user: bool = False,
+        clarify: dict | None = None,
     ) -> dict:
-        brief = self.research(goal, horizon_days, emit) if research else None
+        brief = self.gather("goal", goal, horizon_days, research, emit, ask_user, clarify)
         provider, r = self._role("estratega")
         advice, recal = self._learned(r.model)
         plan = GoalStrategist(
@@ -338,7 +440,12 @@ class OraqloService:
         tracked = GoalTracker(self.store.goals, self.store.ledger).track(plan)
         facts = [(f.text, f.source_url) for f in brief.facts] if brief else None
         markdown = render_goal_report_markdown(
-            plan, r.model, r.provider, research_facts=facts, tracked=tracked
+            plan,
+            r.model,
+            r.provider,
+            research_facts=facts,
+            tracked=tracked,
+            clarifications=_qa(brief),
         )
         result = {
             "kind": "goal",
@@ -358,6 +465,7 @@ class OraqloService:
             },
             "verdict": to_jsonable(plan.verdict),
             "facts": [{"text": t, "url": u} for t, u in facts or []],
+            "clarifications": _qa_json(brief),
             "markdown": markdown,
         }
         result["run_id"] = self._save_run("goal", goal, result)
@@ -587,6 +695,17 @@ class OraqloService:
 
     def report_filename(self, run: dict) -> str:
         return f"{run['created_at'][:10]}-{slugify(run['title'])}.md"
+
+
+def _qa(brief: ResearchBrief | None) -> list[tuple[str, str | None]] | None:
+    """Pares (pregunta, respuesta o None) que se le hicieron al usuario."""
+    if brief is None or not brief.clarifications:
+        return None
+    return [(q.text, q.answer) for q in brief.clarifications]
+
+
+def _qa_json(brief: ResearchBrief | None) -> list[dict]:
+    return [{"question": q, "answer": a} for q, a in _qa(brief) or []]
 
 
 def _dumps(value: Any) -> str:

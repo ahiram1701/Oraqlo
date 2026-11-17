@@ -10,6 +10,12 @@ conexión se corta. Por eso todo flujo largo es un *job*:
 Al arrancar, los jobs que quedaron a medias (el proceso murió) se marcan como
 fallidos con un motivo claro, en vez de quedarse "corriendo" para siempre.
 
+Preguntar al usuario: si internet no basta, el flujo lanza `NeedsInput` y el job
+termina («done») con un resultado de kind "questions". Así no ocupa un worker
+mientras el usuario tarda en contestar y sobrevive a reinicios sin cambiar el
+esquema. `answer()` lanza el job siguiente con las respuestas (o sin ellas, si
+el usuario pulsó «Continuar sin responder»); puede volver a preguntar.
+
 Cancelar es cooperativo: se marca el job y el siguiente evento de progreso que
 emita el flujo lanza `JobCancelled`. Una llamada al modelo que ya está en curso
 termina antes de que el job se detenga.
@@ -25,7 +31,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any
 
-from oraqlo.services.core import OraqloService
+from oraqlo.services.core import NeedsInput, OraqloService
 from oraqlo.services.power import keep_awake
 from oraqlo.store.db import dumps, loads
 
@@ -57,6 +63,7 @@ class JobRunner:
         self._seq: dict[str, int] = {}
         self._cancel: set[str] = set()
         self._lock = threading.Lock()
+        self._answering = threading.Lock()
         self.listeners: list[Callable[[dict], None]] = []  # se llaman al terminar un job
         self.handlers: dict[str, Callable[..., dict]] = {
             "forecast": service.ask_forecast,
@@ -104,6 +111,48 @@ class JobRunner:
         if job is None or job["status"] not in ("failed", "cancelled"):
             return None
         return self.submit(job["kind"], job["params"])
+
+    def answer(self, job_id: str, answers: dict[str, str] | None) -> str:
+        """Reanuda un job que se pausó para preguntar. Devuelve el id del job nuevo.
+
+        `answers`: {id de pregunta: respuesta}; None = «Continuar sin responder».
+        Las preguntas sin respuesta quedan como supuestos explícitos. Lanza
+        LookupError si el job no existe y ValueError si no está esperando respuesta.
+        """
+        with self._answering:  # dos toques seguidos no lanzan dos análisis
+            return self._answer(job_id, answers)
+
+    def _answer(self, job_id: str, answers: dict[str, str] | None) -> str:
+        from oraqlo.research import ClarifyQuestion
+
+        job = self.get(job_id)
+        if job is None:
+            raise LookupError(job_id)
+        result = job.get("result") or {}
+        if job["status"] != "done" or result.get("kind") != "questions":
+            raise ValueError("Este análisis no está esperando respuestas.")
+        if result.get("answered_by"):
+            return str(result["answered_by"])
+        checkpoint = dict(result.get("checkpoint") or {})
+        given = {str(k): str(v).strip() for k, v in (answers or {}).items()}
+        asked = [ClarifyQuestion.from_dict(q) for q in result.get("questions") or []]
+        for q in asked:
+            q.answer = given.get(q.id) or None
+        checkpoint["clarifications"] = list(checkpoint.get("clarifications") or []) + [
+            q.to_dict() for q in asked
+        ]
+        params = {
+            **dict(result.get("params") or {}),
+            "ask_user": True,
+            "clarify": {"brief": checkpoint, "skip": answers is None},
+        }
+        new_id = self.submit(str(result.get("mode") or job["kind"]), params)
+        with self.db.tx() as conn:
+            conn.execute(
+                "UPDATE jobs SET result = ? WHERE id = ?",
+                (dumps({**result, "answered_by": new_id}), job_id),
+            )
+        return new_id
 
     def cancel(self, job_id: str) -> dict | None:
         """Pide parar un job. Si aún no empezó, queda cancelado al instante."""
@@ -202,7 +251,10 @@ class JobRunner:
             return
         emit = lambda k, d: self._emit(job_id, k, d)
         try:
-            result = self.handlers[kind](**params, emit=emit)
+            try:
+                result = self.handlers[kind](**params, emit=emit)
+            except NeedsInput as pause:  # pausa para preguntar: este tramo terminó bien
+                result = pause.result
         except JobCancelled:
             with self.db.tx() as conn:
                 conn.execute(
