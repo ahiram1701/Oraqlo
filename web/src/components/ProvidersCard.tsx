@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, PROVIDER_INFO, providerLabel, type Check, type ProviderEntry, type ProvidersView } from "../lib/api";
-import { Badge, Button, Card, ErrorNote, SectionTitle, cx, inputClass } from "./ui";
+import { Badge, Button, Card, ErrorNote, SectionTitle, cx, inputClass, useFeedback } from "./ui";
+import { OLLAMA_KEY_REMOVAL } from "./WebSearchCard";
 
 import { LOCAL_ONLY_NOTE, useSetup } from "../lib/setup";
 
@@ -13,6 +14,7 @@ export function useKeyActions(onDone?: (check: Check) => void) {
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["providers"] });
     qc.invalidateQueries({ queryKey: ["setup"] });
+    qc.invalidateQueries({ queryKey: ["ollama"] });
   };
   const save = useMutation({
     mutationFn: async ({ provider, value }: { provider: ProviderEntry; value: string }) => {
@@ -36,6 +38,7 @@ function KeyRow({ provider, used, local }: { provider: ProviderEntry; used: bool
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState("");
   const [result, setResult] = useState<Check | null>(null);
+  const { confirm } = useFeedback();
   const { save, remove, test } = useKeyActions((check) => {
     setResult(check);
     if (check.ok) {
@@ -115,7 +118,12 @@ function KeyRow({ provider, used, local }: { provider: ProviderEntry; used: bool
             </Button>
           )}
           {needsKey && provider.key_present && local && (
-            <Button variant="ghost" disabled={remove.isPending} onClick={() => remove.mutate(provider)}>
+            <Button variant="ghost" disabled={remove.isPending} onClick={async () => {
+                // La clave de Ollama es también la de la búsqueda web: mismo aviso que
+                // en «Cuenta de Ollama» (antes aquí se quitaba sin preguntar).
+                if (provider.api_key_env === "OLLAMA_API_KEY" && !(await confirm(OLLAMA_KEY_REMOVAL))) return;
+                remove.mutate(provider);
+              }}>
               Quitar
             </Button>
           )}

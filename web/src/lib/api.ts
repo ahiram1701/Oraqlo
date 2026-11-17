@@ -223,6 +223,10 @@ export interface ProvidersView {
   roles: RoleView[];
   /** Lo fijado a mano por rol en la configuración (sin lo heredado). */
   configured: Record<string, RoleSettings>;
+  /** Proveedor y modelo elegidos solos, según las claves, si «Todos» no fija proveedor. */
+  auto?: { provider: string; model: string };
+  /** Modelo recomendado de cada proveedor. */
+  default_models?: Record<string, string>;
   /** Clave de la búsqueda web (ollama.com): sirve con cualquier proveedor de IA. */
   web_search?: { api_key_env: string; key_present: boolean; key_hint: string | null };
 }
