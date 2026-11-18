@@ -74,7 +74,7 @@ export default function OptionsCard() {
               label="Usar mercados de predicción como una voz más"
             />
             <p className="text-xs text-muted">
-              Si en Polymarket, Manifold{o.metaculus ? " o Metaculus" : ""} se apuesta sobre exactamente lo mismo, su precio entra
+              Si en {o.metaculus ? "Polymarket, Manifold o Metaculus" : "Polymarket o Manifold"} se apuesta sobre exactamente lo mismo, su precio entra
               en el comité con el peso que se gane acertando. Solo lectura: no se apuesta nada.
               {!o.metaculus && " Para Metaculus, añade METACULUS_TOKEN al .env."}
             </p>

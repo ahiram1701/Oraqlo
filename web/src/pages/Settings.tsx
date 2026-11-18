@@ -64,7 +64,7 @@ function NotificationsCard() {
       <SectionTitle>Notificaciones</SectionTitle>
       <WindowsNotifications />
       <p className="mb-3 text-sm text-muted">
-        Avisos en este dispositivo cuando termina un análisis, vence un hito, falla la práctica o Oraqlo se actualiza.
+        Avisos en este dispositivo cuando termina un análisis, cambia una previsión vigilada, vence un hito, falla la práctica o Oraqlo se actualiza.
       </p>
       {!s ? null : s.kind === "unsupported" ? (
         <Notice tone="warn">{s.reason}</Notice>
