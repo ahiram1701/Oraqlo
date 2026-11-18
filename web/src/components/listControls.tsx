@@ -1,5 +1,5 @@
 // Controles comunes de las listas: buscar, filtrar con chips y ordenar.
-import type { KeyboardEvent, ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { Icon } from "./icons";
 import { Button, cx, inputClass } from "./ui";
 
@@ -26,6 +26,15 @@ export interface Option<T extends string> {
 }
 
 /** Chips de una sola elección (radiogrupo: flechas para moverse). */
+/** Difumina el borde por el que hay más chips: se ve que se puede deslizar. */
+export function fadeMask(edges: { start: boolean; end: boolean }): CSSProperties | undefined {
+  if (!edges.start && !edges.end) return undefined;
+  const mask = `linear-gradient(to right, ${edges.start ? "transparent 0, black 28px" : "black 0"}, ${
+    edges.end ? "black calc(100% - 28px), transparent 100%" : "black 100%"
+  })`;
+  return { maskImage: mask, WebkitMaskImage: mask };
+}
+
 export function ChipGroup<T extends string>({
   label,
   options,
@@ -37,6 +46,24 @@ export function ChipGroup<T extends string>({
   value: T;
   onChange: (v: T) => void;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ start: false, end: false });
+  const measure = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    const start = el.scrollLeft > 4;
+    const end = el.scrollLeft + el.clientWidth < el.scrollWidth - 4;
+    setEdges((prev) => (prev.start === start && prev.end === end ? prev : { start, end }));
+  }, []);
+  useEffect(() => {
+    measure();
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [measure, options.length]);
+
   function onKey(e: KeyboardEvent<HTMLDivElement>) {
     const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
     if (!step) return;
@@ -47,7 +74,15 @@ export function ChipGroup<T extends string>({
     (e.currentTarget.querySelector(`[data-value="${next.value}"]`) as HTMLElement | null)?.focus();
   }
   return (
-    <div role="radiogroup" aria-label={label} className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1" onKeyDown={onKey}>
+    <div
+      ref={ref}
+      role="radiogroup"
+      aria-label={label}
+      className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1"
+      style={fadeMask(edges)}
+      onKeyDown={onKey}
+      onScroll={measure}
+    >
       {options.map((o) => {
         const on = o.value === value;
         return (
@@ -60,7 +95,7 @@ export function ChipGroup<T extends string>({
             data-value={o.value}
             onClick={() => onChange(o.value)}
             className={cx(
-              "min-h-9 shrink-0 rounded-full border px-3 text-sm transition",
+              "min-h-10 shrink-0 rounded-full border px-3.5 text-sm transition",
               on ? "border-accent bg-accent/15 text-accent" : "border-line text-muted hover:text-fg",
             )}
           >

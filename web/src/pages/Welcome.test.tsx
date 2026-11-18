@@ -96,23 +96,33 @@ test("desde el celular las claves no se pueden cambiar", async () => {
   expect(screen.getByText(/Solo se puede cambiar desde el PC/)).toBeInTheDocument();
 });
 
-test("en el celular, «Más» abre el resto de secciones y se marca si estás en una de ellas", async () => {
+test("cinco pestañas sin nada escondido; Precisión se enciende en Práctica y en Calibración", async () => {
   mockApi({
     "/setup": { ready: true, needs_setup: false, local: true, legacy_imported: false },
     "/providers": PROVIDERS,
     "/goals": [],
+    "/ledger/overdue": { count: 12 },
     "/calibration": { n: 0, sources: [], reliability: [] },
   });
   renderAt("/calibracion");
-  const more = await screen.findByRole("button", { name: "Más" });
-  expect(more).toHaveAttribute("aria-current", "page");
-  expect(screen.queryByRole("group", { name: "Más secciones" })).not.toBeInTheDocument();
-  fireEvent.click(more);
-  expect(more).toHaveAttribute("aria-expanded", "true");
-  const group = screen.getByRole("group", { name: "Más secciones" });
-  expect(within(group).getByRole("link", { name: "Ajustes" })).toHaveAttribute("href", "/ajustes");
-  fireEvent.keyDown(window, { key: "Escape" });
-  expect(screen.queryByRole("group", { name: "Más secciones" })).not.toBeInTheDocument();
+  const navs = await screen.findAllByRole("navigation", { name: "Secciones" });
+  const bottom = navs[navs.length - 1];
+  const links = within(bottom).getAllByRole("link");
+  expect(links.map((l) => l.textContent?.replace(/\d+|9\+/g, "").trim())).toEqual([
+    "Preguntar",
+    "Objetivos",
+    "Predicciones",
+    "Precisión",
+    "Ajustes",
+  ]);
+  expect(screen.queryByRole("button", { name: "Más" })).not.toBeInTheDocument();
+  expect(within(bottom).getByRole("link", { name: "Precisión" })).toHaveAttribute("aria-current", "page");
+  // El número exacto, para quien no ve la insignia; en la insignia, «9+».
+  const due = await within(bottom).findByRole("link", { name: "Predicciones (12 para resolver)" });
+  expect(within(due).getByText("9+")).toBeInTheDocument();
+  // Dentro de Precisión, las dos vistas.
+  expect(await screen.findByRole("navigation", { name: "Precisión" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /Calibración/ })).toHaveAttribute("aria-current", "page");
 });
 
 test("la clave de búsqueda web se guarda y se prueba aunque se use Ollama local", async () => {

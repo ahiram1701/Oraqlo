@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { pct } from "../lib/api";
 import { Icon } from "./icons";
 import { BreakPoints, LeversRanked, Premortem, RivalNote, VoicesNote, WatchNote } from "./Insights";
@@ -140,6 +140,7 @@ export function ResultCard({ result }: { result: any }) {
         <RivalNote rival={result.rival} actions={result.case?.actions} />
         <Premortem items={v.premortem} />
         <WatchNote watch={result.watch} />
+        {result.case && <EditCaseLink data={result.case} />}
       </div>
     );
   }
@@ -157,6 +158,30 @@ export function ResultCard({ result }: { result: any }) {
         : cuando sepas qué pasó, márcalo ahí y Oraqlo aprenderá.
       </p>
     </div>
+  );
+}
+
+export const CASE_DRAFT_KEY = "oraqlo.case.draft"; // el mismo que usa el editor de casos
+
+/** Lleva el caso de este análisis al editor para cambiar opciones o cifras y volver a simular. */
+function EditCaseLink({ data }: { data: unknown }) {
+  const navigate = useNavigate();
+  return (
+    <button
+      type="button"
+      className="inline-flex min-h-11 items-center gap-1 text-sm font-medium text-accent"
+      onClick={() => {
+        try {
+          localStorage.setItem(CASE_DRAFT_KEY, JSON.stringify(data, null, 2));
+        } catch {
+          /* sin almacenamiento: el editor abre con la plantilla */
+        }
+        navigate("/caso");
+      }}
+    >
+      Editar y volver a simular
+      <Icon name="back" className="size-4 rotate-180" />
+    </button>
   );
 }
 

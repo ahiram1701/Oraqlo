@@ -3,9 +3,10 @@ import { cx } from "./ui";
 
 // Iconos de línea (24×24, trazo 1.8): un solo juego para navegación y estados.
 const PATHS: Record<string, ReactNode> = {
-  ask: <path d="M12 3a9 9 0 1 0 9 9M12 7v5l3 2" />,
+  ask: <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4.5 4v-4h0A1.5 1.5 0 0 1 4 14.5zM12 7.5v5M9.5 10h5" />,
   goals: <path d="M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18Zm0-5a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0-3.5a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1Z" />,
-  ledger: <path d="M5 4h14v16H5zM9 8h6M9 12h6M9 16h3" />,
+  ledger: <path d="M10 6h10M10 12h10M10 18h10M3.5 6l1.3 1.3L7.5 4.6M3.5 12l1.3 1.3 2.7-2.7M4 18h2.5" />,
+  precision: <path d="M4 20h16M5 16l4.5-4.5 3 3L19 8M15 8h4v4" />,
   practice: <path d="M4 19V9m5 10V5m5 14v-7m5 7V8" />,
   case: <path d="M4 7h16v12H4zM9 7V5h6v2" />,
   calibration: <path d="M4 20 20 4M4 4h4M4 4v4M20 20h-4M20 20v-4" />,
