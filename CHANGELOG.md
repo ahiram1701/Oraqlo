@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/ahiram1701/Oraqlo/compare/v0.16.0...v0.17.0) (2026-11-18)
+
+
+### Novedades
+
+* navegación móvil más clara y Precisión en una sola pestaña ([58a079e](https://github.com/ahiram1701/Oraqlo/commit/58a079eadaf0d578bbcd98494ba8b98cb30ed988))
+
 ## [0.16.0](https://github.com/ahiram1701/Oraqlo/compare/v0.15.0...v0.16.0) (2026-11-18)
 
 
