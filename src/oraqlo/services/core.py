@@ -29,12 +29,24 @@ from oraqlo.config import (
 from oraqlo.drafter import draft_case
 from oraqlo.forecaster.aggregate import clamp
 from oraqlo.forecaster.base import Distribution, Forecast, Forecaster
-from oraqlo.forecaster.ensemble import resolve_group
+from oraqlo.forecaster.committee import (
+    COMMITTEE_MODEL,
+    Member,
+    build_members,
+    model_weights,
+    pick_committee,
+)
+from oraqlo.forecaster.ensemble import MEMBER_SEP, resolve_group
 from oraqlo.forecaster.explain import explain
 from oraqlo.forecaster.llm import LLMForecaster
 from oraqlo.goals import GoalStrategist
 from oraqlo.goaltrack import GoalTracker
-from oraqlo.llm.ollama import is_cloud_model
+from oraqlo.llm.ollama import (
+    api_cloud_name,
+    fetch_cloud_catalog,
+    is_cloud_model,
+    local_cloud_name,
+)
 from oraqlo.llm.registry import ProviderRegistry, provider_info
 from oraqlo.llm.websearch import WEB_SEARCH_KEY_ENV, OllamaWebClient
 from oraqlo.memory import recalibration, scorecard
@@ -115,16 +127,97 @@ class OraqloService:
         ledger = self.store.ledger
         return calibration_advice(ledger, llm_source(model)), recalibration.for_model(ledger, model)
 
-    def _oracle(self, model: str, provider, samples: int = 1, emit: Emit = _noop):
-        advice, recal = self._learned(model)
+    # ── el comité de modelos (ver forecaster.committee) ──────────────────
+
+    CATALOG_TTL_S = 24 * 3600
+
+    def cloud_catalog(self) -> list[dict]:
+        """Modelos en la nube de ollama.com (público), guardado un día en memoria."""
+        import time
+
+        cached = getattr(self, "_catalog", None)
+        if cached and time.monotonic() - cached[0] < self.CATALOG_TTL_S:
+            return cached[1]
+        catalog = fetch_cloud_catalog()
+        if catalog:
+            self._catalog = (time.monotonic(), catalog)
+        return catalog
+
+    def _cloud_route(self, provider_name: str, lead_model: str):
+        """Cómo llegar a los modelos de la nube: con el Ollama del PC si el rol ya usa uno
+        de la nube por ahí (sesión iniciada), o con la clave de ollama.com. None: no hay."""
+        import os
+
+        if provider_name == "ollama-local" and is_cloud_model(lead_model):
+            return "ollama-local"
+        if os.environ.get(WEB_SEARCH_KEY_ENV):
+            return "ollama-cloud"
+        return None
+
+    def committee_models(self, provider_name: str, lead_model: str) -> list[str]:
+        """Los modelos de la nube (nombres de ollama.com) que acompañan al del rol.
+        `forecast.committee` sin definir = los recomendados del catálogo; [] = sin comité."""
+        if self._cloud_route(provider_name, lead_model) is None:
+            return []
+        chosen = self.config.forecast.committee
+        if chosen is None:
+            chosen = pick_committee(self.cloud_catalog(), api_cloud_name(lead_model))
+        lead = api_cloud_name(lead_model)
+        return [m for m in dict.fromkeys(api_cloud_name(c) for c in chosen) if m and m != lead]
+
+    def committee_view(self) -> dict:
+        """Lo que la app necesita para elegir el comité del Oráculo."""
+        _provider, r = self._role("oraculo")
+        route = self._cloud_route(r.provider, r.model)
+        catalog = self.cloud_catalog() if route else []
+        lead = api_cloud_name(r.model)
+        chosen = self.config.forecast.committee
+        return {
+            "mode": "auto" if chosen is None else ("off" if not chosen else "custom"),
+            "lead": r.model,
+            "available": route is not None,
+            "models": self.committee_models(r.provider, r.model),
+            "recommended": pick_committee(catalog, lead) if route else [],
+            "catalog": [
+                {"name": str(m["name"]), "size": m.get("size") or None}
+                for m in catalog
+                if api_cloud_name(str(m["name"])) != lead
+            ],
+            "samples": self.config.forecast.samples,
+        }
+
+    def _team(self, role: str, samples: int) -> tuple[Any, Any, list[Member], dict | None, str]:
+        """(proveedor, rol, miembros, pesos, modelo con que se registra la previsión)."""
+        provider, r = self._role(role)
+        extra = []
+        route = self._cloud_route(r.provider, r.model)
+        for model in self.committee_models(r.provider, r.model):
+            try:
+                via = self.registry.get(route)
+            except Exception:  # sin ese proveedor: sin comité
+                break
+            extra.append((via, local_cloud_name(model) if route == "ollama-local" else model))
+        members = build_members((provider, r.model), extra, samples)
+        models = list(dict.fromkeys(m.model for m in members))
+        if len(models) < 2:
+            return provider, r, members, None, r.model
+        return provider, r, members, model_weights(self.store.ledger, models), COMMITTEE_MODEL
+
+    def _oracle(self, emit: Emit = _noop) -> LLMForecaster:
+        provider, r, members, weights, source_model = self._team(
+            "oraculo", self.config.forecast.samples
+        )
+        advice, recal = self._learned(source_model)
         return LLMForecaster(
             provider,
-            model=model,
-            source=llm_source(model, "prevision"),
+            model=r.model,
+            source=llm_source(source_model, "prevision"),
             advice=advice,
             recalibration=recal,
-            samples=samples,
+            samples=self.config.forecast.samples,
             on_progress=lambda msg: emit("log", {"msg": msg}),
+            members=members,
+            weights=weights,
         )
 
     def research(
@@ -243,7 +336,7 @@ class OraqloService:
         brief = self.gather("forecast", question, horizon_days, research, emit, ask_user, clarify)
         emit("phase", {"name": "prever"})
         provider, r = self._role("oraculo")
-        oracle = self._oracle(r.model, provider, self.config.forecast.samples, emit)
+        oracle = self._oracle(emit)
         forecast = oracle.forecast(self._state_from(brief), question, timedelta(days=horizon_days))
         emit("log", {"msg": "Redactando la respuesta en palabras llanas…"})
         forecast = explain(provider, r.model, question, forecast)
@@ -285,7 +378,7 @@ class OraqloService:
         spec = case if isinstance(case, CaseSpec) else parse_case(case)
         if research and brief is None:
             brief = self.research(spec.question, spec.horizon.days, emit)
-        provider, r = self._role("oraculo")
+        _provider, r = self._role("oraculo")
         world = WorldModel()
         if brief is not None:
             for obs in brief.as_observations():
@@ -293,9 +386,7 @@ class OraqloService:
         agent = OraqloAgent(
             connectors=[],
             world_model=world,
-            forecaster=_Precomputed(forecast)
-            if forecast is not None
-            else self._oracle(r.model, provider, self.config.forecast.samples, emit),
+            forecaster=_Precomputed(forecast) if forecast is not None else self._oracle(emit),
             simulator=TreeSearchEngine(spec.outcome_model(), spec.utility_fn()),
             planner=ExpectedUtilityPlanner(),
             panel=self._panel(),
@@ -388,9 +479,9 @@ class OraqloService:
         if brief is not None:
             for obs in brief.as_observations():
                 world.apply(obs)
-        forecast = self._oracle(
-            oracle_role.model, oracle_provider, self.config.forecast.samples, emit
-        ).forecast(world.current(), question, timedelta(days=horizon_days))
+        forecast = self._oracle(emit).forecast(
+            world.current(), question, timedelta(days=horizon_days)
+        )
         emit("log", {"msg": "Redactando la respuesta en palabras llanas…"})
         forecast = explain(oracle_provider, oracle_role.model, question, forecast)
         emit("phase", {"name": "redactar"})
@@ -419,14 +510,19 @@ class OraqloService:
         clarify: dict | None = None,
     ) -> dict:
         brief = self.gather("goal", goal, horizon_days, research, emit, ask_user, clarify)
-        provider, r = self._role("estratega")
-        advice, recal = self._learned(r.model)
+        provider, r, members, weights, source_model = self._team(
+            "estratega", self.config.forecast.samples
+        )
+        advice, recal = self._learned(source_model)
         plan = GoalStrategist(
             provider,
             r.model,
             advice=advice,
             recalibration=recal,
             samples=self.config.forecast.samples,
+            members=members,
+            weights=weights,
+            source_model=source_model,
         ).pursue(
             goal,
             timedelta(days=horizon_days),
@@ -475,12 +571,15 @@ class OraqloService:
         from oraqlo.autopractice import PracticeEngine
         from oraqlo.polymarket import PolymarketClient
 
-        provider, r = self._role("practica")
+        provider, r, members, weights, _source = self._team(
+            "practica", self.config.forecast.samples
+        )
         web = OllamaWebClient()
         researcher = None
         if research and web.is_available():
             rp, rr = self._role("investigador")
-            researcher = Researcher(web, rp, rr.model)
+            # Sin las páginas de Polymarket: traerían el precio y el duelo dejaría de ser a ciegas.
+            researcher = Researcher(web, rp, rr.model, exclude_domains=("polymarket.com",))
         engine = PracticeEngine(
             PolymarketClient(),
             provider,
@@ -488,6 +587,8 @@ class OraqloService:
             self.store.ledger,
             researcher=researcher,
             markets_per_run=self.config.practice.markets,
+            members=members,
+            weights=weights,
         )
         report = engine.run_once(
             research=researcher is not None, on_progress=lambda msg: emit("log", {"msg": msg})
@@ -540,13 +641,41 @@ class OraqloService:
     def ledger_view(self) -> dict:
         ledger = self.store.ledger
         overdue = {f.id for f in self.overdue_forecasts()}
-        # Las que ya deberían saberse, primero (orden estable para el resto).
-        open_forecasts = sorted(ledger.open_forecasts, key=lambda f: f.id not in overdue)
+        # Las que ya deberían saberse, primero (orden estable para el resto). Lo que dijo
+        # cada modelo del comité no es una predicción más: no sale en la lista.
+        open_forecasts = sorted(
+            (f for f in ledger.open_forecasts if not recalibration.is_member(f.source)),
+            key=lambda f: f.id not in overdue,
+        )
         return {
             "overdue": len(overdue),
             "open": [forecast_json(f) for f in open_forecasts],
-            "resolved": [resolved_json(r) for r in reversed(ledger.resolved_forecasts)],
+            "resolved": [
+                resolved_json(r)
+                for r in reversed(ledger.resolved_forecasts)
+                if not recalibration.is_member(r.forecast.source)
+            ],
         }
+
+    def _members_of(self, forecast_id: str, forecasts) -> list[str]:
+        prefix = forecast_id + MEMBER_SEP
+        return [f.id for f in forecasts if f.id.startswith(prefix)]
+
+    def discard(self, forecast_id: str) -> None:
+        """Descarta una predicción abierta y lo que dijo cada modelo del comité."""
+        ledger = self.store.ledger
+        members = self._members_of(forecast_id, ledger.open_forecasts)
+        ledger.discard(forecast_id)
+        for fid in members:
+            ledger.discard(fid)
+
+    def delete_resolved(self, forecast_id: str) -> None:
+        """Borra una resuelta y lo que dijo cada modelo del comité."""
+        ledger = self.store.ledger
+        members = self._members_of(forecast_id, (r.forecast for r in ledger.resolved_forecasts))
+        ledger.delete_resolved(forecast_id)
+        for fid in members:
+            ledger.delete_resolved(fid)
 
     def resolve(self, forecast_id: str, outcome: str) -> list[dict]:
         before = {r.forecast.id for r in self.store.ledger.resolved_forecasts}
@@ -573,8 +702,11 @@ class OraqloService:
             ledger.resolved_forecasts, ledger.open_forecasts
         )
         items = scorecard.select(everything, kind=kind, model=model, days=days)
+        members = scorecard.committee_members(ledger.resolved_forecasts, ledger.open_forecasts)
         reference = (
-            scorecard.select(market, days=days) if kind in (None, "practica") and not model else []
+            scorecard.select([*market, *members], days=days)
+            if kind in (None, "practica") and not model
+            else []
         )
         decided = recalibration.decided_markets(
             [*ledger.open_forecasts, *(r.forecast for r in ledger.resolved_forecasts)]

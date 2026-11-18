@@ -38,9 +38,11 @@ Celular / PC (PWA React)                           este PC Windows
 - **`world_model.py`**: estados versionados e inmutables (`apply`, `at`) con estatus epistémico por variable.
 - **`connectors/`**: `StaticConnector` y `FileConnector` (CSV/JSON/JSONL incremental), que alimentan el world model.
 - **`forecaster/`**:
-  - `LLMForecaster`: escenarios con probabilidad.
+  - `LLMForecaster`: escenarios con probabilidad, con una tasa base en cifras.
+  - `committee.py`: el comité de modelos. Varias IA de familias distintas, cada una con un enfoque (visión externa, interna, abogado del diablo, ritmo en el tiempo), combinadas en log-odds con un peso por modelo según su habilidad en la Práctica (encogida hacia «todos iguales» con pocos casos). Lo que dice cada una se registra aparte (`llm:<modelo>:miembro`), fuera del boletín.
   - `QuantForecaster`: Holt con intervalo que crece con √h; con umbral produce una binaria resoluble.
-  - `EnsembleForecaster`: pondera cada miembro por 1/Brier y registra sus predicciones para que cada fuente aprenda.
+- **`memory/recalibration.py`**: un factor `a` por modelo (o para el comité) aprendido solo de previsiones válidas, encogido hacia 1 y activado desde 15 resueltas únicamente si mejora en validación cruzada.
+- **`evaluate.py`** (`oraqlo evaluar`, `/api/evaluate`): compara sobre lo resuelto, en validación cruzada, las formas de predecir (recalibración, comité, mercado).
 - **`simulator/`**:
   - `MonteCarloEngine` y `TreeSearchEngine` (expectimax).
   - `with_adversary()` compone un `AdversaryModel` (p. ej. `SoftmaxAdversary`) dentro de cualquier motor.

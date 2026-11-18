@@ -82,6 +82,10 @@ class ForecastSettings(BaseModel):
     # Estimaciones independientes por previsión rápida (se agregan en log-odds).
     # Más = más fiable pero más llamadas al modelo; 1 = como antes.
     samples: int = Field(default=3, ge=1, le=7)
+    # Comité de modelos de la nube de Ollama que acompañan al del rol (ver
+    # forecaster.committee). Sin definir: los recomendados del catálogo, si hay clave
+    # de Ollama. Lista vacía: sin comité.
+    committee: list[str] | None = None
 
 
 class OraqloConfig(BaseModel):

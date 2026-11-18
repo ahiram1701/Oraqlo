@@ -18,3 +18,12 @@ def _local_init(self, app, base_url="http://127.0.0.1", *args, **kwargs):
 
 
 _tc.TestClient.__init__ = _local_init  # type: ignore[method-assign]
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _sin_catalogo_de_la_nube(monkeypatch):
+    """Los tests no consultan ollama.com: sin catálogo, sin comité automático."""
+    monkeypatch.setattr("oraqlo.services.core.fetch_cloud_catalog", lambda *a, **k: [])

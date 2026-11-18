@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from oraqlo.forecaster import EnsembleForecaster, QuantForecaster, resolve_group
+from oraqlo.forecaster import QuantForecaster, resolve_group
 from oraqlo.forecaster.base import Distribution, Forecast, Forecaster
 from oraqlo.memory.calibration import CalibrationLedger
 from oraqlo.simulator import Action, SoftmaxAdversary, TreeSearchEngine, with_adversary
@@ -37,31 +37,19 @@ def _history(ledger, source, brier_target_label, n=4):
         ledger.resolve(f.id, brier_target_label)
 
 
-def test_ensamble_pondera_por_fiabilidad_y_aprende():
+def test_resolve_group_cierra_la_prevision_y_sus_miembros():
     ledger = CalibrationLedger()
-    _history(ledger, "bueno", "sí")  # Brier 0.02
-    _history(ledger, "malo", "no")  # Brier 1.62
-    ens = EnsembleForecaster(
-        [Fixed("bueno", {"Sí": 0.8, "No": 0.2}), Fixed("malo", {"sí": 0.2, "no": 0.8})], ledger
-    )
-    f = ens.forecast(None, "¿pasa?", timedelta(days=7))
-    # Etiquetas unificadas sin importar mayúsculas; domina el miembro fiable.
-    assert set(f.distribution.outcomes) == {"Sí", "No"}
-    assert f.distribution.outcomes["Sí"] > 0.75
-    assert sum(f.distribution.outcomes.values()) == pytest.approx(1.0)
-    # Los miembros quedan registrados y se cierran con el grupo.
-    assert {x.id for x in ledger.open_forecasts} == {f"{f.id}::bueno", f"{f.id}::malo"}
-    ledger.record(f)
-    assert resolve_group(ledger, f.id, "sí") == 3
+    main = Fixed("llm:comite", {"sí": 0.7, "no": 0.3}).forecast(None, "¿pasa?", timedelta(days=7))
+    main.id = "p1"
+    ledger.record(main)
+    for model in ("a", "b"):
+        f = Fixed(f"llm:{model}:miembro", {"sí": 0.6, "no": 0.4}).forecast(
+            None, "¿pasa?", timedelta(days=7)
+        )
+        f.id = f"p1::{model}"
+        ledger.record(f)
+    assert resolve_group(ledger, "p1", "sí") == 3
     assert ledger.open_forecasts == []
-
-
-def test_ensamble_sin_historial_promedia():
-    ens = EnsembleForecaster(
-        [Fixed("a", {"x": 1.0}), Fixed("b", {"y": 1.0})], CalibrationLedger(), record_members=False
-    )
-    out = ens.forecast(None, "q", timedelta(days=1)).distribution.outcomes
-    assert out == pytest.approx({"x": 0.5, "y": 0.5})
 
 
 def _series(values, start=datetime(2026, 1, 1, tzinfo=UTC), step=timedelta(days=1)):

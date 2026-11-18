@@ -26,6 +26,7 @@ from oraqlo.memory.recalibration import (
     counts_for_score,
     decided_markets,
     is_market,
+    is_member,
     is_practice,
     market_id_of,
     model_of,
@@ -80,6 +81,19 @@ def split_market(
         if is_market(r.forecast.source) and market_id_of(r.forecast.question) not in decided
     ]
     return mine, market
+
+
+def committee_members(
+    resolved: Iterable[ResolvedForecast], open_forecasts: Iterable[Forecast] = ()
+) -> list[ResolvedForecast]:
+    """Lo que dijo cada modelo del comité por separado, sin las preguntas ya sabidas."""
+    resolved = list(resolved)
+    decided = decided_markets([*open_forecasts, *(r.forecast for r in resolved)])
+    return [
+        r
+        for r in resolved
+        if is_member(r.forecast.source) and market_id_of(r.forecast.question) not in decided
+    ]
 
 
 def _stats(items: list[ResolvedForecast]) -> dict:
@@ -137,8 +151,8 @@ def scorecard(
     worst: int = 5,
     reference: list[ResolvedForecast] | None = None,
 ) -> dict:
-    """`reference`: previsiones del mercado; solo salen como fila de comparación en
-    «sources», nunca en el resto de cifras."""
+    """`reference`: previsiones del mercado o de cada miembro del comité; solo salen como
+    filas de comparación en «sources», nunca en el resto de cifras."""
     stats = _stats(items)
     tops = [_top(r) for r in items]
     hits = [label == r.actual_outcome for r, (label, _p) in zip(items, tops, strict=True)]
@@ -183,10 +197,14 @@ def scorecard(
         {"source": s, **_stats(g)} for s, g in _group(items, lambda r: r.forecast.source).items()
     ]
     by_source.sort(key=lambda x: x["brier"])
-    if reference:
-        by_source.append(
-            {"source": reference[0].forecast.source, **_stats(reference), "reference": True}
-        )
+    # Referencias (el mercado, cada modelo del comité por separado): filas para comparar,
+    # sin tocar el resto de cifras.
+    refs = sorted(
+        _group(reference or [], lambda r: r.forecast.source).items(),
+        key=lambda kv: (is_market(kv[0]), _stats(kv[1])["brier"]),
+    )
+    for source, group in refs:
+        by_source.append({"source": source, **_stats(group), "reference": True})
 
     # Solo fallos de verdad: acertar con un 52% también tiene Brier alto, pero no es
     # «donde más falló».

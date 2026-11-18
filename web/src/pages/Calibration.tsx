@@ -21,9 +21,12 @@ import {
   api,
   displayQuestion,
   fmtDate,
+  modelLabel,
   pct,
   sourceLabel,
   type Calibration as Cal,
+  type Evaluation,
+  type EvaluationRow,
   type ForecastKind,
   type ScoreStats,
 } from "../lib/api";
@@ -70,6 +73,69 @@ function Breakdown({ rows }: { rows: { key: string; label: string; stats: ScoreS
         </li>
       ))}
     </ul>
+  );
+}
+
+function EvalRows({ rows }: { rows: EvaluationRow[] }) {
+  // En negrita solo una fila que gane de verdad (con empate no hay ganador).
+  const skills = rows.map((r) => r.skill ?? -Infinity);
+  const top = Math.max(...skills);
+  const best = skills.filter((v) => v >= top - 0.005).length === 1 ? top : null;
+  return (
+    <ul className="divide-y divide-line">
+      {rows.map((r) => (
+        <li key={r.name} className="flex items-center justify-between gap-3 py-1.5 text-sm">
+          <span className="min-w-0 truncate" title={r.note || r.name}>
+            {best !== null && r.skill === best && rows.length > 1 ? <b>{r.name}</b> : r.name}
+            {r.note && <span className="ml-1 text-xs text-muted">· {r.note}</span>}
+          </span>
+          <span className={cx("shrink-0 tabular-nums", skillTone(r.skill))}>
+            {fmtSkill(r.skill)} <span className="text-xs text-muted">· {fmtBrier(r.brier)}</span>
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Con lo ya resuelto: ¿qué forma de predecir habría acertado más? (validación cruzada) */
+function WhatWorks() {
+  const { data } = useQuery({
+    queryKey: ["evaluate"],
+    queryFn: () => api.get<Evaluation>("/evaluate"),
+    staleTime: 5 * 60_000,
+  });
+  if (!Array.isArray(data?.models) || (!data.models.length && !data.committee && !data.market)) return null;
+  return (
+    <Card>
+      <SectionTitle>¿Qué funciona mejor?</SectionTitle>
+      <p className="mb-3 text-sm text-muted">
+        Con lo ya resuelto, cuánto mejor que el azar habría acertado cada forma de predecir (y su error, Brier). Lo que se aprende
+        del historial se prueba en cada pregunta con lo aprendido de las demás, para no hacerse trampas.
+      </p>
+      <div className="space-y-4">
+        {data.models.map((g) => (
+          <div key={g.model}>
+            <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">{modelLabel(g.model)}</h3>
+            <EvalRows rows={g.rows} />
+          </div>
+        ))}
+        {data.committee && (
+          <div>
+            <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">
+              Comité · {data.committee.questions} pregunta{data.committee.questions === 1 ? "" : "s"}
+            </h3>
+            <EvalRows rows={data.committee.rows} />
+          </div>
+        )}
+        {data.market && (
+          <div>
+            <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">Frente al mercado, mismas preguntas</h3>
+            <EvalRows rows={data.market} />
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }
 
@@ -138,7 +204,7 @@ export default function Calibration() {
                 <option value="">Todos</option>
                 {data!.filters!.models.map((m) => (
                   <option key={m} value={m}>
-                    {m}
+                    {modelLabel(m)}
                   </option>
                 ))}
               </select>
@@ -320,6 +386,8 @@ export default function Calibration() {
         </Card>
       )}
 
+      <WhatWorks />
+
       {data?.recalibration && data.recalibration.length > 0 && (
         <Card>
           <SectionTitle>Corrección automática</SectionTitle>
@@ -331,7 +399,7 @@ export default function Calibration() {
             {data.recalibration.map((r) => (
               <li key={r.model} className="py-2 text-sm">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate font-medium">{r.model}</span>
+                  <span className="truncate font-medium">{modelLabel(r.model)}</span>
                   <span className={r.active ? "text-accent" : "text-muted"}>
                     {r.active
                       ? r.a > 1

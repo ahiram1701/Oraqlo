@@ -1,8 +1,15 @@
-import { forecastKind, parseDate } from "../lib/api";
+import { forecastKind, modelLabel, parseDate, sourceLabel } from "../lib/api";
 import { fmtSkill } from "../lib/score";
 import { isoInDays, localISODate } from "./HorizonPicker";
 
 describe("pulido de lo nuevo", () => {
+  it("el comité y sus miembros tienen nombre legible", () => {
+    expect(modelLabel("comite")).toBe("Comité de modelos");
+    expect(sourceLabel("llm:comite")).toBe("Comité de modelos · práctica");
+    expect(sourceLabel("llm:comite:prevision")).toBe("Comité de modelos · predicciones");
+    expect(sourceLabel("llm:kimi-k3:miembro")).toBe("kimi-k3 · solo, dentro del comité");
+  });
+
   it("una previsión antigua sin tipo no es de Práctica", () => {
     expect(forecastKind("llm:qwen3:8b", "¿Lloverá?")).toBe("prevision");
     expect(forecastKind("llm:deepseek:cloud", "[polymarket:1] ¿Ganará?")).toBe("practica");

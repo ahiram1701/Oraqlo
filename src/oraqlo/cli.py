@@ -8,6 +8,7 @@
     oraqlo config                  rutas y roles efectivos
     oraqlo doctor [--preflight]    diagnóstico (config, base, claves, proveedores)
     oraqlo import-legacy [carpeta] importa los JSON de la versión TUI
+    oraqlo evaluar                 ¿está mejorando? compara formas de predecir con lo resuelto
 
 Los subcomandos importan sus módulos de forma perezosa para que `oraqlo version`
 funcione aunque falten extras opcionales.
@@ -106,6 +107,19 @@ def _cmd_import_legacy(args: argparse.Namespace) -> int:
     )
     if report.missing:
         print(f"No encontrados (se omiten): {', '.join(report.missing)}")
+    return 0
+
+
+def _cmd_evaluate(args: argparse.Namespace) -> int:
+    from oraqlo.config import load_config
+    from oraqlo.evaluate import evaluate, format_report
+    from oraqlo.store import Store
+
+    store = Store(load_config().db_path)
+    try:
+        print(format_report(evaluate(store.ledger)))
+    finally:
+        store.close()
     return 0
 
 
@@ -222,6 +236,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_import = sub.add_parser("import-legacy", help="importa los JSON de la versión TUI")
     p_import.add_argument("directory", nargs="?", default=".", help="carpeta con oraqlo_*.json")
 
+    sub.add_parser("evaluar", help="¿está mejorando? compara formas de predecir con lo resuelto")
     p_practice = sub.add_parser("practice", help="autopráctica con Polymarket", add_help=False)
     p_practice.add_argument("rest", nargs=argparse.REMAINDER)
     return parser
@@ -257,6 +272,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_doctor(args)
     if args.command == "import-legacy":
         return _cmd_import_legacy(args)
+    if args.command == "evaluar":
+        return _cmd_evaluate(args)
     return 2  # inalcanzable: argparse exige subcomando
 
 

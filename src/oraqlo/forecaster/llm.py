@@ -6,7 +6,8 @@ un Forecast auditable (con supuestos y fuente) listo para el CalibrationLedger.
 
 Para ser más fiable que una sola respuesta del modelo:
 - parte de una tasa base (vista exterior) antes de ajustar con lo específico;
-- puede pedir varias estimaciones sobre los mismos escenarios y agregarlas;
+- pide varias estimaciones sobre los mismos escenarios, cada una con un enfoque
+  distinto y, si hay comité, a modelos distintos (forecaster.committee), y las combina;
 - nunca emite 0% ni 100% (forecaster.aggregate.clamp);
 - aplica la corrección aprendida del historial del modelo (memory.recalibration).
 """
@@ -16,11 +17,20 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from oraqlo.forecaster.aggregate import NO_DATA_NOTE, clamp, pool_log_odds, temper_without_data
+from oraqlo.forecaster.aggregate import (
+    NO_DATA_BASE_NOTE,
+    NO_DATA_NOTE,
+    clamp,
+    parse_base_rate,
+    pool_log_odds,
+    temper_without_data,
+)
 from oraqlo.forecaster.base import Distribution, Forecast, Forecaster
+from oraqlo.forecaster.committee import Member, build_members, combine, run_members, weights_note
 from oraqlo.llm.base import ChatMessage, LLMProvider
 from oraqlo.llm.structured import extract_json_object
 from oraqlo.world_model import WorldState
@@ -32,27 +42,37 @@ _SYSTEM_PROMPT = (
     "Eres el Oráculo de Oraqlo: emites probabilidades calibradas, nunca certezas. "
     "Responde EXCLUSIVAMENTE con un objeto JSON con esta forma exacta:\n"
     '{"base_rate": "<clase de referencia y con qué frecuencia ocurre>", '
+    '"base_rate_outcomes": {"<escenario>": <prob según solo la tasa base>, ...}, '
     '"outcomes": {"<escenario>": <prob>, ...}, "assumptions": ["<supuesto>", ...], '
     '"rationale": "<una frase>"}\n'
     "Método: empieza por la TASA BASE (la vista exterior: en casos parecidos, con qué "
-    "frecuencia pasa cada cosa) y solo después ajústala con lo específico de esta "
-    "pregunta; evita 0 y 1 salvo imposibilidad lógica.\n"
+    "frecuencia pasa cada cosa; ponla en cifras en base_rate_outcomes, con los mismos "
+    "escenarios) y solo después ajústala con lo específico de esta pregunta; evita 0 y 1 "
+    "salvo imposibilidad lógica. Si la pregunta es «¿pasará X antes de una fecha?», "
+    "piensa en el ritmo al que suelen pasar estas cosas y aplícalo a los días que quedan: "
+    "lo más frecuente es que nada cambie.\n"
     "Reglas: entre 2 y 5 escenarios mutuamente excluyentes y exhaustivos; las "
     "probabilidades deben sumar 1.0; a mayor horizonte temporal, reparte más la "
-    "probabilidad (más incertidumbre); Si no tienes datos concretos de ESTE caso (ranking, forma, cuotas, encuestas, cifras recientes), quédate en la tasa base o cerca del reparto igual: una ventaja que solo intuyes no pasa del 55-60%. Los supuestos son las condiciones de las "
-    "que depende tu estimación; escribe escenarios y supuestos en el idioma de "
-    "la pregunta."
+    "probabilidad (más incertidumbre); si no tienes datos concretos de ESTE caso (ranking, "
+    "forma, cuotas, encuestas, cifras recientes), quédate en la tasa base o cerca del "
+    "reparto igual: una ventaja que solo intuyes no pasa del 55-60%. Los supuestos son las "
+    "condiciones de las que depende tu estimación; escribe escenarios y supuestos en el "
+    "idioma de la pregunta."
 )
 
 _FIXED_LABELS = (
-    "Vuelve a estimar desde cero, de forma independiente. Usa EXACTAMENTE estos "
-    "escenarios, con estas mismas etiquetas (ni uno más, ni uno menos): {labels}"
+    "Estima de forma independiente. Usa EXACTAMENTE estos escenarios, con estas mismas "
+    "etiquetas (ni uno más, ni uno menos): {labels}"
 )
 
-# Las muestras extra necesitan algo de variedad para que agregarlas aporte.
-SAMPLE_TEMPERATURE = 0.7
 
-Parsed = tuple[dict[str, float], list[str], str, str]
+@dataclass
+class Parsed:
+    outcomes: dict[str, float]
+    assumptions: list[str]
+    rationale: str
+    base_rate: str
+    base_rate_outcomes: object = None
 
 
 class ForecastParseError(ValueError):
@@ -60,7 +80,7 @@ class ForecastParseError(ValueError):
 
 
 def _parse_forecast_json(text: str) -> Parsed:
-    """Extrae (outcomes, assumptions, rationale, base_rate) del texto del modelo.
+    """Extrae escenarios, supuestos, razonamiento y tasa base del texto del modelo.
 
     Tolera texto alrededor del JSON (busca el primer '{' y el último '}'),
     pero es estricto con la estructura interna.
@@ -85,10 +105,13 @@ def _parse_forecast_json(text: str) -> Parsed:
     # Normalización exacta: perdonamos redondeos del modelo, no incoherencias.
     outcomes = {k: p / total for k, p in outcomes.items()}
 
-    assumptions = [str(a) for a in data.get("assumptions", [])]
-    rationale = str(data.get("rationale", ""))
-    base_rate = str(data.get("base_rate") or "").strip()
-    return outcomes, assumptions, rationale, base_rate
+    return Parsed(
+        outcomes=outcomes,
+        assumptions=[str(a) for a in data.get("assumptions", [])],
+        rationale=str(data.get("rationale", "")),
+        base_rate=str(data.get("base_rate") or "").strip(),
+        base_rate_outcomes=data.get("base_rate_outcomes"),
+    )
 
 
 def _norm(label: str) -> str:
@@ -113,8 +136,22 @@ def _summarize_state(state: WorldState, max_vars: int = 30) -> str:
     return "\n".join(lines)
 
 
+def _match_labels(outcomes: dict[str, float], labels: list[str]) -> dict[str, float] | None:
+    """La misma distribución con las etiquetas fijadas (None si cambió los escenarios)."""
+    by_norm = {_norm(k): v for k, v in outcomes.items()}
+    if set(by_norm) != {_norm(k) for k in labels}:
+        return None
+    matched = {k: by_norm[_norm(k)] for k in labels}
+    total = sum(matched.values())
+    return {k: v / total for k, v in matched.items()} if total > 0 else None
+
+
 class LLMForecaster(Forecaster):
-    """Forecaster cualitativo respaldado por un LLMProvider (Ollama local o cloud)."""
+    """Forecaster cualitativo respaldado por uno o varios modelos (un comité).
+
+    Sin `members`, pregunta `samples` veces al modelo del rol, cada vez con un enfoque
+    distinto. Con `members` (ver forecaster.committee), cada miembro es un modelo con su
+    enfoque y se combinan con `weights` (por modelo)."""
 
     def __init__(
         self,
@@ -127,30 +164,37 @@ class LLMForecaster(Forecaster):
         samples: int = 1,
         recalibration: Recalibration | None = None,
         on_progress: Callable[[str], None] | None = None,
+        members: list[Member] | None = None,
+        weights: dict[str, float] | None = None,
     ) -> None:
         self.provider = provider
         self.model = model
         self.temperature = temperature
         self.source = source or f"llm:{model}"
         self.max_retries = max_retries
-        # Consejo de calibración derivado del historial resuelto (autopractice):
-        # el mecanismo por el que el oráculo aprende de sus errores pasados.
+        # Consejo de calibración derivado del historial resuelto (autopractice).
         self.advice = advice
-        # Varias estimaciones independientes sobre los mismos escenarios, agregadas
-        # en log-odds: reduce el ruido de una sola respuesta del modelo.
         self.samples = max(1, int(samples))
-        # Corrección numérica aprendida del Brier histórico de este modelo.
+        # Corrección numérica aprendida del historial (del modelo o del comité).
         self.recalibration = recalibration
         self.on_progress = on_progress or (lambda msg: None)
+        self.members = members or build_members((provider, model), [], self.samples)
+        self.weights = weights
+        # Lo que dijo cada modelo en la última previsión (para registrarlo aparte).
+        self.last_members: dict[str, dict[str, float]] = {}
 
-    def _ask(self, messages: list[ChatMessage], temperature: float) -> Parsed:
+    def _ask(
+        self, messages: list[ChatMessage], temperature: float, member: Member | None = None
+    ) -> Parsed:
         """Una respuesta válida del modelo, reintentando con el error como feedback."""
+        provider = member.provider if member else self.provider
+        model = member.model if member else self.model
         messages = list(messages)
         last_error: Exception | None = None
         for _attempt in range(self.max_retries + 1):
-            response = self.provider.chat(
+            response = provider.chat(
                 messages=messages,
-                model=self.model,
+                model=model,
                 temperature=temperature,
                 json_mode=True,
             )
@@ -167,31 +211,20 @@ class LLMForecaster(Forecaster):
                     )
                 )
         raise ForecastParseError(
-            f"El modelo {self.model} no produjo JSON válido tras "
+            f"El modelo {model} no produjo JSON válido tras "
             f"{self.max_retries + 1} intentos: {last_error}"
         )
 
-    def _extra_sample(
-        self, messages: list[ChatMessage], labels: list[str]
-    ) -> dict[str, float] | None:
-        """Otra estimación sobre los escenarios ya fijados (None si no es comparable).
-
-        Una muestra extra que falla no tumba la previsión: ya hay al menos una.
-        """
-        fixed = [
-            *messages,
-            ChatMessage(role="user", content=_FIXED_LABELS.format(labels=json.dumps(labels))),
+    def _messages(
+        self, system: str, user: str, member: Member, labels: list[str] | None
+    ) -> list[ChatMessage]:
+        content = f"{user}\n\n{member.lens}"
+        if labels is not None:
+            content += "\n\n" + _FIXED_LABELS.format(labels=json.dumps(labels, ensure_ascii=False))
+        return [
+            ChatMessage(role="system", content=system),
+            ChatMessage(role="user", content=content),
         ]
-        try:
-            outcomes, *_ = self._ask(fixed, max(self.temperature, SAMPLE_TEMPERATURE))
-        except Exception:
-            return None
-        by_norm = {_norm(k): v for k, v in outcomes.items()}
-        if set(by_norm) != {_norm(k) for k in labels}:
-            return None  # cambió los escenarios: no se puede agregar
-        matched = {k: by_norm[_norm(k)] for k in labels}
-        total = sum(matched.values())
-        return {k: v / total for k, v in matched.items()} if total > 0 else None
 
     def forecast(self, state: WorldState, question: str, horizon: timedelta) -> Forecast:
         user_prompt = (
@@ -203,32 +236,58 @@ class LLMForecaster(Forecaster):
         system_prompt = _SYSTEM_PROMPT
         if self.advice:
             system_prompt += f"\n\nTu historial de calibración dice: {self.advice}"
-        messages = [
-            ChatMessage(role="system", content=system_prompt),
-            ChatMessage(role="user", content=user_prompt),
-        ]
 
-        if self.samples > 1:
-            self.on_progress(f"Estimación 1 de {self.samples}")
-        outcomes, assumptions, rationale, base_rate = self._ask(messages, self.temperature)
-        labels = list(outcomes)
-        draws = [outcomes]
-        for k in range(2, self.samples + 1):
-            self.on_progress(f"Estimación {k} de {self.samples}")
-            extra = self._extra_sample(messages, labels)
-            if extra is not None:
-                draws.append(extra)
+        total = len(self.members)
+        lead, rest = self.members[0], self.members[1:]
+        if total > 1:
+            self.on_progress(f"Estimación 1 de {total}")
+        # El primero elige los escenarios; los demás estiman sobre esos mismos.
+        first = self._ask(
+            self._messages(system_prompt, user_prompt, lead, None), self.temperature, lead
+        )
+        labels = list(first.outcomes)
+        answers: list[tuple[Member, Parsed]] = [(lead, first)]
+        done = [1]
 
-        outcomes = clamp(pool_log_odds(draws))
+        def ask(member: Member) -> Parsed:
+            parsed = self._ask(
+                self._messages(system_prompt, user_prompt, member, labels),
+                self.temperature,
+                member,
+            )
+            done[0] += 1
+            self.on_progress(f"Estimación {done[0]} de {total}")
+            return parsed
+
+        answers += run_members(
+            rest,
+            ask,
+            on_error=lambda m, e: self.on_progress(f"{m.model} no respondió ({e}); sigo sin él"),
+        )
+        draws: list[tuple[str, dict[str, float]]] = []
+        bases: list[dict[str, float]] = []
+        for member, parsed in answers:
+            matched = _match_labels(parsed.outcomes, labels)
+            if matched is None:
+                continue  # cambió los escenarios: no se puede combinar
+            draws.append((member.model, matched))
+            if (base := parse_base_rate(parsed.base_rate_outcomes, labels)) is not None:
+                bases.append(base)
+
+        outcomes, per_model = combine(draws, self.weights)
+        self.last_members = per_model if len(per_model) > 1 else {}
         notes: list[str] = []
         if not state.entities:  # nada investigado ni observado: solo intuición
-            outcomes = temper_without_data(outcomes)
-            notes.append(NO_DATA_NOTE)
-        if base_rate:
-            notes.append(f"Tasa base: {base_rate}")
-        if rationale:
-            notes.append(f"Razonamiento: {rationale}")
-        if len(draws) > 1:
+            base = pool_log_odds(bases) if bases else None
+            outcomes = temper_without_data(outcomes, base)
+            notes.append(NO_DATA_BASE_NOTE if base else NO_DATA_NOTE)
+        if first.base_rate:
+            notes.append(f"Tasa base: {first.base_rate}")
+        if first.rationale:
+            notes.append(f"Razonamiento: {first.rationale}")
+        if len(per_model) > 1:
+            notes.append(weights_note(self.weights or {}, per_model))
+        elif len(draws) > 1:
             notes.append(f"Agregado de {len(draws)} estimaciones independientes del modelo.")
         if self.recalibration is not None and self.recalibration.active:
             outcomes = clamp(self.recalibration.apply(outcomes))
@@ -242,7 +301,7 @@ class LLMForecaster(Forecaster):
             question=question,
             distribution=distribution,
             horizon=horizon,
-            assumptions=[*assumptions, *notes],
+            assumptions=[*first.assumptions, *notes],
             source=self.source,
             created_at=datetime.now(UTC),
         )
