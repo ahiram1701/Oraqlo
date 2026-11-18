@@ -2,8 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Icon } from "../components/icons";
+import { SignalList, Sparkline } from "../components/Insights";
 import { ChipGroup, FilteredEmpty, SearchInput, SortSelect, countLabel, includesText, type Option } from "../components/listControls";
-import { Badge, Button, Card, Empty, ErrorNote, SectionTitle, Skeleton, cx, inputClass, useFeedback } from "../components/ui";
+import { Badge, Button, Card, Empty, ErrorNote, SectionTitle, Skeleton, Toggle, cx, inputClass, useFeedback } from "../components/ui";
 import {
   FORECAST_KIND_LABEL,
   api,
@@ -15,6 +16,7 @@ import {
   type Forecast,
   type ForecastKind,
   type ResolvedForecast,
+  type WatchView,
 } from "../lib/api";
 import { useStoredState } from "../lib/useStoredState";
 
@@ -343,6 +345,7 @@ export function OpenForecast({ f }: { f: Forecast }) {
           <span aria-hidden>·</span>
           <span>se sabrá el {due?.toLocaleDateString("es", { day: "numeric", month: "short" }) ?? "—"}</span>
           {overdue && <Badge tone="warn">ya debería saberse</Badge>}
+          {f.watch?.enabled && <Badge>{f.watch.versions > 1 ? `vigilada · ${f.watch.versions} versiones` : "vigilada"}</Badge>}
         </p>
       </button>
       {open && (
@@ -364,9 +367,15 @@ export function OpenForecast({ f }: { f: Forecast }) {
           >
             <input
               className={inputClass}
-              placeholder={outcomes.length ? "Otro resultado…" : "Escribe el valor que salió…"}
-              aria-label={outcomes.length ? "Otro resultado" : "Valor que salió"}
-              inputMode={outcomes.length ? undefined : "decimal"}
+              placeholder={
+                f.numeric
+                  ? `O escribe la cifra que salió${f.numeric.unit ? ` (${f.numeric.unit})` : ""}…`
+                  : outcomes.length
+                    ? "Otro resultado…"
+                    : "Escribe el valor que salió…"
+              }
+              aria-label={f.numeric ? "Cifra que salió" : outcomes.length ? "Otro resultado" : "Valor que salió"}
+              inputMode={f.numeric || !outcomes.length ? "decimal" : undefined}
               value={other}
               onChange={(e) => setOther(e.target.value)}
             />
@@ -392,8 +401,45 @@ export function OpenForecast({ f }: { f: Forecast }) {
             Descartar sin puntuar
           </Button>
           <ErrorNote error={discard.error} />
+          <WatchPanel id={f.id} watch={f.watch ?? null} top={top?.[0]} />
         </div>
       )}
+    </div>
+  );
+}
+
+/** Vigilancia de una previsión: encenderla o apagarla, su historia y sus señales. */
+export function WatchPanel({ id, watch, top }: { id: string; watch: WatchView | null; top?: string }) {
+  const qc = useQueryClient();
+  const toggle = useMutation({
+    mutationFn: (enabled: boolean) => api.put<WatchView>(`/ledger/${id}/watch`, { enabled }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ledger"] }),
+  });
+  const last = watch?.history.at(-1);
+  return (
+    <div className="space-y-2 border-t border-line pt-3 text-sm">
+      <Toggle
+        checked={!!watch?.enabled}
+        onChange={(v) => toggle.mutate(v)}
+        label="Vigilar: revisar las noticias y avisarme si cambia"
+      />
+      <ErrorNote error={toggle.error} />
+      {watch && watch.history.length > 1 && top && (
+        <div className="flex flex-wrap items-center gap-3">
+          <Sparkline watch={watch} label={top} />
+          <span className="text-xs text-muted">
+            «{top}»: {watch.history.map((h) => pct(h.outcomes[top] ?? 0)).join(" → ")}
+          </span>
+        </div>
+      )}
+      {last && watch && watch.history.length > 1 && <p className="text-xs text-muted">Último cambio: {last.why}</p>}
+      {watch && watch.signals.length > 0 && (
+        <details>
+          <summary className="cursor-pointer text-xs text-muted">Qué vigila ({watch.signals.length})</summary>
+          <SignalList watch={watch} />
+        </details>
+      )}
+      {watch?.last_check && <p className="text-xs text-muted">Última revisión: {fmtDate(watch.last_check)}</p>}
     </div>
   );
 }

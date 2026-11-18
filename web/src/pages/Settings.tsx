@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import CommitteeCard from "../components/CommitteeCard";
+import OptionsCard from "../components/OptionsCard";
 import ConnectionCard from "../components/ConnectionCard";
 import ProvidersCard from "../components/ProvidersCard";
 import RolesCard from "../components/RolesCard";
@@ -185,6 +186,7 @@ export default function Settings() {
         <WebSearchCard />
         <RolesCard />
         <CommitteeCard />
+        <OptionsCard />
       </Group>
       <Group id="dispositivos" title="Dispositivos" hint="Celular, avisos y apariencia.">
         <ConnectionCard />

@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { pct } from "../lib/api";
 import { Icon } from "./icons";
+import { BreakPoints, LeversRanked, Premortem, RivalNote, VoicesNote, WatchNote } from "./Insights";
 import { ProbBars } from "./ProbBars";
 import { Badge, VerdictBadge, cx, plainProbability, verdictInfo } from "./ui";
 
@@ -68,6 +69,7 @@ export function ResultCard({ result }: { result: any }) {
         </div>
         {up <= 0 && <p className="text-sm text-bad">El plan no mejora tus probabilidades: revísalo antes de invertir esfuerzo.</p>}
         <p className="text-sm">{result.plan.summary}</p>
+        <LeversRanked levers={result.plan.levers} />
         <ol className="space-y-2 text-sm">
           {result.plan.steps.map((s: any) => (
             <li key={s.order} className="flex gap-3">
@@ -80,6 +82,8 @@ export function ResultCard({ result }: { result: any }) {
             </li>
           ))}
         </ol>
+        <Premortem items={result.verdict?.premortem} />
+        <WatchNote watch={result.watch} />
         <Link to={`/objetivos/${result.goal_id}`} className="inline-flex min-h-11 items-center gap-1 text-sm font-medium text-accent">
           Seguir este objetivo
           <Icon name="back" className="size-4 rotate-180" />
@@ -100,6 +104,7 @@ export function ResultCard({ result }: { result: any }) {
               Respuesta
             </h3>
             <ForecastAnswer forecast={result.forecast} />
+            <VoicesNote voices={result.voices} />
           </section>
         )}
         <section aria-labelledby="que-hacer" className={cx("space-y-3", hasAnswer && "border-t border-line pt-4")}>
@@ -131,6 +136,10 @@ export function ResultCard({ result }: { result: any }) {
           </details>
         )}
         </section>
+        <BreakPoints analysis={result.analysis} />
+        <RivalNote rival={result.rival} actions={result.case?.actions} />
+        <Premortem items={v.premortem} />
+        <WatchNote watch={result.watch} />
       </div>
     );
   }
@@ -138,6 +147,8 @@ export function ResultCard({ result }: { result: any }) {
   return (
     <div className="result-glow -mx-4 -mt-4 space-y-4 rounded-t-2xl px-4 pt-5 pb-1 sm:-mx-5 sm:-mt-5 sm:px-5">
       <ForecastAnswer forecast={result?.forecast ?? {}} />
+      <VoicesNote voices={result?.voices} />
+      <WatchNote watch={result?.watch} />
       <p className="text-xs text-muted">
         Guardada en{" "}
         <Link to="/predicciones" className="text-accent underline">

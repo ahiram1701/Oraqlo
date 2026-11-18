@@ -20,11 +20,18 @@ No "predice todo" ni "controla la realidad": la realidad es caótica, parcialmen
 | Pantalla | Para qué |
 |---|---|
 | **Preguntar** | Previsión rápida (1 llamada), análisis completo (el LLM redacta acciones y escenarios, simula y debate) o **lograr objetivo** (plan, palancas, hitos y *uplift* medible). Con investigación web opcional; si internet no basta, te pregunta lo que solo tú sabes (o sigue sin preguntar si lo prefieres). |
-| **Objetivos** | Seguimiento: check-ins en lenguaje natural, trayectoria de P(objetivo), hitos con aviso de vencidos, re-planificación y cierre. |
-| **Predicciones** | Lo que Oraqlo previó y aún no sabes cómo acabó: lo marcas con un toque y así aprende (calibración). |
+| **Objetivos** | Seguimiento: palancas ordenadas por cuánto suben tu probabilidad por unidad de esfuerzo («haz esto primero»), check-ins en lenguaje natural, trayectoria de P(objetivo), hitos con aviso de vencidos, re-planificación y cierre. Oraqlo vigila las condiciones externas y hace check-ins automáticos si cambian. |
+| **Predicciones** | Lo que Oraqlo previó y aún no sabes cómo acabó: lo marcas con un toque (o escribes la cifra, si era de cantidad) y así aprende. Las **vigiladas** se revisan solas: si hay novedades, Oraqlo vuelve a predecir, te avisa y guarda cómo se movió. |
 | **Práctica** | Auto-mejora con Polymarket, solo lectura. Oraqlo predice sin ver el precio y compara su Brier con el de la multitud. Corre sola en el servidor. |
 | **Calibración** | Diagrama de fiabilidad y Brier por fuente/modelo. |
 | **Caso · Historial · Ajustes** | Editor de casos, informes en Markdown, roles, proveedores, notificaciones y actualizaciones. |
+
+### Cómo consigue Oraqlo predecir mejor
+
+- **Comité de voces**: varias IA con enfoques distintos y, si existe, el **mercado de predicción** que apuesta sobre lo mismo (Polymarket, Manifold y Metaculus con token). También una **estimación por partes** de las preguntas compuestas. Cada voz pesa según lo que acierta.
+- **Su propio historial** como clase de referencia: preguntas parecidas ya resueltas y en qué se equivocó.
+- **Calibración por tipo de pregunta**: corrige distinto lo que se pasa de confiado a corto plazo y lo que se queda corto a largo, solo si se demuestra en validación cruzada.
+- En el análisis completo: **qué haría cambiar la recomendación** (a partir de qué probabilidad gana otra opción), **qué vale la pena averiguar antes de decidir**, un **pre-mortem** con señales tempranas y, si alguien va a reaccionar, un **rival** que responde a cada jugada.
 
 Los análisis largos corren en el servidor: **puedes bloquear el celular** y al volver el resultado está ahí. Si activas las notificaciones push, te avisa al terminar.
 

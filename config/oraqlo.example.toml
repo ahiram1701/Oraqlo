@@ -50,6 +50,18 @@ mode = "auto"        # auto | notify | off
 channel = "stable"   # stable | beta
 interval_hours = 6
 
+# ── Predicción y vigilancia (también desde Ajustes) ──────────────────────
+[forecast]
+markets = true     # mercados de predicción como una voz más del comité
+decompose = true   # estimación por partes de las preguntas compuestas
+reference = true   # preguntas parecidas ya resueltas, para la visión externa
+
+[watch]
+auto = true             # vigilar lo nuevo (necesita la búsqueda web)
+interval_hours = 24     # cada cuánto se revisa cada previsión vigilada
+daily_budget = 5        # revisiones al día, como mucho
+alert_points = 10       # aviso si la probabilidad se mueve al menos esto
+
 # ── Autopráctica con Polymarket ──────────────────────────────────────────
 [practice]
 auto = false
