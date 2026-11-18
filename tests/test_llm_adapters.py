@@ -254,7 +254,7 @@ def test_openai_sin_clave_avisa(monkeypatch):
     from oraqlo.llm.openai_compat import OpenAICompatProvider
 
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
-    with pytest.raises(ProviderUnavailableError, match="MISTRAL_API_KEY"):
+    with pytest.raises(ProviderUnavailableError, match="Ajustes"):
         OpenAICompatProvider(preset="mistral").chat([ChatMessage("user", "x")], "m")
 
 

@@ -1,9 +1,8 @@
 # Configuración de Oraqlo. Copia este archivo a tu directorio de datos como
 # `oraqlo.toml` (Windows: %LOCALAPPDATA%\Oraqlo\oraqlo.toml) — `oraqlo config`
-# te dice la ruta exacta. Los SECRETOS nunca van aquí: solo variables de entorno
-# (o el archivo .env del directorio de datos):
-#   ANTHROPIC_API_KEY, OLLAMA_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY,
-#   OPENROUTER_API_KEY, GROQ_API_KEY, DEEPSEEK_API_KEY, MISTRAL_API_KEY, XAI_API_KEY
+# te dice la ruta exacta. Normalmente no hace falta: todo se configura en Ajustes.
+# Las CLAVES nunca van aquí: se ponen en Ajustes (proveedores, cuenta de Ollama,
+# token de Metaculus y APIs propias) y la app las guarda aparte.
 
 # ── Roles ─────────────────────────────────────────────────────────────────
 # Cada rol hereda de [roles.default]. Proveedores incorporados: anthropic,

@@ -118,9 +118,7 @@ class OllamaProvider(LLMProvider):
             key = os.environ.get(self.config.api_key_env)
             if not key:
                 raise OllamaUnavailableError(
-                    f"Backend cloud configurado pero la variable de entorno "
-                    f"{self.config.api_key_env} no está definida. "
-                    f"Exporta tu API key de ollama.com antes de usar este backend."
+                    "Falta la clave de ollama.com: añádela en Ajustes → Cuenta de Ollama."
                 )
             headers["Authorization"] = f"Bearer {key}"
         return headers

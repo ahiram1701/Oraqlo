@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type OptionsView } from "../lib/api";
 import { LOCAL_ONLY_NOTE, useSetup } from "../lib/setup";
+import { MetaculusToken } from "./MetaculusToken";
 import { Card, ErrorNote, Notice, SectionTitle, Skeleton, Toggle, inputClass } from "./ui";
 
 function NumberField({
@@ -76,8 +77,8 @@ export default function OptionsCard() {
             <p className="text-xs text-muted">
               Si en {o.metaculus ? "Polymarket, Manifold o Metaculus" : "Polymarket o Manifold"} se apuesta sobre exactamente lo mismo, su precio entra
               en el comité con el peso que se gane acertando. Solo lectura: no se apuesta nada.
-              {!o.metaculus && " Para Metaculus, añade METACULUS_TOKEN al .env."}
             </p>
+            {o.markets && <MetaculusToken options={o} local={local} />}
             <Toggle
               checked={o.decompose}
               onChange={(v) => local && save.mutate({ decompose: v })}

@@ -134,6 +134,13 @@ class PracticeIn(BaseModel):
     interval_min: float | None = Field(None, ge=5, le=24 * 60)
 
 
+class CustomProviderIn(BaseModel):
+    type: Literal["openai", "anthropic", "ollama"] = "openai"
+    base_url: str | None = Field(None, max_length=500)
+    # None: se deja la clave que hubiera; "": sin clave (p. ej. un servidor local).
+    key: str | None = Field(None, max_length=1000)
+
+
 class OptionsIn(BaseModel):
     markets: bool | None = None
     decompose: bool | None = None
@@ -724,6 +731,76 @@ def create_app(
     @app.get("/api/ollama")
     def ollama_status() -> dict:
         return service.ollama_status()
+
+    @app.post("/api/metaculus/test", dependencies=[Depends(require_local)])
+    def metaculus_test() -> dict:
+        from oraqlo.forecaster.markets import MetaculusSource
+
+        ok, detail = MetaculusSource().check()
+        return {"ok": ok, "detail": detail}
+
+    @app.get("/api/providers/custom")
+    def custom_providers() -> list[dict]:
+        return service.custom_providers_view()
+
+    @app.put("/api/providers/custom/{name}", dependencies=[Depends(require_local)])
+    def put_custom_provider(name: str, body: CustomProviderIn) -> dict:
+        from oraqlo.services.doctor import probe_provider
+        from oraqlo.services.userconfig import check_provider_name, provider_key_env
+
+        try:
+            check_provider_name(name)
+            env = provider_key_env(name)
+            existing = cfg.providers.get(name)
+            has_key = bool(body.key) or (
+                body.key is None and existing is not None and bool(existing.api_key_env)
+            )
+            new = apply_changes(
+                cfg.home,
+                {
+                    "providers": {
+                        name: {
+                            "type": body.type,
+                            "base_url": body.base_url,
+                            "api_key_env": env if has_key else None,
+                        }
+                    }
+                },
+            )
+            if body.key == "":
+                set_secret(cfg.home, env, None, {env})
+            elif body.key:
+                set_secret(cfg.home, env, body.key, {env})
+        except ConfigError as e:
+            raise HTTPException(400, str(e)) from e
+        service.reload_config(new)
+        return {
+            "providers": service.custom_providers_view(),
+            "check": probe_provider(service.registry, name).as_dict(),
+        }
+
+    @app.delete("/api/providers/custom/{name}", dependencies=[Depends(require_local)])
+    def delete_custom_provider(name: str) -> list[dict]:
+        from oraqlo.config import ROLES
+        from oraqlo.services.userconfig import provider_key_env
+
+        if name not in cfg.providers:
+            raise HTTPException(404, f"No hay ninguna API propia llamada «{name}».")
+        using = [r for r in ROLES if cfg.role(r).provider == name]
+        if using:
+            raise HTTPException(
+                409,
+                f"La usa{'n' if len(using) > 1 else ''} {', '.join(using)}: cámbia"
+                f"{'les' if len(using) > 1 else 'le'} el proveedor en «Modelos del panel» antes de quitarla.",
+            )
+        try:
+            new = apply_changes(cfg.home, {"providers": {name: None}})
+            env = provider_key_env(name)
+            set_secret(cfg.home, env, None, {env})
+        except ConfigError as e:
+            raise HTTPException(400, str(e)) from e
+        service.reload_config(new)
+        return service.custom_providers_view()
 
     @app.post("/api/websearch/test")
     def websearch_test() -> dict:

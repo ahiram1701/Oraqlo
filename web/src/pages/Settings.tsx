@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import CommitteeCard from "../components/CommitteeCard";
+import MyApisCard from "../components/MyApisCard";
 import OptionsCard from "../components/OptionsCard";
 import ConnectionCard from "../components/ConnectionCard";
 import ProvidersCard from "../components/ProvidersCard";
@@ -183,6 +184,7 @@ export default function Settings() {
       </nav>
       <Group id="ia" title="IA" hint="Qué modelo usa Oraqlo y con qué claves.">
         <ProvidersCard />
+        <MyApisCard />
         <WebSearchCard />
         <RolesCard />
         <CommitteeCard />

@@ -42,7 +42,7 @@ def probe_provider(registry: ProviderRegistry, name: str) -> Check:
         return Check(
             name,
             False,
-            f"Falta la clave ({info.api_key_env}).",
+            "Falta la clave.",
             "Pégala en Ajustes > Proveedores.",
         )
     try:
@@ -86,7 +86,7 @@ def probe_model(registry: ProviderRegistry, name: str, model: str) -> dict:
 
     info = provider_info(name, registry.config)
     if info.key_present is False:
-        return {"ok": False, "detail": f"Falta la clave ({info.api_key_env}).", "seconds": None}
+        return {"ok": False, "detail": "Falta la clave: añádela en Ajustes.", "seconds": None}
     start = time.monotonic()
     try:
         registry.get(name).chat(
@@ -130,7 +130,7 @@ def web_search_check(web: OllamaWebClient | None = None) -> Check:
     return Check(
         WEB_SEARCH_CHECK,
         False,
-        f"Sin clave ({web.api_key_env}): las preguntas se responden sin buscar en internet.",
+        "Sin clave de ollama.com: las preguntas se responden sin buscar en internet.",
         WEB_SEARCH_FIX,
         optional=True,
     )
@@ -178,7 +178,7 @@ def run_checks(
             detail = (
                 "Clave presente."
                 if info.key_present
-                else ("No necesita clave." if ok else f"Falta {info.api_key_env}.")
+                else ("No necesita clave." if ok else "Falta la clave: añádela en Ajustes.")
             )
             checks.append(
                 Check(name, ok, detail, None if ok else "Pégala en Ajustes > Proveedores.")

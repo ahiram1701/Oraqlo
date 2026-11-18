@@ -229,7 +229,7 @@ def test_ollama_cloud_sin_api_key_da_error_claro(monkeypatch):
     """El backend cloud sin OLLAMA_API_KEY debe fallar con mensaje accionable."""
     monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
     provider = OllamaProvider(OllamaBackendConfig.cloud())
-    with pytest.raises(OllamaUnavailableError, match="OLLAMA_API_KEY"):
+    with pytest.raises(OllamaUnavailableError, match="Ajustes"):
         provider.chat([ChatMessage(role="user", content="hola")], model="gpt-oss:120b-cloud")
 
 
@@ -378,7 +378,7 @@ def test_web_client_sin_api_key(monkeypatch):
     monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
     client = OllamaWebClient()
     assert client.is_available() is False
-    with pytest.raises(OllamaUnavailableError, match="OLLAMA_API_KEY"):
+    with pytest.raises(OllamaUnavailableError, match="Ajustes"):
         client.search("algo")
 
 

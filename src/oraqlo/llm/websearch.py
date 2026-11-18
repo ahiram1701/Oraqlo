@@ -43,8 +43,8 @@ class OllamaWebClient:
         key = os.environ.get(self.api_key_env)
         if not key:
             raise OllamaUnavailableError(
-                f"La búsqueda web necesita la variable de entorno {self.api_key_env} "
-                f"(API key de ollama.com)."
+                "La búsqueda web necesita la clave de ollama.com: añádela en "
+                "Ajustes → Cuenta de Ollama."
             )
         request = urllib.request.Request(
             url=f"{SEARCH_HOST}{path}",
@@ -63,8 +63,8 @@ class OllamaWebClient:
                 ) from e
             if e.code in (401, 403):
                 raise OllamaUnavailableError(
-                    f"Autenticación rechazada por la búsqueda web (HTTP {e.code}); "
-                    f"revisa {self.api_key_env}."
+                    f"La búsqueda web rechazó la clave (HTTP {e.code}): revísala en "
+                    "Ajustes → Cuenta de Ollama."
                 ) from e
             raise OllamaUnavailableError(f"Error HTTP {e.code} en {path}: {detail}") from e
         except (urllib.error.URLError, TimeoutError, OSError) as e:

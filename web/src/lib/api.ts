@@ -39,7 +39,19 @@ export interface OptionsView {
   watch_daily_budget: number;
   watch_alert_points: number;
   metaculus: boolean;
+  metaculus_hint: string | null;
   web_search: boolean;
+}
+
+/** Una API propia añadida desde Ajustes («Mis APIs»). */
+export interface CustomProvider {
+  name: string;
+  type: "openai" | "anthropic" | "ollama";
+  base_url: string | null;
+  key_present: boolean;
+  key_hint: string | null;
+  /** Roles del panel que la usan (no se puede quitar mientras tanto). */
+  used_by: string[];
 }
 
 export interface ResolvedForecast extends Forecast {

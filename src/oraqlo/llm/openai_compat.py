@@ -70,7 +70,7 @@ class OpenAICompatProvider(LLMProvider):
             key = os.environ.get(self.api_key_env) if self.api_key_env else "not-needed"
             if not key:
                 raise ProviderUnavailableError(
-                    f"Falta la API key de {self.name}: define la variable {self.api_key_env}."
+                    f"Falta la clave de {self.name}: añádela en Ajustes → Proveedores."
                 )
             self._client = openai.OpenAI(
                 api_key=key,
@@ -111,7 +111,7 @@ class OpenAICompatProvider(LLMProvider):
             response = self._create(params)
         except (openai.AuthenticationError, openai.PermissionDeniedError) as e:
             raise ProviderUnavailableError(
-                f"{self.name} rechazó la credencial: revisa {self.api_key_env}."
+                f"{self.name} rechazó la clave: revísala en Ajustes → Proveedores."
             ) from e
         except openai.NotFoundError as e:
             raise LLMError(f"Modelo no encontrado en {self.name}: {model!r}") from e
