@@ -102,7 +102,7 @@ Sin configuración, Oraqlo usa el primer proveedor cuya clave encuentre. Si no h
 Por debajo, lo que guardas en Ajustes queda en dos archivos de tu carpeta de datos. Sirven para usos avanzados, como añadir proveedores propios:
 
 - **`oraqlo.toml`**: ver [config/oraqlo.example.toml](config/oraqlo.example.toml). La app conserva tus comentarios al editarlo.
-- **`.env`**: guarda las claves. Las claves nunca salen por la API.
+- **Claves y APIs**: todas se ponen en Ajustes (también las APIs propias y el token de Metaculus). La app las guarda en un `.env` interno que no hay que tocar; nunca salen completas por la API.
 
 La investigación web usa la API de búsqueda de Ollama (`OLLAMA_API_KEY`). Sin esa clave, Oraqlo avisa y sigue sin investigar.
 

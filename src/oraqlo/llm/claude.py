@@ -148,7 +148,7 @@ class AnthropicProvider(LLMProvider):
                     raise LLMError(f"Petición rechazada por Anthropic: {e.message}") from e
         except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as e:
             raise ProviderUnavailableError(
-                f"Anthropic rechazó la credencial. Revisa {self.api_key_env} (o `ant auth login`)."
+                "Anthropic rechazó la clave: revísala en Ajustes → Proveedores."
             ) from e
         except anthropic.NotFoundError as e:
             raise LLMError(f"Modelo no encontrado en Anthropic: {model!r}") from e
@@ -161,7 +161,7 @@ class AnthropicProvider(LLMProvider):
         except anthropic.AnthropicError as e:
             if "api_key" in str(e).lower() or "credential" in str(e).lower():
                 raise ProviderUnavailableError(
-                    f"Falta la credencial de Anthropic: define {self.api_key_env}."
+                    "Falta la clave de Anthropic: añádela en Ajustes → Proveedores."
                 ) from e
             raise LLMError(str(e)) from e
 
@@ -179,7 +179,7 @@ class AnthropicProvider(LLMProvider):
             return sorted(m.id for m in self._get_client().models.list())
         except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as e:
             raise ProviderUnavailableError(
-                f"Credencial de Anthropic rechazada ({self.api_key_env})."
+                "Anthropic rechazó la clave: revísala en Ajustes → Proveedores."
             ) from e
         except anthropic.AnthropicError as e:
             raise ProviderUnavailableError(f"No se pudo listar modelos de Anthropic: {e}") from e

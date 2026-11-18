@@ -5,7 +5,7 @@ suele ser la mejor estimación disponible. Oraqlo lo usa así:
 
 1. El LLM propone 2-3 búsquedas cortas (en inglés y en el idioma de la pregunta).
 2. Se buscan mercados abiertos en Polymarket y Manifold (públicos) y en Metaculus
-   (si hay `METACULUS_TOKEN`). Se descartan los que tienen poca gente detrás.
+   (con su token, que se pone en Ajustes). Se descartan los que tienen poca gente detrás.
 3. El LLM decide si alguno pregunta EXACTAMENTE lo mismo (mismo hecho, misma fecha
    límite, mismas reglas) y empareja sus resultados con los escenarios de Oraqlo.
    Ante la duda, no hay coincidencia: un mercado parecido pero distinto engaña más
@@ -208,7 +208,7 @@ class ManifoldSource:
 
 
 class MetaculusSource:
-    """Necesita `METACULUS_TOKEN` (gratis en metaculus.com): sin él no se consulta."""
+    """Necesita un token de Metaculus (gratis; se pone en Ajustes): sin él no se consulta."""
 
     name = "metaculus"
 
@@ -221,6 +221,21 @@ class MetaculusSource:
 
     def available(self) -> bool:
         return bool(self.token)
+
+    def check(self) -> tuple[bool, str]:
+        """Prueba el token con una búsqueda real: (vale, explicación)."""
+        if not self.token:
+            return False, "No hay token de Metaculus."
+        try:
+            self.fetch(
+                f"{self.host}/api/posts/?{urllib.parse.urlencode({'search': 'bitcoin', 'limit': 1})}",
+                {"Authorization": f"Token {self.token}"},
+            )
+        except MarketError as e:
+            if "HTTP 401" in str(e) or "HTTP 403" in str(e):
+                return False, "Metaculus no acepta este token: cópialo de nuevo."
+            return False, f"No pude hablar con Metaculus: {e}"
+        return True, "Token válido: Metaculus ya cuenta como una voz más."
 
     def search(self, query: str, limit: int = 8) -> list[Quote]:
         if not self.token:

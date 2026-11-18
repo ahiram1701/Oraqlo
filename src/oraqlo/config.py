@@ -4,7 +4,8 @@ Ubicaciones (en orden de prioridad):
 - Directorio de datos: `ORAQLO_HOME`, o el estándar del SO
   (Windows: %LOCALAPPDATA%\\Oraqlo; Linux: ~/.local/share/oraqlo).
 - Config: `ORAQLO_CONFIG`, o `<datos>/oraqlo.toml`. Sin archivo, valores por defecto.
-- Secretos: SOLO por variables de entorno (o `<datos>/.env`). Nunca en el TOML.
+- Secretos: se ponen en Ajustes; la app los guarda en `<datos>/.env` (interno) y
+  se leen como variables de entorno. Nunca en el TOML.
 
 Cada rol del panel (estratega, red_team, oraculo, juez) y de las tareas
 auxiliares (investigador, redactor, practica) se resuelve como

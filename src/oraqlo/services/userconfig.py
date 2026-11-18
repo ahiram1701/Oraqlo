@@ -1,10 +1,12 @@
-"""Configuración editable desde la app: claves de API (.env) y `oraqlo.toml`.
+"""Configuración editable desde la app: claves de API y `oraqlo.toml`.
 
 Antes había que crear estos archivos a mano. Ahora la app los escribe, siempre
 desde el propio PC (la API exige acceso local para estas rutas):
 
-- Las claves van a `<datos>/.env`, escrito de forma atómica. Nunca salen por la
-  API completas: solo una pista (`sk-…abcd`).
+- Todas las claves se ponen en Ajustes. La app las guarda en `<datos>/.env` (un
+  detalle interno que nadie tiene que editar), escrito de forma atómica. Nunca salen
+  por la API completas: solo una pista (`sk-…abcd`).
+- Las APIs propias (`[providers.<nombre>]`) también se crean y borran desde Ajustes.
 - `oraqlo.toml` se edita con tomlkit, que conserva los comentarios y lo que el
   usuario haya escrito a mano. Antes de guardar se valida con el mismo cargador
   que usa el servidor, así un cambio inválido nunca deja la config rota.
@@ -86,6 +88,25 @@ def set_secret(home: Path, name: str, value: str | None, allowed: Iterable[str])
 # ── oraqlo.toml ────────────────────────────────────────────────────────────
 
 ROLE_FIELDS = ("provider", "model", "temperature", "effort")
+PROVIDER_NAME = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
+PROVIDER_TYPES = ("openai", "anthropic", "ollama")
+
+
+def provider_key_env(name: str) -> str:
+    """Variable (interna) donde se guarda la clave de una API propia."""
+    return "ORAQLO_KEY_" + name.upper().replace("-", "_")
+
+
+def check_provider_name(name: str) -> None:
+    from oraqlo.llm.registry import BUILTIN
+
+    if not PROVIDER_NAME.match(name):
+        raise ConfigError(
+            "El nombre debe empezar por una letra y llevar solo minúsculas, números y guiones "
+            "(de 2 a 31 caracteres)."
+        )
+    if name in BUILTIN:
+        raise ConfigError(f"«{name}» ya es un proveedor de Oraqlo: elige otro nombre.")
 
 
 def read_document(home: Path) -> tomlkit.TOMLDocument:
@@ -110,6 +131,7 @@ def apply_changes(home: Path, changes: dict[str, Any]) -> OraqloConfig:
     - `updates_mode`: "auto" | "notify" | "off".
     - `allowed_users`: lista de logins de Tailscale.
     - `committee`: modelos del comité (lista; [] = sin comité) o None = los recomendados.
+    - `providers`: {nombre: {type, base_url, api_key_env} | None}; None borra la API propia.
     """
     doc = read_document(home)
     roles = changes.get("roles")
@@ -140,6 +162,27 @@ def apply_changes(home: Path, changes: dict[str, Any]) -> OraqloConfig:
                 del doc["forecast"]
         else:
             forecast["committee"] = [str(m).strip() for m in committee if str(m).strip()]
+    for name, spec in (changes.get("providers") or {}).items():
+        check_provider_name(name)
+        table = _table(doc, "providers")
+        if spec is None:
+            table.pop(name, None)
+            if not table:
+                del doc["providers"]
+            continue
+        kind = spec.get("type")
+        if kind not in PROVIDER_TYPES:
+            raise ConfigError(f"Tipo de API desconocido: {kind}.")
+        base_url = str(spec.get("base_url") or "").strip()
+        if kind != "anthropic" and not base_url.startswith(("http://", "https://")):
+            raise ConfigError("La URL debe empezar por http:// o https://.")
+        entry = tomlkit.table()
+        entry["type"] = kind
+        if base_url:
+            entry["base_url"] = base_url
+        if spec.get("api_key_env"):
+            entry["api_key_env"] = spec["api_key_env"]
+        table[name] = entry
     if "updates_mode" in changes:
         _table(doc, "updates")["mode"] = changes["updates_mode"]
     if "allowed_users" in changes:

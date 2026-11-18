@@ -226,7 +226,14 @@ class OraqloService:
         for name, (section, field) in self.OPTION_KEYS.items():
             default = getattr(getattr(self.config, section), field)
             out[name] = self.store.settings.get(f"options.{name}", default)
-        out["metaculus"] = bool(__import__("os").environ.get("METACULUS_TOKEN"))
+        import os
+
+        from oraqlo.forecaster.markets import METACULUS_TOKEN_ENV
+        from oraqlo.services.userconfig import key_hint
+
+        token = os.environ.get(METACULUS_TOKEN_ENV)
+        out["metaculus"] = bool(token)
+        out["metaculus_hint"] = key_hint(token)
         out["web_search"] = OllamaWebClient().is_available()
         return out
 
@@ -1235,11 +1242,36 @@ class OraqloService:
     def key_envs(self) -> set[str]:
         """Variables de clave que la app puede escribir: las de proveedores conocidos y
         la de la búsqueda web (que se usa con cualquier proveedor, también Ollama local)."""
+        from oraqlo.forecaster.markets import METACULUS_TOKEN_ENV
+
         return {
             env
             for n in self.registry.names()
             if (env := provider_info(n, self.config).api_key_env) is not None
-        } | {WEB_SEARCH_KEY_ENV}
+        } | {WEB_SEARCH_KEY_ENV, METACULUS_TOKEN_ENV}
+
+    def custom_providers_view(self) -> list[dict]:
+        """Las APIs propias que se añadieron desde Ajustes (o a mano en el toml)."""
+        import os
+
+        from oraqlo.config import ROLES
+        from oraqlo.services.userconfig import key_hint
+
+        out = []
+        for name, p in sorted(self.config.providers.items()):
+            env = provider_info(name, self.config).api_key_env
+            key = os.environ.get(env) if env else None
+            out.append(
+                {
+                    "name": name,
+                    "type": p.type,
+                    "base_url": p.base_url,
+                    "key_present": bool(key),
+                    "key_hint": key_hint(key),
+                    "used_by": [r for r in ROLES if self.config.role(r).provider == name],
+                }
+            )
+        return out
 
     def reload_config(self, config: OraqloConfig | None = None) -> None:
         """Aplica una config nueva sin reiniciar. Se actualiza el MISMO objeto (otras
