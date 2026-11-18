@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/ahiram1701/Oraqlo/compare/v0.13.1...v0.14.0) (2026-11-18)
+
+
+### Novedades
+
+* Oraqlo predice con un comité de modelos y aprende con más cuidado ([#74](https://github.com/ahiram1701/Oraqlo/issues/74)) ([645bf70](https://github.com/ahiram1701/Oraqlo/commit/645bf70898720cb81631267395dbab6d27bc362a))
+
 ## [0.13.1](https://github.com/ahiram1701/Oraqlo/compare/v0.13.0...v0.13.1) (2026-11-18)
 
 
