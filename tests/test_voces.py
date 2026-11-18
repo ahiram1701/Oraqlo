@@ -87,6 +87,23 @@ def test_emparejar_resultados_del_mercado():
     assert map_outcomes(["a", "b"], three, {"a": "A", "b": "B"}) is None
 
 
+def test_varios_escenarios_a_un_mismo_resultado_del_mercado():
+    """Tramos de precio frente a «¿superará 80.000?»: el mercado fija el grupo y el
+    comité reparte dentro."""
+    labels = ["menos de 60.000", "de 60.000 a 80.000", "más de 80.000"]
+    market = {"Yes": 0.2, "No": 0.8}
+    mapping = {"menos de 60.000": "No", "de 60.000 a 80.000": "No", "más de 80.000": "Yes"}
+    within = {"menos de 60.000": 0.3, "de 60.000 a 80.000": 0.6, "más de 80.000": 0.1}
+    out = map_outcomes(labels, market, mapping, within)
+    assert out == {
+        "menos de 60.000": pytest.approx(0.8 / 3),
+        "de 60.000 a 80.000": pytest.approx(0.8 * 2 / 3),
+        "más de 80.000": pytest.approx(0.2),
+    }
+    # Sin lo que estimó el comité no se puede repartir dentro del grupo.
+    assert map_outcomes(labels, market, mapping) is None
+
+
 def test_buscador_encuentra_el_mercado_equivalente():
     llm = Scripted(
         {
@@ -99,6 +116,24 @@ def test_buscador_encuentra_el_mercado_equivalente():
     assert voice is not None
     assert voice.voice == "mercado:polymarket"
     assert voice.outcomes["sí"] == pytest.approx(0.8)
+
+
+def test_los_candidatos_mas_parecidos_van_primero():
+    """Una plataforma con muchos resultados vagos no debe tapar el mercado exacto de otra:
+    las cifras se comparan sin separadores («77.777» = «$77,777»)."""
+    from oraqlo.forecaster.markets import rank_quotes
+
+    vague = [_quote(question=f"Will Bitcoin reach ${n},000 in November?") for n in (90, 95, 100)]
+    exact = Quote(
+        "manifold",
+        "m",
+        "Will Bitcoin be higher than $77,777 at the end of 2026?",
+        {"Yes": 0.1, "No": 0.9},
+    )
+    ranked = rank_quotes(
+        [*vague, exact], ["¿Cerrará el bitcoin 2026 por encima de 77.777 dólares?"]
+    )
+    assert ranked[0] is exact
 
 
 def test_buscador_sin_coincidencia_o_sin_fuentes():
@@ -137,7 +172,7 @@ def test_el_mercado_entra_como_voz_y_cuenta_como_dato():
     llm = Scripted({'"outcomes"': ORACLE})
 
     class Finder:
-        def find(self, question, horizon, labels):
+        def find(self, question, horizon, labels, within=None):
             from oraqlo.forecaster.markets import MarketVoice
 
             return MarketVoice(_quote(0.9), {"sí": 0.9, "no": 0.1}, "misma pregunta")
@@ -180,7 +215,7 @@ def test_previsiones_normales_registran_cada_voz_y_se_resuelven_juntas(env, monk
         def __init__(self, *a, **k):
             pass
 
-        def find(self, question, horizon, labels):
+        def find(self, question, horizon, labels, within=None):
             from oraqlo.forecaster.markets import MarketVoice
 
             return MarketVoice(_quote(0.9), dict(zip(labels, (0.9, 0.1), strict=False)))

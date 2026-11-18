@@ -22,11 +22,12 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Protocol
 
@@ -259,6 +260,62 @@ class MetaculusSource:
         return quotes
 
 
+_DIGITS = re.compile(r"(?<=\d)[.,\u00a0 ](?=\d{3}\b)")
+_TOKEN = re.compile(r"[a-z0-9]{3,}")
+_IGNORE = frozenset(
+    [
+        "will",
+        "the",
+        "and",
+        "for",
+        "with",
+        "that",
+        "this",
+        "from",
+        "before",
+        "after",
+        "end",
+        "what",
+        "who",
+        "which",
+        "than",
+        "does",
+        "que",
+        "los",
+        "las",
+        "del",
+        "por",
+        "para",
+        "con",
+        "una",
+        "como",
+        "pero",
+        "sus",
+        "este",
+        "esta",
+    ]
+)
+
+
+def _tokens(text: str) -> set[str]:
+    """Palabras y cifras comparables («77.777 $» y «$77,777» → «77777»)."""
+    text = _DIGITS.sub("", text.casefold())
+    return {t for t in _TOKEN.findall(text) if t not in _IGNORE}
+
+
+def rank_quotes(quotes: list[Quote], texts: list[str]) -> list[Quote]:
+    """Los mercados más parecidos a la pregunta (y a las búsquedas) primero; las
+    cifras pesan el doble, porque un umbral distinto es otra pregunta."""
+    wanted = set().union(*(_tokens(t) for t in texts)) if texts else set()
+
+    def score(q: Quote) -> float:
+        words = _tokens(q.question)
+        shared = words & wanted
+        return sum(2.0 if w.isdigit() else 1.0 for w in shared)
+
+    return sorted(quotes, key=lambda q: -score(q))
+
+
 def default_sources() -> list[MarketSource]:
     sources: list[MarketSource] = [PolymarketSource(), ManifoldSource()]
     metaculus = MetaculusSource()
@@ -271,7 +328,9 @@ _QUERIES_PROMPT = (
     "Buscas si existe un mercado de predicción (Polymarket, Manifold, Metaculus) sobre la "
     "pregunta dada. Responde SOLO con JSON: "
     '{"queries": ["<búsqueda>", ...]} — 2 o 3 búsquedas MUY cortas (2-5 palabras clave: '
-    "nombres propios, el hecho, el año), al menos una en inglés. Si la pregunta es sobre la "
+    "nombres propios, el hecho, la cifra o el umbral, el año), al menos una en inglés. NO "
+    "pongas nombres de plataformas («Polymarket», «prediction market»…): se busca dentro de "
+    "ellas. Si la pregunta es sobre la "
     'vida privada de quien pregunta (su negocio, su salud, su familia), responde {"queries": []}.'
 )
 
@@ -281,33 +340,60 @@ _MATCH_PROMPT = (
     "fecha límite igual o casi igual (unos pocos días de diferencia como mucho) y con "
     "reglas compatibles. Si la pregunta es más amplia, más estrecha, de otra fecha o de "
     "otro umbral, NO coincide. Ante la duda, no coincide.\n"
-    "Si coincide, empareja CADA escenario de la pregunta con un resultado distinto del "
-    "mercado que signifique lo mismo (p. ej. «sí» → «Yes»).\n"
+    "Si coincide, empareja CADA escenario de la pregunta con el resultado del mercado que "
+    "lo incluye (p. ej. «sí» → «Yes»). Si la pregunta tiene más escenarios que el mercado, "
+    "varios escenarios pueden ir al MISMO resultado cuando juntos significan exactamente "
+    "eso (p. ej. tres tramos por debajo de 80.000 → «No» de «¿superará 80.000?»), pero "
+    "solo si el corte del mercado coincide con un límite de los escenarios.\n"
     'Responde SOLO con JSON: {"match": null} o {"match": {"ref": "<ref del mercado>", '
     '"mapping": {"<escenario>": "<resultado del mercado>", ...}, "why": "<una frase>"}}'
 )
 
 
 def map_outcomes(
-    labels: list[str], market: dict[str, float], mapping: dict
+    labels: list[str],
+    market: dict[str, float],
+    mapping: dict,
+    within: dict[str, float] | None = None,
 ) -> dict[str, float] | None:
     """Probabilidad del mercado sobre los escenarios de Oraqlo, o None si el
-    emparejamiento no es limpio (falta un escenario, repite resultado, inventa uno o
-    deja fuera demasiada probabilidad del mercado)."""
+    emparejamiento no es limpio (falta un escenario, inventa un resultado o deja fuera
+    demasiada probabilidad del mercado).
+
+    Varios escenarios pueden ir al mismo resultado del mercado (tres tramos de precio →
+    «No» de «¿superará X?»). Entonces el mercado fija cuánto vale el grupo y, dentro de
+    él, se reparte como dice `within` (lo que estimó el comité); sin `within`, eso no se
+    puede hacer y no hay coincidencia."""
     norm = {" ".join(str(k).split()).casefold(): k for k in market}
     by_label = {" ".join(str(k).split()).casefold(): v for k, v in (mapping or {}).items()}
     chosen: dict[str, str] = {}
     for label in labels:
         target = by_label.get(" ".join(label.split()).casefold())
         key = norm.get(" ".join(str(target or "").split()).casefold())
-        if key is None or key in chosen.values():
+        if key is None:
             return None
         chosen[label] = key
-    covered = sum(market[k] for k in chosen.values())
+    used = set(chosen.values())
+    covered = sum(market[k] for k in used)
     total = sum(market.values())
     if total <= 0 or covered <= 0 or total - covered > MAX_UNMAPPED * total:
         return None
-    return {label: market[key] / covered for label, key in chosen.items()}
+    groups: dict[str, list[str]] = {}
+    for label, key in chosen.items():
+        groups.setdefault(key, []).append(label)
+    out: dict[str, float] = {}
+    for key, members in groups.items():
+        mass = market[key] / covered
+        if len(members) == 1:
+            out[members[0]] = mass
+            continue
+        if within is None:
+            return None
+        shares = {m: max(within.get(m, 0.0), 1e-6) for m in members}
+        norm_shares = sum(shares.values())
+        for m in members:
+            out[m] = mass * shares[m] / norm_shares
+    return {label: out[label] for label in labels}
 
 
 class MarketFinder:
@@ -318,8 +404,8 @@ class MarketFinder:
         provider: LLMProvider,
         model: str,
         sources: list[MarketSource] | None = None,
-        per_query: int = 6,
-        max_candidates: int = 10,
+        per_query: int = 8,
+        max_candidates: int = 12,
     ) -> None:
         self.provider = provider
         self.model = model
@@ -357,10 +443,20 @@ class MarketFinder:
                     if (q.platform, q.id) not in seen:
                         seen.add((q.platform, q.id))
                         found.append(q)
-        return found[: self.max_candidates]
+        # Antes de recortar, los que más se parecen: si no, una plataforma con muchos
+        # resultados vagos tapa el mercado exacto de otra.
+        return rank_quotes(found, [question, *queries])[: self.max_candidates]
 
-    def find(self, question: str, horizon: timedelta, labels: list[str]) -> MarketVoice | None:
-        """La coincidencia, o None (sin mercados, sin coincidencia clara o con error)."""
+    def find(
+        self,
+        question: str,
+        horizon: timedelta,
+        labels: list[str],
+        within: dict[str, float] | None = None,
+    ) -> MarketVoice | None:
+        """La coincidencia, o None (sin mercados, sin coincidencia clara o con error).
+        `within`: lo que estimó el comité, para repartir dentro de un grupo de escenarios
+        que el mercado cubre con un solo resultado."""
         quotes = self.candidates(question, horizon)
         if not quotes:
             return None
@@ -384,16 +480,7 @@ class MarketFinder:
         quote = refs.get(str(match.get("ref", "")).strip())
         if quote is None:
             return None
-        outcomes = map_outcomes(labels, quote.outcomes, match.get("mapping") or {})
+        outcomes = map_outcomes(labels, quote.outcomes, match.get("mapping") or {}, within)
         if outcomes is None:
             return None
         return MarketVoice(quote, outcomes, str(match.get("why") or "").strip())
-
-
-@dataclass
-class Voices:
-    """Voces extra (no LLM) que se suman a la combinación del comité."""
-
-    draws: list[tuple[str, dict[str, float]]] = field(default_factory=list)
-    notes: list[str] = field(default_factory=list)
-    details: dict[str, dict] = field(default_factory=dict)

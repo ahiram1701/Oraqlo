@@ -264,7 +264,12 @@ class LLMForecaster(Forecaster):
         ]
 
     def _extra_voices(
-        self, question: str, horizon: timedelta, labels: list[str], context: str
+        self,
+        question: str,
+        horizon: timedelta,
+        labels: list[str],
+        context: str,
+        within: dict[str, float] | None = None,
     ) -> list[tuple[str, dict[str, float]]]:
         """El mercado y la estimación por partes, si aplican. Nunca rompen la previsión:
         si algo falla, se sigue sin esa voz (y se avisa)."""
@@ -272,11 +277,13 @@ class LLMForecaster(Forecaster):
         if self.market_finder is not None:
             self.on_progress("Buscando un mercado de predicción sobre lo mismo…")
             try:
-                voice = self.market_finder.find(question, horizon, labels)
+                voice = self.market_finder.find(question, horizon, labels, within)
             except Exception as e:
                 voice = None
                 self.on_progress(f"No pude consultar los mercados ({e}); sigo sin ellos")
-            if voice is not None:
+            if voice is None:
+                self.on_progress("Sin mercado de predicción sobre exactamente lo mismo")
+            else:
                 self.on_progress(f"Mercado encontrado en {voice.quote.platform}: se suma al comité")
                 draws.append((voice.voice, voice.outcomes))
                 self.last_extras["market"] = voice.to_dict()
@@ -358,7 +365,8 @@ class LLMForecaster(Forecaster):
             if (base := parse_base_rate(parsed.base_rate_outcomes, labels)) is not None:
                 bases.append(base)
 
-        extra = self._extra_voices(question, horizon, labels, _summarize_state(state))
+        within = pool_log_odds([d for _m, d in draws]) if draws else None
+        extra = self._extra_voices(question, horizon, labels, _summarize_state(state), within)
         weights = dict(self.weights or {})
         if extra and self.weigh is not None:
             names = list(dict.fromkeys([*(m for m, _ in draws), *(v for v, _ in extra)]))
