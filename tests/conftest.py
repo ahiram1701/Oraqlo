@@ -27,3 +27,17 @@ import pytest  # noqa: E402
 def _sin_catalogo_de_la_nube(monkeypatch):
     """Los tests no consultan ollama.com: sin catálogo, sin comité automático."""
     monkeypatch.setattr("oraqlo.services.core.fetch_cloud_catalog", lambda *a, **k: [])
+
+
+@pytest.fixture(autouse=True)
+def _sin_voces_extra(request, monkeypatch):
+    """Ni mercados de verdad (red) ni estimación por partes (llamadas de más al modelo
+    falso) salvo en los tests marcados con `@pytest.mark.voces`, que traen las suyas."""
+    if request.node.get_closest_marker("voces"):
+        return
+    monkeypatch.setattr("oraqlo.forecaster.markets.default_sources", lambda: [])
+    monkeypatch.setattr("oraqlo.forecaster.decompose.decompose", lambda *a, **k: None)
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "voces: el test usa mercados o estimación por partes")

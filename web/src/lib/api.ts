@@ -12,6 +12,34 @@ export interface Forecast {
   horizon_days: number;
   assumptions: string[];
   created_at: string | null;
+  /** Pregunta de cantidad: escenarios por intervalos; se resuelve escribiendo el número. */
+  numeric?: { unit: string; bins: Record<string, [number | null, number | null]> } | null;
+  /** Vigilancia automática (solo en la versión vigente de cada previsión). */
+  watch?: WatchView | null;
+}
+
+/** Lo que Oraqlo vigila por su cuenta de una previsión u objetivo. */
+export interface WatchView {
+  root: string;
+  enabled: boolean;
+  kind: "forecast" | "goal";
+  signals: { text: string; look_for: string; favors: string; triggered_at: string | null }[];
+  history: { at: string; id: string; outcomes: Record<string, number>; why: string }[];
+  versions: number;
+  last_check: string | null;
+}
+
+/** Opciones de predicción y vigilancia (Ajustes). */
+export interface OptionsView {
+  markets: boolean;
+  decompose: boolean;
+  reference: boolean;
+  watch: boolean;
+  watch_interval_hours: number;
+  watch_daily_budget: number;
+  watch_alert_points: number;
+  metaculus: boolean;
+  web_search: boolean;
 }
 
 export interface ResolvedForecast extends Forecast {
@@ -129,7 +157,13 @@ export interface Calibration {
 /** Nombre legible de una fuente del ledger (`llm:<modelo>[:tipo]`, `polymarket:mercado`…). */
 /** Nombre legible de un modelo; «comite» es la predicción combinada de varios. */
 export function modelLabel(model: string): string {
-  return model === "comite" ? "Comité de modelos" : model;
+  if (model === "comite") return "Comité de modelos";
+  if (model === "estructura") return "Estimación por partes";
+  if (model.startsWith("mercado:")) {
+    const name = model.slice(8);
+    return `Mercado (${name.charAt(0).toUpperCase()}${name.slice(1)})`;
+  }
+  return model;
 }
 
 export function sourceLabel(source: string): string {

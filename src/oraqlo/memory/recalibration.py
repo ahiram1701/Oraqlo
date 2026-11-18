@@ -23,7 +23,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from oraqlo.forecaster.aggregate import power
 from oraqlo.forecaster.base import Forecast
@@ -38,7 +38,9 @@ LLM_PREFIX = "llm:"
 # «miembro»: lo que dijo cada modelo del comité por separado (no cuenta en el boletín).
 SOURCE_KINDS = ("prevision", "objetivo", "panel", "miembro")
 MEMBER_SUFFIX = ":miembro"
-_NOTE_RE = re.compile(r"^Recalibrado con su historial \(factor a=(\d+(?:\.\d+)?)\)")
+_NOTE_RE = re.compile(r"^Recalibrado con su historial \(factor a=(\d+(?:\.\d+)?)(?:;[^)]*)?\)")
+MIN_GROUP = 10  # resueltas de un grupo para que tenga factor propio
+HORIZON_BUCKETS = ((31, "corto"), (183, "medio"))
 
 
 def llm_source(model: str, kind: str | None = None) -> str:
@@ -116,31 +118,65 @@ def user_resolvable(source: str, question: str = "") -> bool:
     return not is_practice(source, question)
 
 
+def group_key(kind: str, n_outcomes: int, horizon_days: float) -> str:
+    """Grupo de calibración: tipo · binaria/múltiple · plazo («prevision·binaria·corto»)."""
+    size = "binaria" if n_outcomes <= 2 else "multiple"
+    term = next((name for limit, name in HORIZON_BUCKETS if horizon_days <= limit), "largo")
+    return f"{kind}·{size}·{term}"
+
+
+def group_of(forecast: Forecast) -> str:
+    from oraqlo.memory.scorecard import forecast_kind
+
+    return group_key(
+        forecast_kind(forecast.source, forecast.question),
+        len(forecast.distribution.outcomes),
+        forecast.horizon.total_seconds() / 86400,
+    )
+
+
 @dataclass(frozen=True)
 class Recalibration:
     a: float = 1.0
     n: int = 0
     brier_before: float | None = None
     brier_after: float | None = None
+    # Factor propio de los grupos donde el historial dice que se comporta distinto
+    # ({grupo: (a, n)}); el resto usa `a`. Ver `fit_groups`.
+    groups: dict[str, tuple[float, int]] = field(default_factory=dict)
 
     @property
     def active(self) -> bool:
-        return self.n >= MIN_RESOLVED and self.a != 1.0
+        return self.n >= MIN_RESOLVED and (self.a != 1.0 or bool(self.groups))
 
-    def apply(self, outcomes: dict[str, float]) -> dict[str, float]:
-        return power(outcomes, self.a) if self.active else dict(outcomes)
+    def factor(self, group: str | None = None) -> float:
+        if self.n < MIN_RESOLVED:
+            return 1.0
+        if group and group in self.groups:
+            return self.groups[group][0]
+        return self.a
+
+    def active_for(self, group: str | None = None) -> bool:
+        return self.factor(group) != 1.0
+
+    def apply(self, outcomes: dict[str, float], group: str | None = None) -> dict[str, float]:
+        a = self.factor(group)
+        return power(outcomes, a) if a != 1.0 else dict(outcomes)
 
     def describe(self) -> str:
         if self.n < MIN_RESOLVED:
             return f"Aprendiendo: {self.n} de {MIN_RESOLVED} previsiones resueltas."
+        extra = f" Ajuste propio en {len(self.groups)} tipo(s) de pregunta." if self.groups else ""
         if self.a == 1.0:
-            return f"Bien calibrado con {self.n} resueltas: no hace falta corregir."
+            return f"Bien calibrado con {self.n} resueltas: no hace falta corregir.{extra}"
         tendency = "sobreconfiado: suaviza" if self.a < 1 else "subconfiado: concentra"
-        return f"Con {self.n} resueltas el modelo sale {tendency} sus probabilidades."
+        return f"Con {self.n} resueltas el modelo sale {tendency} sus probabilidades.{extra}"
 
-    def note(self) -> str:
+    def note(self, group: str | None = None) -> str:
         """Supuesto que se añade a la previsión: auditable y reversible (ver raw_of)."""
-        return f"Recalibrado con su historial (factor a={self.a:.2f}): {self.describe()}"
+        a = self.factor(group)
+        where = f"; grupo {group}" if group and group in self.groups else ""
+        return f"Recalibrado con su historial (factor a={a:.2f}{where}): {self.describe()}"
 
     def as_dict(self) -> dict:
         return {
@@ -150,6 +186,7 @@ class Recalibration:
             "min_resolved": MIN_RESOLVED,
             "brier_before": self.brier_before,
             "brier_after": self.brier_after,
+            "groups": [{"group": g, "a": a, "n": n} for g, (a, n) in sorted(self.groups.items())],
             "summary": self.describe(),
         }
 
@@ -172,42 +209,70 @@ def tables(
     return briers, losses
 
 
-def choose(briers: list[list[float]], losses: list[list[float]], keep: list[int]) -> int:
+def choose(
+    briers: list[list[float]],
+    losses: list[list[float]],
+    keep: list[int],
+    target: int = ONE,
+    min_n: int = MIN_RESOLVED,
+) -> int:
     """Índice del `a` que aprende la regla con los casos `keep`: el de menor pérdida
-    encogida hacia 1, y solo si mejora el Brier en validación cruzada; si no, a = 1."""
+    encogida hacia `target` (a = 1, o el factor global en un grupo), y solo si mejora
+    el Brier en validación cruzada; si no, `target`."""
     m = len(keep)
-    if m < MIN_RESOLVED:
-        return ONE
+    if m < min_n:
+        return target
     grid = range(len(GRID))
     totals = [sum(losses[g][j] for j in keep) for g in grid]
+    anchor = math.log(GRID[target])
 
     def best(total: list[float], k: int) -> int:
         return min(
             grid,
             key=lambda g: (
-                total[g] / k + SHRINK * math.log(GRID[g]) ** 2 / k,
-                abs(GRID[g] - 1.0),
+                total[g] / k + SHRINK * (math.log(GRID[g]) - anchor) ** 2 / k,
+                abs(GRID[g] - GRID[target]),
             ),
         )
 
     g = best(totals, m)
-    if g == ONE:
-        return ONE
-    before = sum(briers[ONE][j] for j in keep) / m
+    if g == target:
+        return target
+    before = sum(briers[target][j] for j in keep) / m
     cv = sum(briers[best([totals[k] - losses[k][j] for k in grid], m - 1)][j] for j in keep) / m
-    return g if cv < before else ONE
+    return g if cv < before else target
 
 
-def fit(pairs: list[tuple[dict[str, float], str]]) -> Recalibration:
-    """El `a` aprendido de `pairs` (ver `choose`), con el Brier antes y después."""
-    pairs = [(o, actual) for o, actual in pairs if len(o) >= 2]
+def fit(
+    pairs: list[tuple[dict[str, float], str]], groups: list[str] | None = None
+) -> Recalibration:
+    """El `a` aprendido de `pairs` (ver `choose`), con el Brier antes y después.
+
+    Con `groups` (uno por par), cada grupo con al menos `MIN_GROUP` casos puede tener
+    su propio factor, encogido hacia el global y solo si mejora en validación cruzada."""
+    keep_idx = [i for i, (o, _a) in enumerate(pairs) if len(o) >= 2]
+    pairs = [pairs[i] for i in keep_idx]
+    labels = [groups[i] for i in keep_idx] if groups is not None else None
     n = len(pairs)
     if n == 0:
         return Recalibration()
     briers, losses = tables(pairs)
     g = choose(briers, losses, list(range(n)))
+    own: dict[str, tuple[float, int]] = {}
+    chosen = [g] * n
+    if labels is not None and n >= MIN_RESOLVED:
+        for name in sorted(set(labels)):
+            members = [i for i, lab in enumerate(labels) if lab == name]
+            if len(members) < MIN_GROUP:
+                continue
+            gg = choose(briers, losses, members, target=g, min_n=MIN_GROUP)
+            if gg != g:
+                own[name] = (GRID[gg], len(members))
+                for i in members:
+                    chosen[i] = gg
     before = sum(briers[ONE]) / n
-    return Recalibration(GRID[g], n, before, sum(briers[g]) / n)
+    after = sum(briers[chosen[i]][i] for i in range(n)) / n
+    return Recalibration(GRID[g], n, before, after, own)
 
 
 def raw_of(forecast: Forecast) -> dict[str, float]:
@@ -229,13 +294,11 @@ def valid_resolved(ledger: CalibrationLedger) -> list:
 
 
 def for_model(ledger: CalibrationLedger, model: str) -> Recalibration:
-    """Recalibración de un modelo (o del comité) con sus previsiones válidas resueltas."""
-    pairs = [
-        (raw_of(r.forecast), r.actual_outcome)
-        for r in valid_resolved(ledger)
-        if model_of(r.forecast.source) == model
-    ]
-    return fit(pairs)
+    """Recalibración de un modelo (o del comité) con sus previsiones válidas resueltas,
+    con factor propio en los tipos de pregunta donde se comporta distinto."""
+    rows = [r for r in valid_resolved(ledger) if model_of(r.forecast.source) == model]
+    pairs = [(raw_of(r.forecast), r.actual_outcome) for r in rows]
+    return fit(pairs, [group_of(r.forecast) for r in rows])
 
 
 def by_model(ledger: CalibrationLedger) -> dict[str, Recalibration]:

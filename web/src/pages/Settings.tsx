@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import CommitteeCard from "../components/CommitteeCard";
+import OptionsCard from "../components/OptionsCard";
 import ConnectionCard from "../components/ConnectionCard";
 import ProvidersCard from "../components/ProvidersCard";
 import RolesCard from "../components/RolesCard";
@@ -63,7 +64,7 @@ function NotificationsCard() {
       <SectionTitle>Notificaciones</SectionTitle>
       <WindowsNotifications />
       <p className="mb-3 text-sm text-muted">
-        Avisos en este dispositivo cuando termina un análisis, vence un hito, falla la práctica o Oraqlo se actualiza.
+        Avisos en este dispositivo cuando termina un análisis, cambia una previsión vigilada, vence un hito, falla la práctica o Oraqlo se actualiza.
       </p>
       {!s ? null : s.kind === "unsupported" ? (
         <Notice tone="warn">{s.reason}</Notice>
@@ -185,6 +186,7 @@ export default function Settings() {
         <WebSearchCard />
         <RolesCard />
         <CommitteeCard />
+        <OptionsCard />
       </Group>
       <Group id="dispositivos" title="Dispositivos" hint="Celular, avisos y apariencia.">
         <ConnectionCard />

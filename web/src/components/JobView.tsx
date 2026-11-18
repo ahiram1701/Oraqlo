@@ -36,6 +36,7 @@ export const PHASE_LABEL: Record<string, string> = {
   simular: "Simulando futuros",
   planificar: "Comparando riesgos y beneficios",
   deliberar: "Debate del panel",
+  sensibilidad: "Buscando qué cambiaría la decisión",
   linea_base: "Estimando tus probabilidades hoy",
   palancas: "Viendo qué controlas y qué no",
   plan: "Diseñando el plan",
@@ -45,8 +46,8 @@ export const PHASE_LABEL: Record<string, string> = {
 /** Fases que se esperan según el tipo de trabajo (para mostrar lo que falta). */
 export const EXPECTED_PHASES: Record<string, string[]> = {
   forecast: ["prever"],
-  full: ["prever", "redactar", "observar", "simular", "planificar", "deliberar"],
-  case: ["observar", "prever", "simular", "planificar", "deliberar"],
+  full: ["prever", "redactar", "observar", "simular", "planificar", "deliberar", "sensibilidad"],
+  case: ["observar", "prever", "simular", "planificar", "deliberar", "sensibilidad"],
   goal: ["linea_base", "palancas", "plan", "deliberar", "con_plan"],
 };
 

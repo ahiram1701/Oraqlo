@@ -11,12 +11,13 @@ para preguntar al usuario), "answers" {items} (lo que respondió, al reanudar).
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, ClassVar
 
 from oraqlo.agent import OraqloAgent
 from oraqlo.casefile import CaseSpec, case_to_dict, parse_case
@@ -33,6 +34,7 @@ from oraqlo.forecaster.committee import (
     COMMITTEE_MODEL,
     Member,
     build_members,
+    member_source,
     model_weights,
     pick_committee,
 )
@@ -54,6 +56,7 @@ from oraqlo.memory.recalibration import Recalibration, llm_source, user_resolvab
 from oraqlo.panel import ROLE_PROMPTS, RoleConfig, SequentialPanel
 from oraqlo.report import render_goal_report_markdown, render_report_markdown, slugify
 from oraqlo.research import ResearchBrief, Researcher
+from oraqlo.services import watch as watching
 from oraqlo.services.serialize import forecast_json, goal_json, resolved_json, to_jsonable
 from oraqlo.simulator.base import TreeSearchEngine
 from oraqlo.store import Store
@@ -205,11 +208,54 @@ class OraqloService:
             return provider, r, members, None, r.model
         return provider, r, members, model_weights(self.store.ledger, models), COMMITTEE_MODEL
 
-    def _oracle(self, emit: Emit = _noop) -> LLMForecaster:
+    # ── opciones que la app puede cambiar sin tocar el toml ──────────────
+
+    OPTION_KEYS: ClassVar[dict[str, tuple[str, str]]] = {
+        "markets": ("forecast", "markets"),
+        "decompose": ("forecast", "decompose"),
+        "reference": ("forecast", "reference"),
+        "watch": ("watch", "auto"),
+        "watch_interval_hours": ("watch", "interval_hours"),
+        "watch_daily_budget": ("watch", "daily_budget"),
+        "watch_alert_points": ("watch", "alert_points"),
+    }
+
+    def options(self) -> dict:
+        """Opciones de predicción y vigilancia: lo guardado en la app sobre el toml."""
+        out = {}
+        for name, (section, field) in self.OPTION_KEYS.items():
+            default = getattr(getattr(self.config, section), field)
+            out[name] = self.store.settings.get(f"options.{name}", default)
+        out["metaculus"] = bool(__import__("os").environ.get("METACULUS_TOKEN"))
+        out["web_search"] = OllamaWebClient().is_available()
+        return out
+
+    def set_options(self, changes: dict) -> dict:
+        for name, value in changes.items():
+            if name in self.OPTION_KEYS and value is not None:
+                self.store.settings.set(f"options.{name}", value)
+        return self.options()
+
+    def _oracle(self, emit: Emit = _noop, extras: bool = True) -> LLMForecaster:
+        """El Oráculo con su comité. `extras`: mercado, estimación por partes y clase
+        de referencia (según las opciones). La Práctica no pasa por aquí: es a ciegas."""
         provider, r, members, weights, source_model = self._team(
             "oraculo", self.config.forecast.samples
         )
         advice, recal = self._learned(source_model)
+        options = self.options() if extras else {}
+        ledger = self.store.ledger
+        finder = None
+        if options.get("markets"):
+            from oraqlo.forecaster.markets import MarketFinder
+
+            rp, rr = self._role("investigador")
+            finder = MarketFinder(rp, rr.model)
+        reference = None
+        if options.get("reference"):
+            from oraqlo.memory.reference import reference_block
+
+            reference = lambda question: reference_block(ledger, question)
         return LLMForecaster(
             provider,
             model=r.model,
@@ -220,7 +266,300 @@ class OraqloService:
             on_progress=lambda msg: emit("log", {"msg": msg}),
             members=members,
             weights=weights,
+            market_finder=finder,
+            decompose=bool(options.get("decompose")),
+            reference=reference,
+            weigh=lambda names: model_weights(ledger, names),
         )
+
+    def _record_voices(self, forecast: Forecast, oracle: LLMForecaster) -> None:
+        """Lo que dijo cada voz del comité (modelos, mercado, estructura), aparte: al
+        resolver la previsión se resuelven con ella y así sus pesos aprenden."""
+        for voice, dist in oracle.last_members.items():
+            self.store.ledger.record(
+                Forecast(
+                    id=f"{forecast.id}{MEMBER_SEP}{voice}",
+                    question=forecast.question,
+                    distribution=Distribution(outcomes=dict(dist)),
+                    horizon=forecast.horizon,
+                    assumptions=["Lo que dijo esta voz del comité, antes de combinar."],
+                    source=member_source(voice),
+                    created_at=forecast.created_at,
+                )
+            )
+
+    # ── vigilancia (ver services.watch) ───────────────────────────────────
+
+    @property
+    def watches(self) -> watching.WatchStore:
+        return watching.WatchStore(self.store.settings)
+
+    def _start_watch(
+        self,
+        forecast: Forecast,
+        emit: Emit = _noop,
+        context: str = "",
+        signals: list[watching.Signal] | None = None,
+        kind: str = "forecast",
+        goal_id: str | None = None,
+        question: str | None = None,
+    ) -> dict | None:
+        """Empieza a vigilar una previsión (u objetivo). None si la vigilancia está
+        apagada o no hay búsqueda web con la que vigilar."""
+        options = self.options()
+        if not options.get("watch") or not options.get("web_search"):
+            return None
+        if signals is None:
+            provider, r = self._role("investigador")
+            try:
+                signals = watching.extract_signals(
+                    provider, r.model, forecast.question, forecast.distribution.outcomes, context
+                )
+            except Exception as e:  # vigilar es una ayuda: nunca tumba el análisis
+                emit("log", {"msg": f"No pude preparar la vigilancia ({e}).", "level": "warn"})
+                signals = []
+        created = forecast.created_at or datetime.now(UTC)
+        w = watching.Watch(
+            root=forecast.id,
+            question=question or forecast.question,
+            horizon_days=forecast.horizon.total_seconds() / 86400,
+            created_at=created.isoformat(),
+            chain=[forecast.id],
+            signals=signals,
+            kind=kind,
+            goal_id=goal_id,
+            history=[
+                {
+                    "at": created.isoformat(),
+                    "id": forecast.id,
+                    "outcomes": dict(forecast.distribution.outcomes),
+                    "why": "Previsión inicial.",
+                }
+            ],
+        )
+        self.watches.save(w)
+        if signals:
+            emit("log", {"msg": f"Vigilaré {len(signals)} señales y te avisaré si algo cambia."})
+        return w.view()
+
+    def set_watch(self, forecast_id: str, enabled: bool) -> dict:
+        w = self.watches.find(forecast_id)
+        if w is None:
+            ledger = self.store.ledger
+            forecast = next((f for f in ledger.open_forecasts if f.id == forecast_id), None)
+            if forecast is None:
+                raise KeyError(f"No hay una previsión abierta con id {forecast_id}")
+            view = self._start_watch(forecast)
+            if view is None:
+                raise ValueError("Para vigilar hace falta la búsqueda web (clave de Ollama).")
+            w = self.watches.find(forecast_id)
+            assert w is not None
+        w.enabled = enabled
+        self.watches.save(w)
+        return w.view()
+
+    def _watch_interval(self) -> timedelta:
+        return timedelta(hours=float(self.options()["watch_interval_hours"]))
+
+    def _checks_today(self) -> int:
+        today = datetime.now(UTC).date().isoformat()
+        state = self.store.settings.get("watch.checks", {}) or {}
+        return int(state.get(today, 0))
+
+    def _count_check(self) -> None:
+        today = datetime.now(UTC).date().isoformat()
+        state = self.store.settings.get("watch.checks", {}) or {}
+        self.store.settings.set("watch.checks", {today: int(state.get(today, 0)) + 1})
+
+    def watch_due(self, now: datetime | None = None) -> list[watching.Watch]:
+        """Vigilancias que tocan ya, dentro del presupuesto de hoy."""
+        now = now or datetime.now(UTC)
+        options = self.options()
+        if not options.get("web_search"):
+            return []
+        budget = int(options["watch_daily_budget"]) - self._checks_today()
+        if budget <= 0:
+            return []
+        open_ids = {f.id for f in self.store.ledger.open_forecasts}
+        interval = self._watch_interval()
+        due = []
+        for w in self.watches.all():
+            if not w.due(now, interval):
+                continue
+            if w.kind == "goal":
+                try:
+                    if self.store.goals.get(w.goal_id or "").status != "activo":
+                        continue
+                except KeyError:
+                    continue
+            elif w.latest not in open_ids:
+                continue
+            due.append(w)
+        due.sort(key=lambda w: w.last_check or "")
+        return due[:budget]
+
+    def watch_run(self, emit: Emit = _noop) -> dict:
+        """Una pasada de vigilancia (la lanza el planificador como un trabajo más)."""
+        checked, updated, alerts, errors = 0, [], [], []
+        threshold = float(self.options()["watch_alert_points"]) / 100.0
+        for w in self.watch_due():
+            checked += 1
+            self._count_check()
+            try:
+                change = self._check_watch(w, emit)
+            except Exception as e:
+                log.exception("Vigilancia de %s falló", w.root)
+                errors.append(f"{w.question[:60]}: {e}")
+                w.last_check = datetime.now(UTC).isoformat()
+                self.watches.save(w)
+                continue
+            if change is None:
+                continue
+            updated.append(change)
+            if change["moved"] >= threshold or change["triggered"]:
+                alerts.append(change["alert"])
+        return {
+            "kind": "watch",
+            "checked": checked,
+            "updated": updated,
+            "alerts": alerts,
+            "errors": errors,
+        }
+
+    def _check_watch(self, w: watching.Watch, emit: Emit) -> dict | None:
+        """Investiga lo nuevo; si importa, re-predice (o hace check-in del objetivo)."""
+        emit("log", {"msg": f"Vigilando: {w.question[:80]}"})
+        days_left = max(1, int((w.deadline - datetime.now(UTC)).total_seconds() // 86400))
+        brief = self.research(watching.focus_question(w), days_left, emit)
+        now = datetime.now(UTC).isoformat()
+        w.last_check = now
+        if brief is None:
+            self.watches.save(w)
+            return None
+        seen = {f.casefold() for f in w.facts}
+        fresh = [f.text for f in brief.facts if f.text.casefold() not in seen]
+        if not fresh:
+            self.watches.save(w)
+            return None
+        provider, r = self._role("investigador")
+        current = self._current_text(w)
+        verdict = watching.assess_news(provider, r.model, w, fresh, current)
+        w.facts.extend(fresh)
+        triggered = []
+        for idx in verdict.triggered:
+            if w.signals[idx].triggered_at is None:
+                w.signals[idx].triggered_at = now
+                triggered.append(w.signals[idx].text)
+        if not verdict.relevant and not triggered:
+            self.watches.save(w)
+            return None
+        why = verdict.summary or "Hay novedades relevantes."
+        if w.kind == "goal":
+            return self._recheck_goal(w, why, triggered)
+        return self._reforecast(w, brief, why, triggered, emit)
+
+    def _current_text(self, w: watching.Watch) -> str:
+        last = w.history[-1]["outcomes"] if w.history else {}
+        if w.kind == "goal":
+            try:
+                return f"P(objetivo) = {self.store.goals.get(w.goal_id or '').current_p:.0%}"
+            except KeyError:
+                return ""
+        return ", ".join(f"{k}: {v:.0%}" for k, v in sorted(last.items(), key=lambda kv: -kv[1]))
+
+    def _reforecast(
+        self,
+        w: watching.Watch,
+        brief: ResearchBrief,
+        why: str,
+        triggered: list[str],
+        emit: Emit,
+    ) -> dict:
+        ledger = self.store.ledger
+        previous = next(f for f in ledger.open_forecasts if f.id == w.latest)
+        days_left = max(1, int((w.deadline - datetime.now(UTC)).total_seconds() // 86400))
+        oracle = self._oracle(emit)
+        forecast = oracle.forecast(self._state_from(brief), w.question, timedelta(days=days_left))
+        forecast.assumptions.append(watching.update_note(previous))
+        forecast.assumptions.append(f"Qué cambió: {why}")
+        provider, r = self._role("oraculo")
+        with contextlib.suppress(Exception):  # la explicación es un adorno: la cifra ya está
+            forecast = explain(provider, r.model, w.question, forecast)
+        ledger.record(forecast)
+        self._record_voices(forecast, oracle)
+        old = previous.distribution.outcomes
+        new = forecast.distribution.outcomes
+        w.chain.append(forecast.id)
+        w.history.append(
+            {"at": datetime.now(UTC).isoformat(), "id": forecast.id, "outcomes": new, "why": why}
+        )
+        self.watches.save(w)
+        delta = watching.moved(old, new)
+        top = max(new, key=lambda k: new[k])
+        body = f"{why} Ahora: «{top}» {new[top]:.0%}"
+        if top in old:
+            body += f" (antes {old[top]:.0%})."
+        if triggered:
+            body += " Señal: " + triggered[0]
+        return {
+            "root": w.root,
+            "question": w.question,
+            "id": forecast.id,
+            "before": old,
+            "after": new,
+            "moved": delta,
+            "why": why,
+            "triggered": triggered,
+            "alert": {
+                "title": "Cambió una previsión",
+                "body": f"{w.question[:80]} — {body}"[:300],
+                "url": "/predicciones",
+                "tag": f"watch-{w.root}",
+            },
+        }
+
+    def _recheck_goal(self, w: watching.Watch, why: str, triggered: list[str]) -> dict | None:
+        goal_id = w.goal_id or ""
+        try:
+            before = self.store.goals.get(goal_id).current_p
+        except KeyError:
+            return None
+        provider, r = self._role("oraculo")
+        note = f"Vigilancia automática (no es del usuario): {why}"
+        if triggered:
+            note += " Condiciones que cambiaron: " + "; ".join(triggered)
+        checkin = GoalTracker(self.store.goals, self.store.ledger, provider, r.model).check_in(
+            goal_id, note
+        )
+        w.history.append(
+            {
+                "at": datetime.now(UTC).isoformat(),
+                "id": goal_id,
+                "outcomes": {"se logra": checkin.p_estimate, "no se logra": 1 - checkin.p_estimate},
+                "why": why,
+            }
+        )
+        self.watches.save(w)
+        delta = abs(checkin.p_estimate - before)
+        body = f"{why} P(objetivo): {before:.0%} → {checkin.p_estimate:.0%}."
+        if checkin.replan_recommended:
+            body += " Conviene re-planificar."
+        return {
+            "root": w.root,
+            "question": w.question,
+            "id": goal_id,
+            "before": {"se logra": before},
+            "after": {"se logra": checkin.p_estimate},
+            "moved": 1.0 if checkin.replan_recommended else delta,
+            "why": why,
+            "triggered": triggered,
+            "alert": {
+                "title": "Cambió un objetivo",
+                "body": f"{w.question[:80]} — {body}"[:300],
+                "url": f"/objetivos/{goal_id}",
+                "tag": f"watch-{w.root}",
+            },
+        }
 
     def research(
         self,
@@ -343,7 +682,9 @@ class OraqloService:
         emit("log", {"msg": "Redactando la respuesta en palabras llanas…"})
         forecast = explain(provider, r.model, question, forecast)
         self.store.ledger.record(forecast)
+        self._record_voices(forecast, oracle)
         emit("forecast", forecast_json(forecast))
+        watch = self._start_watch(forecast, emit, brief.as_context() if brief else "")
         facts = [(f.text, f.source_url) for f in brief.facts] if brief else None
         markdown = render_report_markdown(
             question,
@@ -363,6 +704,8 @@ class OraqloService:
             "clarifications": _qa_json(brief),
             "model": self._label("oraculo"),
             "markdown": markdown,
+            "voices": _voices_json(oracle),
+            "watch": watch,
         }
         result["run_id"] = self._save_run("forecast", question, result)
         return result
@@ -406,6 +749,8 @@ class OraqloService:
         if report.verdict.p_success is not None and report.verdict.decision == "emitir":
             p = self._record_panel(spec, report, r.model)
             report.verdict = replace(report.verdict, p_success=p)
+        emit("phase", {"name": "sensibilidad"})
+        analysis = sensitivity_analysis(spec)
         facts = [(f.text, f.source_url) for f in brief.facts] if brief else None
         ranking = [report.recommendation]
         markdown = render_report_markdown(
@@ -429,8 +774,20 @@ class OraqloService:
             "candidates_tried": report.candidates_tried,
             "facts": [{"text": t, "url": u} for t, u in facts or []],
             "clarifications": _qa_json(brief),
-            "markdown": markdown,
+            "markdown": markdown + _analysis_markdown(analysis, report.verdict, spec),
+            "analysis": analysis,
+            "rival": _rival_json(spec),
         }
+        signals = watching.signals_from_texts(
+            [
+                *(p["signal"] for p in report.verdict.premortem if p.get("signal")),
+                *report.verdict.review_triggers,
+            ]
+        )
+        if signals:
+            result["watch"] = self._start_watch(
+                report.forecast, emit, signals=signals, question=spec.question
+            )
         result["run_id"] = self._save_run("cycle", spec.question, result)
         return result
 
@@ -445,9 +802,10 @@ class OraqloService:
             f"Probabilidad de éxito que dio el Oráculo del panel para «{spec.question}»."
         ]
         _advice, recal = self._learned(model)
-        if recal.active:
-            outcomes = clamp(recal.apply(outcomes))
-            assumptions.append(recal.note())
+        group = recalibration.group_key("panel", 2, spec.horizon.days)
+        if recal.active_for(group):
+            outcomes = clamp(recal.apply(outcomes, group))
+            assumptions.append(recal.note(group))
         distribution = Distribution(outcomes=outcomes)
         distribution.validate()
         self.store.ledger.record(
@@ -481,11 +839,11 @@ class OraqloService:
         if brief is not None:
             for obs in brief.as_observations():
                 world.apply(obs)
-        forecast = self._oracle(emit).forecast(
-            world.current(), question, timedelta(days=horizon_days)
-        )
+        oracle = self._oracle(emit)
+        forecast = oracle.forecast(world.current(), question, timedelta(days=horizon_days))
         emit("log", {"msg": "Redactando la respuesta en palabras llanas…"})
         forecast = explain(oracle_provider, oracle_role.model, question, forecast)
+        self._record_voices(forecast, oracle)
         emit("phase", {"name": "redactar"})
         provider, r = self._role("redactor")
         context = "\n\n".join(
@@ -500,7 +858,11 @@ class OraqloService:
             context=context,
         )
         emit("log", {"msg": f"Caso redactado: {len(spec.actions)} acciones candidatas."})
-        return self.run_case(spec, emit=emit, brief=brief, forecast=forecast)
+        if spec.rival is not None:
+            emit("log", {"msg": f"Con rival: {spec.rival.description} (responde a cada jugada)."})
+        result = self.run_case(spec, emit=emit, brief=brief, forecast=forecast)
+        result["voices"] = _voices_json(oracle)
+        return result
 
     def achieve_goal(
         self,
@@ -536,6 +898,17 @@ class OraqloService:
             on_phase=lambda name: emit("phase", {"name": name}),
         )
         tracked = GoalTracker(self.store.goals, self.store.ledger).track(plan)
+        watch = self._start_watch(
+            plan.with_plan,
+            emit,
+            signals=watching.signals_from_texts(
+                [c.text for c in plan.external_conditions]
+                + [p["signal"] for p in (plan.verdict.premortem if plan.verdict else [])]
+            ),
+            kind="goal",
+            goal_id=tracked.id,
+            question=goal,
+        )
         facts = [(f.text, f.source_url) for f in brief.facts] if brief else None
         markdown = render_goal_report_markdown(
             plan,
@@ -565,6 +938,7 @@ class OraqloService:
             "facts": [{"text": t, "url": u} for t, u in facts or []],
             "clarifications": _qa_json(brief),
             "markdown": markdown,
+            "watch": watch,
         }
         result["run_id"] = self._save_run("goal", goal, result)
         return result
@@ -632,10 +1006,13 @@ class OraqloService:
     def overdue_forecasts(self, now: datetime | None = None) -> list[Forecast]:
         """Abiertas que ya deberían saberse y que tiene que resolver el usuario."""
         now = now or datetime.now(UTC)
+        old = self.watches.superseded()
         return [
             f
             for f in self.store.ledger.open_forecasts
             if user_resolvable(f.source, f.question)
+            and not recalibration.is_member(f.source)
+            and f.id not in old
             and f.created_at
             and f.created_at + f.horizon <= now
         ]
@@ -645,17 +1022,30 @@ class OraqloService:
         overdue = {f.id for f in self.overdue_forecasts()}
         # Las que ya deberían saberse, primero (orden estable para el resto). Lo que dijo
         # cada modelo del comité no es una predicción más: no sale en la lista.
+        watches = self.watches.all()
+        by_latest = {w.latest: w for w in watches if w.kind == "forecast"}
+        old = {fid for w in watches for fid in w.chain[:-1]}
         open_forecasts = sorted(
-            (f for f in ledger.open_forecasts if not recalibration.is_member(f.source)),
+            (
+                f
+                for f in ledger.open_forecasts
+                if not recalibration.is_member(f.source) and f.id not in old
+            ),
             key=lambda f: f.id not in overdue,
         )
+
+        def with_watch(item: dict) -> dict:
+            w = by_latest.get(item["id"])
+            item["watch"] = w.view() if w else None
+            return item
+
         return {
             "overdue": len(overdue),
-            "open": [forecast_json(f) for f in open_forecasts],
+            "open": [with_watch(forecast_json(f)) for f in open_forecasts],
             "resolved": [
-                resolved_json(r)
+                with_watch(resolved_json(r))
                 for r in reversed(ledger.resolved_forecasts)
-                if not recalibration.is_member(r.forecast.source)
+                if not recalibration.is_member(r.forecast.source) and r.forecast.id not in old
             ],
         }
 
@@ -663,25 +1053,90 @@ class OraqloService:
         prefix = forecast_id + MEMBER_SEP
         return [f.id for f in forecasts if f.id.startswith(prefix)]
 
+    def _chain(self, forecast_id: str) -> tuple[list[str], watching.Watch | None]:
+        """Todas las versiones de la previsión (la vigilancia las encadena)."""
+        w = self.watches.find(forecast_id)
+        if w is None or w.kind != "forecast":
+            return [forecast_id], None
+        return list(w.chain), w
+
     def discard(self, forecast_id: str) -> None:
-        """Descarta una predicción abierta y lo que dijo cada modelo del comité."""
+        """Descarta una predicción abierta (con sus versiones) y lo que dijo cada voz."""
         ledger = self.store.ledger
-        members = self._members_of(forecast_id, ledger.open_forecasts)
-        ledger.discard(forecast_id)
-        for fid in members:
+        chain, w = self._chain(forecast_id)
+        open_ids = {f.id for f in ledger.open_forecasts}
+        if forecast_id not in open_ids:
+            raise KeyError(f"No hay una predicción abierta con id {forecast_id}")
+        for fid in chain:
+            if fid not in open_ids:
+                continue
+            members = self._members_of(fid, ledger.open_forecasts)
             ledger.discard(fid)
+            for mid in members:
+                ledger.discard(mid)
+        if w is not None:
+            self.watches.delete(w.root)
 
     def delete_resolved(self, forecast_id: str) -> None:
-        """Borra una resuelta y lo que dijo cada modelo del comité."""
+        """Borra una resuelta (con sus versiones) y lo que dijo cada voz del comité."""
         ledger = self.store.ledger
-        members = self._members_of(forecast_id, (r.forecast for r in ledger.resolved_forecasts))
-        ledger.delete_resolved(forecast_id)
-        for fid in members:
+        chain, w = self._chain(forecast_id)
+        resolved_ids = {r.forecast.id for r in ledger.resolved_forecasts}
+        if forecast_id not in resolved_ids:
+            raise KeyError(f"No hay una predicción resuelta con id {forecast_id}")
+        for fid in chain:
+            if fid not in resolved_ids:
+                continue
+            members = self._members_of(fid, (r.forecast for r in ledger.resolved_forecasts))
             ledger.delete_resolved(fid)
+            for mid in members:
+                ledger.delete_resolved(mid)
+        if w is not None:
+            self.watches.delete(w.root)
+
+    def _outcome_for(self, forecast_id: str, outcome: str) -> str:
+        """En una previsión numérica se puede resolver con el número que salió."""
+        from oraqlo.forecaster import numeric
+
+        forecast = next((f for f in self.store.ledger.open_forecasts if f.id == forecast_id), None)
+        if forecast is None or outcome in forecast.distribution.outcomes:
+            return outcome
+        spec = numeric.bins_of(forecast)
+        value = numeric.parse_number(outcome) if spec else None
+        if spec is None or value is None:
+            return outcome
+        return numeric.label_for(spec[1], value)
 
     def resolve(self, forecast_id: str, outcome: str) -> list[dict]:
+        from oraqlo.memory.calibration import canonical_outcome
+
         before = {r.forecast.id for r in self.store.ledger.resolved_forecasts}
-        resolve_group(self.store.ledger, forecast_id, outcome)
+        ledger = self.store.ledger
+        by_id = {f.id: f for f in ledger.open_forecasts}
+        if forecast_id not in by_id:
+            raise KeyError(f"No hay una predicción abierta con id {forecast_id}")
+        raw = outcome
+        outcome = self._outcome_for(forecast_id, raw)
+        foreseen = canonical_outcome(by_id[forecast_id].distribution.outcomes, outcome)
+        foreseen_here = foreseen in by_id[forecast_id].distribution.outcomes
+        chain, w = self._chain(forecast_id)
+        for fid in chain:
+            if fid not in by_id or fid == forecast_id:
+                continue
+            # Cada versión se resuelve con lo que salió traducido a SUS escenarios (sus
+            # intervalos, sus etiquetas). Si la versión vigente lo contemplaba y esta no
+            # (cambiaron los escenarios), no se puede puntuar con justicia: se descarta.
+            own = by_id[fid].distribution.outcomes
+            label = canonical_outcome(own, self._outcome_for(fid, raw))
+            if label in own or not foreseen_here:
+                resolve_group(ledger, fid, label)
+            else:
+                for mid in [fid, *self._members_of(fid, ledger.open_forecasts)]:
+                    ledger.discard(mid)
+        resolve_group(ledger, forecast_id, outcome)
+        if w is not None:
+            w.enabled = False
+            self.watches.save(w)
         return [
             resolved_json(r)
             for r in self.store.ledger.resolved_forecasts
@@ -840,6 +1295,60 @@ class OraqloService:
 
     def report_filename(self, run: dict) -> str:
         return f"{run['created_at'][:10]}-{slugify(run['title'])}.md"
+
+
+def _voices_json(oracle: LLMForecaster) -> dict:
+    """Qué dijo cada voz del comité y el detalle del mercado y de la estimación por partes."""
+    return {
+        "members": {k: dict(v) for k, v in oracle.last_members.items()},
+        **oracle.last_extras,
+    }
+
+
+def sensitivity_analysis(spec: CaseSpec) -> dict | None:
+    from oraqlo.strategy.sensitivity import analyze
+
+    try:
+        return analyze(spec)
+    except Exception:  # un análisis extra nunca tumba la recomendación
+        log.exception("El análisis de sensibilidad falló")
+        return None
+
+
+def _rival_json(spec: CaseSpec) -> dict | None:
+    if spec.rival is None:
+        return None
+    return {
+        "description": spec.rival.description,
+        "responses": {
+            a.id: [{"response": r.description, "p": p} for r, p in spec.rival.likely_responses(a)]
+            for a in spec.actions
+        },
+    }
+
+
+def _analysis_markdown(analysis: dict | None, verdict: Any, spec: CaseSpec) -> str:
+    lines: list[str] = []
+    if analysis and analysis.get("summary"):
+        lines += ["", "## Qué haría cambiar la recomendación", ""]
+        lines += [f"- {line}" for line in analysis["summary"]]
+    premortem = getattr(verdict, "premortem", None) or []
+    if premortem:
+        lines += ["", "## Pre-mortem: si sale mal, probablemente será por…", ""]
+        lines += [
+            f"- {p['cause']}" + (f" — señal temprana: {p['signal']}" if p.get("signal") else "")
+            for p in premortem
+        ]
+    rival = _rival_json(spec)
+    if rival:
+        lines += ["", f"## Cómo respondería {rival['description']}", ""]
+        names = {a.id: a.description for a in spec.actions}
+        for aid, responses in rival["responses"].items():
+            top = max(responses, key=lambda x: x["p"])
+            lines.append(
+                f"- Si «{names[aid]}»: lo más probable es «{top['response']}» ({top['p']:.0%})."
+            )
+    return "\n".join(lines) + ("\n" if lines else "")
 
 
 def _qa(brief: ResearchBrief | None) -> list[tuple[str, str | None]] | None:

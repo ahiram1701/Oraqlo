@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from oraqlo.forecaster import numeric
 from oraqlo.forecaster.aggregate import (
     NO_DATA_BASE_NOTE,
     NO_DATA_NOTE,
@@ -30,12 +31,21 @@ from oraqlo.forecaster.aggregate import (
     temper_without_data,
 )
 from oraqlo.forecaster.base import Distribution, Forecast, Forecaster
-from oraqlo.forecaster.committee import Member, build_members, combine, run_members, weights_note
+from oraqlo.forecaster.committee import (
+    LENSES,
+    STRUCTURE_VOICE,
+    Member,
+    build_members,
+    combine,
+    run_members,
+    weights_note,
+)
 from oraqlo.llm.base import ChatMessage, LLMProvider
 from oraqlo.llm.structured import extract_json_object
 from oraqlo.world_model import WorldState
 
 if TYPE_CHECKING:
+    from oraqlo.forecaster.markets import MarketFinder
     from oraqlo.memory.recalibration import Recalibration
 
 _SYSTEM_PROMPT = (
@@ -57,7 +67,12 @@ _SYSTEM_PROMPT = (
     "forma, cuotas, encuestas, cifras recientes), quédate en la tasa base o cerca del "
     "reparto igual: una ventaja que solo intuyes no pasa del 55-60%. Los supuestos son las "
     "condiciones de las que depende tu estimación; escribe escenarios y supuestos en el "
-    "idioma de la pregunta."
+    "idioma de la pregunta.\n"
+    "Si la pregunta pide una CANTIDAD (cuánto, cuántos, qué cifra, qué precio), los "
+    "escenarios son INTERVALOS contiguos que lo cubren todo, de menor a mayor («menos de "
+    "10», «de 10 a 20», «20 o más»), y añade "
+    '"numeric": {"unit": "<unidad>", "bins": [[null, 10], [10, 20], [20, null]]} con un '
+    "par [desde, hasta) por escenario, en el mismo orden."
 )
 
 _FIXED_LABELS = (
@@ -73,6 +88,7 @@ class Parsed:
     rationale: str
     base_rate: str
     base_rate_outcomes: object = None
+    numeric: object = None
 
 
 class ForecastParseError(ValueError):
@@ -111,6 +127,7 @@ def _parse_forecast_json(text: str) -> Parsed:
         rationale=str(data.get("rationale", "")),
         base_rate=str(data.get("base_rate") or "").strip(),
         base_rate_outcomes=data.get("base_rate_outcomes"),
+        numeric=data.get("numeric"),
     )
 
 
@@ -166,6 +183,10 @@ class LLMForecaster(Forecaster):
         on_progress: Callable[[str], None] | None = None,
         members: list[Member] | None = None,
         weights: dict[str, float] | None = None,
+        market_finder: MarketFinder | None = None,
+        decompose: bool = False,
+        reference: Callable[[str], str] | None = None,
+        weigh: Callable[[list[str]], dict[str, float]] | None = None,
     ) -> None:
         self.provider = provider
         self.model = model
@@ -180,8 +201,17 @@ class LLMForecaster(Forecaster):
         self.on_progress = on_progress or (lambda msg: None)
         self.members = members or build_members((provider, model), [], self.samples)
         self.weights = weights
-        # Lo que dijo cada modelo en la última previsión (para registrarlo aparte).
+        # Voces que no son un modelo con un enfoque (ver forecaster.markets y .decompose).
+        self.market_finder = market_finder
+        self.decompose = decompose
+        # Preguntas parecidas ya resueltas (memory.reference): para la visión externa.
+        self.reference = reference
+        # Pesos de las voces que no traía `weights` (el mercado, la estructura…).
+        self.weigh = weigh
+        # Lo que dijo cada voz en la última previsión (para registrarlo aparte).
         self.last_members: dict[str, dict[str, float]] = {}
+        # Detalle de las voces extra de la última previsión (mercado, partes).
+        self.last_extras: dict[str, dict] = {}
 
     def _ask(
         self, messages: list[ChatMessage], temperature: float, member: Member | None = None
@@ -216,15 +246,65 @@ class LLMForecaster(Forecaster):
         )
 
     def _messages(
-        self, system: str, user: str, member: Member, labels: list[str] | None
+        self,
+        system: str,
+        user: str,
+        member: Member,
+        labels: list[str] | None,
+        reference: str = "",
     ) -> list[ChatMessage]:
         content = f"{user}\n\n{member.lens}"
+        if reference and member.lens == LENSES[0]:  # solo la visión externa: errores independientes
+            content += f"\n\n{reference}"
         if labels is not None:
             content += "\n\n" + _FIXED_LABELS.format(labels=json.dumps(labels, ensure_ascii=False))
         return [
             ChatMessage(role="system", content=system),
             ChatMessage(role="user", content=content),
         ]
+
+    def _extra_voices(
+        self,
+        question: str,
+        horizon: timedelta,
+        labels: list[str],
+        context: str,
+        within: dict[str, float] | None = None,
+    ) -> list[tuple[str, dict[str, float]]]:
+        """El mercado y la estimación por partes, si aplican. Nunca rompen la previsión:
+        si algo falla, se sigue sin esa voz (y se avisa)."""
+        draws: list[tuple[str, dict[str, float]]] = []
+        if self.market_finder is not None:
+            self.on_progress("Buscando un mercado de predicción sobre lo mismo…")
+            try:
+                voice = self.market_finder.find(question, horizon, labels, within)
+            except Exception as e:
+                voice = None
+                self.on_progress(f"No pude consultar los mercados ({e}); sigo sin ellos")
+            if voice is None:
+                self.on_progress("Sin mercado de predicción sobre exactamente lo mismo")
+            else:
+                self.on_progress(f"Mercado encontrado en {voice.quote.platform}: se suma al comité")
+                draws.append((voice.voice, voice.outcomes))
+                self.last_extras["market"] = voice.to_dict()
+                self.last_extras["market"]["note"] = voice.note()
+        if self.decompose and len(labels) == 2:
+            from oraqlo.forecaster.decompose import decompose
+
+            lead = (self.members[0].provider, self.members[0].model)
+            other = next((m for m in self.members if m.model != lead[1]), self.members[0])
+            try:
+                parts = decompose(
+                    question, horizon, labels, lead, (other.provider, other.model), context
+                )
+            except Exception as e:
+                parts = None
+                self.on_progress(f"No pude estimar por partes ({e}); sigo sin ello")
+            if parts is not None:
+                self.on_progress(parts.note())
+                draws.append((STRUCTURE_VOICE, parts.outcomes(labels)))
+                self.last_extras["structure"] = {**parts.to_dict(), "note": parts.note()}
+        return draws
 
     def forecast(self, state: WorldState, question: str, horizon: timedelta) -> Forecast:
         user_prompt = (
@@ -236,6 +316,13 @@ class LLMForecaster(Forecaster):
         system_prompt = _SYSTEM_PROMPT
         if self.advice:
             system_prompt += f"\n\nTu historial de calibración dice: {self.advice}"
+        reference = ""
+        if self.reference is not None:
+            try:
+                reference = self.reference(question)
+            except Exception:  # el historial es una ayuda, no un requisito
+                reference = ""
+        self.last_extras = {}
 
         total = len(self.members)
         lead, rest = self.members[0], self.members[1:]
@@ -243,15 +330,19 @@ class LLMForecaster(Forecaster):
             self.on_progress(f"Estimación 1 de {total}")
         # El primero elige los escenarios; los demás estiman sobre esos mismos.
         first = self._ask(
-            self._messages(system_prompt, user_prompt, lead, None), self.temperature, lead
+            self._messages(system_prompt, user_prompt, lead, None, reference),
+            self.temperature,
+            lead,
         )
         labels = list(first.outcomes)
+        numeric_spec = first.numeric if isinstance(first.numeric, dict) else {}
+        bins = numeric.parse_bins(numeric_spec.get("bins"), labels) if numeric_spec else None
         answers: list[tuple[Member, Parsed]] = [(lead, first)]
         done = [1]
 
         def ask(member: Member) -> Parsed:
             parsed = self._ask(
-                self._messages(system_prompt, user_prompt, member, labels),
+                self._messages(system_prompt, user_prompt, member, labels, reference),
                 self.temperature,
                 member,
             )
@@ -274,10 +365,19 @@ class LLMForecaster(Forecaster):
             if (base := parse_base_rate(parsed.base_rate_outcomes, labels)) is not None:
                 bases.append(base)
 
-        outcomes, per_model = combine(draws, self.weights)
+        within = pool_log_odds([d for _m, d in draws]) if draws else None
+        extra = self._extra_voices(question, horizon, labels, _summarize_state(state), within)
+        weights = dict(self.weights or {})
+        if extra and self.weigh is not None:
+            names = list(dict.fromkeys([*(m for m, _ in draws), *(v for v, _ in extra)]))
+            missing = [n for n in names if n not in weights]
+            if missing:
+                weights.update(self.weigh(missing))
+        outcomes, per_model = combine([*draws, *extra], weights or None)
         self.last_members = per_model if len(per_model) > 1 else {}
         notes: list[str] = []
-        if not state.entities:  # nada investigado ni observado: solo intuición
+        has_market = "market" in self.last_extras
+        if not state.entities and not has_market:  # nada investigado ni observado: intuición
             base = pool_log_odds(bases) if bases else None
             outcomes = temper_without_data(outcomes, base)
             notes.append(NO_DATA_BASE_NOTE if base else NO_DATA_NOTE)
@@ -285,13 +385,25 @@ class LLMForecaster(Forecaster):
             notes.append(f"Tasa base: {first.base_rate}")
         if first.rationale:
             notes.append(f"Razonamiento: {first.rationale}")
+        if reference:
+            notes.append("Se tuvieron en cuenta preguntas parecidas de tu historial.")
+        for key in ("market", "structure"):
+            if key in self.last_extras:
+                notes.append(self.last_extras[key]["note"])
         if len(per_model) > 1:
-            notes.append(weights_note(self.weights or {}, per_model))
+            notes.append(weights_note(weights, per_model))
         elif len(draws) > 1:
             notes.append(f"Agregado de {len(draws)} estimaciones independientes del modelo.")
-        if self.recalibration is not None and self.recalibration.active:
-            outcomes = clamp(self.recalibration.apply(outcomes))
-            notes.append(self.recalibration.note())
+        if self.recalibration is not None:
+            from oraqlo.memory.recalibration import group_key
+            from oraqlo.memory.scorecard import forecast_kind
+
+            group = group_key(forecast_kind(self.source, question), len(labels), horizon.days)
+            if self.recalibration.active_for(group):
+                outcomes = clamp(self.recalibration.apply(outcomes, group))
+                notes.append(self.recalibration.note(group))
+        if bins is not None:
+            notes.append(numeric.note(str(numeric_spec.get("unit") or ""), bins))
 
         distribution = Distribution(outcomes=outcomes)
         distribution.validate()

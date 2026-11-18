@@ -73,6 +73,7 @@ class JobRunner:
             "practice": service.practice,
             "checkin": service.goal_checkin,
             "replan": service.goal_replan,
+            "watch": service.watch_run,
         }
 
     # ── ciclo de vida ─────────────────────────────────────────────────────

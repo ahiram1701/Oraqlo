@@ -33,8 +33,14 @@ def to_jsonable(obj: Any) -> Any:
 
 
 def forecast_json(f: Forecast) -> dict:
+    from oraqlo.forecaster.numeric import bins_of
+
     d = f.distribution
+    spec = bins_of(f)
     return {
+        "numeric": {"unit": spec[0], "bins": {k: list(v) for k, v in spec[1].items()}}
+        if spec
+        else None,
         "id": f.id,
         "question": f.question,
         "source": f.source,

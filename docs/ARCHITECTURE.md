@@ -40,14 +40,20 @@ Celular / PC (PWA React)                           este PC Windows
 - **`forecaster/`**:
   - `LLMForecaster`: escenarios con probabilidad, con una tasa base en cifras.
   - `committee.py`: el comité de modelos. Varias IA de familias distintas, cada una con un enfoque (visión externa, interna, abogado del diablo, ritmo en el tiempo), combinadas en log-odds con un peso por modelo según su habilidad en la Práctica (encogida hacia «todos iguales» con pocos casos). Lo que dice cada una se registra aparte (`llm:<modelo>:miembro`), fuera del boletín.
+  - `markets.py`: busca en Polymarket, Manifold y Metaculus (con token) un mercado que pregunte exactamente lo mismo (lo confirma un modelo) y lo suma al comité como la voz `mercado:<plataforma>`. El peso del de Polymarket sale también de su historial en la Práctica.
+  - `decompose.py`: estimación por partes (Fermi) de preguntas compuestas, «y» (cadena condicional) u «o». Entra como la voz `estructura`.
+  - `numeric.py`: preguntas de cantidad como intervalos contiguos. Los límites viajan en un supuesto y se resuelve escribiendo el número.
   - `QuantForecaster`: Holt con intervalo que crece con √h; con umbral produce una binaria resoluble.
-- **`memory/recalibration.py`**: un factor `a` por modelo (o para el comité) aprendido solo de previsiones válidas, encogido hacia 1 y activado desde 15 resueltas únicamente si mejora en validación cruzada.
+- **`memory/recalibration.py`**: un factor `a` por modelo (o para el comité) aprendido solo de previsiones válidas, encogido hacia 1 y activado desde 15 resueltas únicamente si mejora en validación cruzada. Además hay un factor propio por grupo (tipo · binaria/múltiple · plazo), encogido hacia el global y validado igual.
+- **`memory/reference.py`**: clase de referencia propia (TF-IDF sobre las resueltas). Le cuenta a la visión externa qué pasó en preguntas parecidas.
 - **`evaluate.py`** (`oraqlo evaluar`, `/api/evaluate`): compara sobre lo resuelto, en validación cruzada, las formas de predecir (recalibración, comité, mercado).
 - **`simulator/`**:
   - `MonteCarloEngine` y `TreeSearchEngine` (expectimax).
   - `with_adversary()` compone un `AdversaryModel` (p. ej. `SoftmaxAdversary`) dentro de cualquier motor.
 - **`strategy/planner.py`**: `ExpectedUtilityPlanner`, utilidad esperada + CVaR que descarta acciones con riesgo de ruina.
-- **`panel.py`**: debate secuencial de 4 roles con transcript completo.
+- **`strategy/sensitivity.py`**: puntos de ruptura (probabilidades y utilidades) y valor de la información por acción, con el mismo planificador.
+- **`casefile.py`**: el caso puede traer un `rival` que reacciona a cada jugada según su utilidad (`SoftmaxAdversary` + `with_adversary`).
+- **`panel.py`**: debate secuencial de 4 roles con transcript completo. El Red Team hace además un pre-mortem con señales tempranas.
 - **`agent.py`**: `OraqloAgent.cycle()`, el ciclo OODA. Redelibera ante "revisar", pasa a la siguiente candidata ante "descartar" y emite eventos de progreso.
 - **`goals.py` / `goaltrack.py`**: backcasting hacia un objetivo; seguimiento con hitos, check-ins y re-plan.
 - **`research.py`**: investigación web iterativa (consultas → reflexión → lectura a fondo → síntesis).
@@ -78,7 +84,8 @@ SQLite en modo WAL, con migraciones versionadas por `PRAGMA user_version` y back
 
 - **`OraqloService`**: todos los flujos sin interfaz. Previsión, análisis completo, ciclo sobre un caso, objetivo, check-in, re-plan, práctica, calibración.
 - **`JobRunner`**: cada flujo largo es un job persistido. Sus eventos llevan número de secuencia, así que el SSE se reanuda con `Last-Event-ID`. Los jobs interrumpidos por un reinicio se marcan como fallidos.
-- **`Scheduler`**: tareas periódicas cuya última ejecución se guarda en la base. Son la práctica, los avisos de hitos, las actualizaciones y el backup diario.
+- **`Scheduler`**: tareas periódicas cuya última ejecución se guarda en la base. Son la práctica, la vigilancia, los avisos de hitos, las actualizaciones y el backup diario.
+- **`watch.py`** (vigilancia): señales por previsión u objetivo guardadas en `settings` (`watch.<id>`). La tarea `vigilar` (un job) investiga lo nuevo con presupuesto diario y, si importa, vuelve a predecir encadenando versiones (o hace un check-in del objetivo). Avisa si la probabilidad se mueve lo bastante o salta una señal. Al resolver una versión se resuelven todas.
 - **`PushService`**: Web Push con VAPID, que limpia solo las suscripciones muertas.
 - **`KeepAwake`**: evita que Windows se suspenda mientras haya análisis en curso.
 
@@ -127,4 +134,4 @@ Ver [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 - **Actuar en el mundo real:** Oraqlo recomienda y prevé; un humano decide.
 - **MCTS con presupuesto:** queda pendiente para árboles grandes. Hoy hay expectimax exacto y Monte Carlo.
-- **Puntuar previsiones de intervalo:** para que se puedan resolver, el `QuantForecaster` debe usarse con umbral, que da una binaria resoluble.
+- **Puntuar previsiones de intervalo continuas (CRPS):** las preguntas de cantidad se reparten en intervalos y se puntúan con Brier. El `QuantForecaster` con umbral da una binaria resoluble.

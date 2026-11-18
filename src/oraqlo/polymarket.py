@@ -168,6 +168,31 @@ class PolymarketClient:
                 break
         return markets
 
+    def search(self, query: str, limit: int = 10) -> list[Market]:
+        """Mercados abiertos que coinciden con `query` (búsqueda pública de Gamma).
+
+        Para usar el precio del mercado como una voz más al predecir de verdad (no en
+        la Práctica, que es a ciegas)."""
+        data = self._get(
+            "/public-search",
+            {"q": query, "limit_per_type": limit, "events_status": "active"},
+        )
+        events = data.get("events") if isinstance(data, dict) else None
+        found: list[Market] = []
+        for event in events or []:
+            for item in (event or {}).get("markets") or []:
+                try:
+                    market = _parse_market(item)
+                except PolymarketError:
+                    continue
+                if market.outcomes and not market.closed and not market.resolved:
+                    if not market.raw.get("description") and event.get("description"):
+                        market.raw["description"] = event["description"]
+                    found.append(market)
+                if len(found) >= limit:
+                    return found
+        return found
+
     def get_market(self, market_id: str) -> Market:
         data = self._get(f"/markets/{market_id}")
         if isinstance(data, list):  # algunos despliegues devuelven lista de 1

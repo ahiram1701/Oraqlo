@@ -86,6 +86,20 @@ class ForecastSettings(BaseModel):
     # forecaster.committee). Sin definir: los recomendados del catálogo, si hay clave
     # de Ollama. Lista vacía: sin comité.
     committee: list[str] | None = None
+    # Voces extra del comité (ver forecaster.markets y forecaster.decompose) y la clase de
+    # referencia del propio historial (memory.reference). La app puede cambiarlas.
+    markets: bool = True
+    decompose: bool = True
+    reference: bool = True
+
+
+class WatchSettings(BaseModel):
+    """Vigilancia automática de previsiones y objetivos (ver services.watch)."""
+
+    auto: bool = True  # vigilar por defecto lo nuevo (se puede apagar una a una)
+    interval_hours: float = Field(default=24.0, ge=1.0, le=24 * 30)
+    daily_budget: int = Field(default=5, ge=0, le=100)  # revisiones al día, como mucho
+    alert_points: float = Field(default=10.0, ge=1.0, le=100.0)  # aviso si se mueve ≥ esto
 
 
 class OraqloConfig(BaseModel):
@@ -96,6 +110,7 @@ class OraqloConfig(BaseModel):
     updates: UpdateSettings = Field(default_factory=UpdateSettings)
     practice: PracticeSettings = Field(default_factory=PracticeSettings)
     forecast: ForecastSettings = Field(default_factory=ForecastSettings)
+    watch: WatchSettings = Field(default_factory=WatchSettings)
 
     @property
     def db_path(self) -> Path:

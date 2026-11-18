@@ -6,8 +6,11 @@ aprendido de los DEMÁS, así una mejora no es la propia respuesta copiada.
 
 - Por modelo (o comité): tal como salieron, sin recalibrar, con la recalibración
   anterior (Brier solo, sin encoger, desde 30) y con la nueva.
-- El comité: cada modelo por separado, todos con el mismo peso y con los pesos
-  aprendidos (cada pregunta, con los pesos que salían sin ella).
+- Por tipo de pregunta: la recalibración con un único factor frente a la que además
+  tiene factor propio por grupo (tipo · binaria/múltiple · plazo).
+- El comité: cada voz por separado (modelos, mercado, estimación por partes), todos
+  con el mismo peso y con los pesos aprendidos (cada pregunta, con los pesos que
+  salían sin ella), y la combinación sin las voces extra para ver lo que aportan.
 - El mercado en las mismas preguntas de la Práctica, como referencia.
 
 Cifras: n, Brier medio y «% mejor que el azar» (1 − Brier/azar).
@@ -18,8 +21,8 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 
-from oraqlo.forecaster.aggregate import clamp, pool_log_odds
-from oraqlo.forecaster.committee import PRIOR_N, WEIGHT_SCALE
+from oraqlo.forecaster.aggregate import clamp, pool_log_odds, power
+from oraqlo.forecaster.committee import PRIOR_N, WEIGHT_SCALE, is_extra_voice
 from oraqlo.forecaster.ensemble import MEMBER_SEP
 from oraqlo.memory.calibration import CalibrationLedger, ResolvedForecast, multiclass_brier
 from oraqlo.memory.recalibration import (
@@ -29,6 +32,8 @@ from oraqlo.memory.recalibration import (
     choose,
     counts_for_score,
     decided_markets,
+    fit,
+    group_of,
     is_market,
     is_member,
     market_id_of,
@@ -40,6 +45,7 @@ from oraqlo.memory.scorecard import chance_brier
 
 OLD_MIN = 30  # la recalibración de antes de la 0.14
 MAX_CASES = 300  # por grupo, los más recientes (la validación cruzada crece con n²)
+MAX_GROUP_CASES = 150  # la versión por tipo reajusta todo en cada caso: más cara
 
 
 def _row(name: str, briers: list[float], chances: list[float], note: str = "") -> dict:
@@ -81,6 +87,17 @@ def _loo_recalibration(
     return old, new
 
 
+def _loo_groups(pairs: list[tuple[dict[str, float], str]], groups: list[str]) -> list[float]:
+    """Brier de cada caso con la recalibración por tipo aprendida sin él."""
+    out = []
+    for i, (outcomes, actual) in enumerate(pairs):
+        rest = pairs[:i] + pairs[i + 1 :]
+        recal = fit(rest, groups[:i] + groups[i + 1 :])
+        a = recal.factor(groups[i])
+        out.append(multiclass_brier(clamp(power(outcomes, a)), actual))
+    return out
+
+
 def _weight(skill: float, n: int) -> float:
     shrunk = skill * n / (n + PRIOR_N)
     return math.exp(WEIGHT_SCALE * max(-1.0, min(1.0, shrunk)))
@@ -104,6 +121,11 @@ def evaluate(ledger: CalibrationLedger) -> dict:
         chances = [chance_brier(r) for r in items]
         pairs = [(raw_of(r.forecast), r.actual_outcome) for r in items]
         old, new = _loo_recalibration(pairs)
+        recent = items[-MAX_GROUP_CASES:]
+        by_group = _loo_groups(
+            [(raw_of(r.forecast), r.actual_outcome) for r in recent],
+            [group_of(r.forecast) for r in recent],
+        )
         models.append(
             {
                 "model": model,
@@ -125,6 +147,12 @@ def evaluate(ledger: CalibrationLedger) -> dict:
                         new,
                         chances,
                         f"encogida, desde {MIN_RESOLVED} y solo si valida",
+                    ),
+                    _row(
+                        "Recalibración por tipo",
+                        by_group,
+                        chances[-len(recent) :],
+                        f"factor propio por tipo de pregunta (últimas {len(recent)})",
                     ),
                 ],
             }
@@ -150,6 +178,8 @@ def evaluate(ledger: CalibrationLedger) -> dict:
                 totals[m][1] += chance_brier(r)
                 totals[m][2] += 1
         equal, learned, chances = [], [], []
+        plain, plain_chances = [], []  # solo modelos, en las preguntas con voces extra
+        with_extra = []
         for q in questions.values():
             r0 = next(iter(q.values()))
             labels = list(r0.forecast.distribution.outcomes)
@@ -164,8 +194,15 @@ def evaluate(ledger: CalibrationLedger) -> dict:
                 weights.append(_weight(1 - b / c if n and c else 0.0, n))
             y = r0.actual_outcome
             equal.append(multiclass_brier(clamp(pool_log_odds(dists)), y))
-            learned.append(multiclass_brier(clamp(pool_log_odds(dists, weights)), y))
+            pooled = multiclass_brier(clamp(pool_log_odds(dists, weights)), y)
+            learned.append(pooled)
             chances.append(chance_brier(r0))
+            keep = [i for i, m in enumerate(q) if not is_extra_voice(m)]
+            if keep and len(keep) < len(q):
+                only = pool_log_odds([dists[i] for i in keep], [weights[i] for i in keep])
+                plain.append(multiclass_brier(clamp(only), y))
+                with_extra.append(pooled)
+                plain_chances.append(chance_brier(r0))
         rows = []
         for m in member_models:
             b, c, n = totals[m]
@@ -181,6 +218,11 @@ def evaluate(ledger: CalibrationLedger) -> dict:
             )
         rows.append(_row("Comité, mismo peso", equal, chances))
         rows.append(_row("Comité, pesos aprendidos", learned, chances, "validación cruzada"))
+        if plain:
+            rows.append(
+                _row("Sin mercado ni partes", plain, plain_chances, "mismas preguntas, solo IA")
+            )
+            rows.append(_row("Con mercado y partes", with_extra, plain_chances, "mismas preguntas"))
         committee = {"questions": len(questions), "rows": rows}
 
     # ── el mercado, en las mismas preguntas ─────────────────────────────
