@@ -43,6 +43,14 @@ def test_punto_de_ruptura_de_las_probabilidades():
     assert flip["threshold"] == pytest.approx(0.55, abs=1e-3)
     assert flip["new_best"] == "b"
     assert "bajara de 55%" in result["summary"][0]
+    assert result["summary"][0].endswith("convendría más «Ir a lo seguro».")
+    # La rival que podría ganar: se dice que pasaría a ser la mejor, no «convendría más» ella misma.
+    rise = {"action": "b", "action_text": "Ir a lo seguro", "outcome": "regular", "p": 0.5,
+            "threshold": 0.7, "direction": "sube", "new_best": "b"}  # fmt: skip
+    from oraqlo.strategy.sensitivity import summarize
+
+    names = {"a": "Arriesgar", "b": "Ir a lo seguro"}
+    assert "pasaría a ser la mejor opción" in summarize(names, [rise], [])[0]
 
 
 def test_punto_de_ruptura_de_las_utilidades():

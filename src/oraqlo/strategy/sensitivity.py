@@ -198,10 +198,13 @@ def summarize(names: dict[str, str], probability: list[dict], voi: list[dict]) -
     for item in probability[:3]:
         verb = "bajara de" if item["direction"] == "baja" else "subiera de"
         other = names.get(item["new_best"], item["new_best"])
+        if item["new_best"] == item["action"]:
+            then = "esa pasaría a ser la mejor opción"
+        else:
+            then = f"convendría más «{other}»"
         lines.append(
-            f"Si la probabilidad de «{item['outcome']}» al «{item['action_text']}» "
-            f"{verb} {item['threshold']:.0%} (ahora {item['p']:.0%}), convendría más "
-            f"«{other}»."
+            f"Si la probabilidad de «{item['outcome']}» con «{item['action_text']}» "
+            f"{verb} {item['threshold']:.0%} (ahora {item['p']:.0%}), {then}."
         )
     if voi:
         top = voi[0]
