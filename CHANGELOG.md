@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/ahiram1701/Oraqlo/compare/v0.13.0...v0.13.1) (2026-11-18)
+
+
+### Correcciones
+
+* Práctica y Calibración cuentan lo mismo y en la misma escala ([#72](https://github.com/ahiram1701/Oraqlo/issues/72)) ([1ab0bcc](https://github.com/ahiram1701/Oraqlo/commit/1ab0bcc9f871810332894b31c389b19c03e430ef))
+
 ## [0.13.0](https://github.com/ahiram1701/Oraqlo/compare/v0.12.1...v0.13.0) (2026-11-17)
 
 
