@@ -192,24 +192,30 @@ def analyze(spec: CaseSpec) -> dict:
     }
 
 
+def short(text: str, limit: int = 70) -> str:
+    """Una acción larga, recortada para que la frase se lea de un vistazo."""
+    text = " ".join(text.split()).rstrip(".")
+    return text if len(text) <= limit else text[: limit - 1].rsplit(" ", 1)[0] + "…"
+
+
 def summarize(names: dict[str, str], probability: list[dict], voi: list[dict]) -> list[str]:
     """Frases llanas: los puntos de ruptura más cercanos y lo que conviene averiguar."""
     lines = []
     for item in probability[:3]:
         verb = "bajara de" if item["direction"] == "baja" else "subiera de"
-        other = names.get(item["new_best"], item["new_best"])
+        other = short(names.get(item["new_best"], item["new_best"]))
         if item["new_best"] == item["action"]:
             then = "esa pasaría a ser la mejor opción"
         else:
             then = f"convendría más «{other}»"
         lines.append(
-            f"Si la probabilidad de «{item['outcome']}» con «{item['action_text']}» "
+            f"Si la probabilidad de «{item['outcome']}» con «{short(item['action_text'])}» "
             f"{verb} {item['threshold']:.0%} (ahora {item['p']:.0%}), {then}."
         )
     if voi:
         top = voi[0]
         lines.append(
-            f"Lo que más vale averiguar antes de decidir: cómo saldría «{top['action_text']}» "
+            f"Lo que más vale averiguar antes de decidir: cómo saldría «{short(top['action_text'])}» "
             f"(saberlo de antemano vale {top['value']:.2f} puntos de utilidad)."
         )
     return lines
