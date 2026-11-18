@@ -80,9 +80,9 @@ def pool_log_odds(
         k: sum(wi * math.log(s[k]) for wi, s in zip(w, safe, strict=True)) / total_w for k in labels
     }
     top = max(logs.values())
-    weights = {k: math.exp(v - top) for k, v in logs.items()}
-    total = sum(weights.values())
-    return {k: w / total for k, w in weights.items()}
+    unnorm = {k: math.exp(v - top) for k, v in logs.items()}
+    total = sum(unnorm.values())
+    return {k: u / total for k, u in unnorm.items()}
 
 
 def power(outcomes: dict[str, float], a: float) -> dict[str, float]:

@@ -191,12 +191,14 @@ class OraqloService:
         provider, r = self._role(role)
         extra = []
         route = self._cloud_route(r.provider, r.model)
-        for model in self.committee_models(r.provider, r.model):
+        names = self.committee_models(r.provider, r.model) if route else []
+        if route and names:
             try:
                 via = self.registry.get(route)
             except Exception:  # sin ese proveedor: sin comité
-                break
-            extra.append((via, local_cloud_name(model) if route == "ollama-local" else model))
+                names = []
+            for model in names:
+                extra.append((via, local_cloud_name(model) if route == "ollama-local" else model))
         members = build_members((provider, r.model), extra, samples)
         models = list(dict.fromkeys(m.model for m in members))
         if len(models) < 2:
