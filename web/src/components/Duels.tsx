@@ -14,11 +14,11 @@ const SORTS: Option<DuelSort>[] = [
   { value: "cierre", label: "Cierran antes" },
 ];
 
-/** «Oraqlo gana 3 de 10 duelos», o una frase honesta si aún no hay. */
+/** «De 10 duelos: Oraqlo gana 2 y el mercado 8», o una frase honesta si aún no hay. */
 export function duelHeadline(s: DuelSummary | undefined): string {
   if (!s || s.resolved === 0) return "Aún no se ha resuelto ningún duelo.";
-  const ties = s.tied ? ` (${s.tied} empate${s.tied > 1 ? "s" : ""})` : "";
-  return `Oraqlo gana ${s.won} de ${s.resolved} duelos${ties}.`;
+  const ties = s.tied ? `; ${s.tied} empate${s.tied > 1 ? "s" : ""}` : "";
+  return `De ${s.resolved} duelo${s.resolved > 1 ? "s" : ""} resuelto${s.resolved > 1 ? "s" : ""}: Oraqlo gana ${s.won} y el mercado ${s.lost}${ties}.`;
 }
 
 /** Los duelos que no cuentan: el mercado ya sabía el resultado al predecir. */
@@ -77,7 +77,7 @@ function DuelRow({ d }: { d: Duel }) {
       <p className="text-xs text-muted">
         {d.status === "resuelto" ? (
           <>
-            Pasó: <b className="text-fg">{d.actual}</b>. Probabilidad que le daba cada uno:
+            Pasó: <b className="text-fg">{d.actual}</b>. Probabilidad que le daba cada uno a «{d.label}»:
           </>
         ) : (
           <>

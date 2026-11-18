@@ -13,6 +13,7 @@ import {
   YAxis,
   ZAxis,
 } from "recharts";
+import { HowToRead } from "../components/HowToRead";
 import { ChipGroup, SortSelect, type Option } from "../components/listControls";
 import { Card, Empty, ErrorNote, SectionTitle, Skeleton, cx, inputClass } from "../components/ui";
 import {
@@ -26,19 +27,14 @@ import {
   type ForecastKind,
   type ScoreStats,
 } from "../lib/api";
+import { fmtBrier, fmtSkill, skillTone, skillWords } from "../lib/score";
 import { useStoredState } from "../lib/useStoredState";
 import { ExportLink } from "./Ledger";
 
 type Period = "todo" | "365" | "90";
 type SourceSort = "mejor" | "datos" | "nombre";
 
-/** «Acierta un 34% mejor que el azar», en palabras. */
-export function skillWords(skill: number | null | undefined): string {
-  if (skill == null) return "—";
-  if (skill >= 0.05) return `${Math.round(skill * 100)}% mejor que el azar`;
-  if (skill <= -0.05) return `${Math.round(-skill * 100)}% peor que el azar`;
-  return "igual que el azar";
-}
+export { skillWords };
 
 /** La frase que resume la calibración: ¿se pasa de confiado o se queda corto? */
 export function calibrationSentence(s: Cal["summary"] | undefined): string {
@@ -48,9 +44,6 @@ export function calibrationSentence(s: Cal["summary"] | undefined): string {
   if (Math.abs(gap) < 0.06) return `${said} Bien calibrado.`;
   return gap > 0 ? `${said} Se pasa de confiado.` : `${said} Es más prudente de lo necesario.`;
 }
-
-const skillTone = (skill: number | null) =>
-  skill == null ? "text-muted" : skill >= 0.2 ? "text-good" : skill >= 0.05 ? "text-accent" : skill > -0.05 ? "text-warn" : "text-bad";
 
 function Stat({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: string }) {
   return (
@@ -69,7 +62,9 @@ function Breakdown({ rows }: { rows: { key: string; label: string; stats: ScoreS
         <li key={key} className="flex items-center justify-between gap-3 py-2 text-sm">
           <span className="min-w-0 truncate" title={label}>
             {label}
-            <span className="ml-1 text-xs text-muted">· {stats.n}</span>
+            <span className="ml-1 text-xs text-muted">
+              · {stats.n} resuelta{stats.n === 1 ? "" : "s"}
+            </span>
           </span>
           <span className={cx("shrink-0 tabular-nums", skillTone(stats.skill))}>{skillWords(stats.skill)}</span>
         </li>
@@ -107,8 +102,15 @@ export default function Calibration() {
     .filter((b) => b.n > 0 && b.observed != null)
     .map((b) => ({ x: Math.round((b.confidence ?? b.p_mid) * 100), y: Math.round((b.observed ?? 0) * 100), n: b.n }));
   const trend = (data?.trend ?? []).filter((t) => t.skill != null).map((t) => ({ ...t, skillPct: Math.round((t.skill ?? 0) * 100) }));
-  const sources = [...(data?.sources ?? [])].sort((a, b) =>
-    sourceSort === "datos" ? b.n - a.n : sourceSort === "nombre" ? sourceLabel(a.source).localeCompare(sourceLabel(b.source)) : (a.brier ?? 0) - (b.brier ?? 0),
+  // El mercado (solo referencia) siempre al final; sin datos, también al final.
+  const sources = [...(data?.sources ?? [])].sort(
+    (a, b) =>
+      Number(!!a.reference) - Number(!!b.reference) ||
+      (sourceSort === "datos"
+        ? b.n - a.n
+        : sourceSort === "nombre"
+          ? sourceLabel(a.source).localeCompare(sourceLabel(b.source))
+          : (b.skill ?? -Infinity) - (a.skill ?? -Infinity)),
   );
   const sentence = calibrationSentence(s);
 
@@ -152,7 +154,7 @@ export default function Calibration() {
           <Empty>
             {filtered
               ? "No hay predicciones resueltas con estos filtros."
-              : "Aún no hay datos. Cuando sepas cómo acabó una previsión, márcalo en Predicciones y aquí verás qué tan acertado es Oraqlo."}
+              : "Aún no hay datos. Cuando sepas cómo acabó una predicción, márcalo en Predicciones y aquí verás qué tan acertado es Oraqlo."}
             {!filtered && (
               <>
                 {" "}
@@ -169,7 +171,7 @@ export default function Calibration() {
               <div className="grid grid-cols-2 gap-2">
                 <Stat
                   label="Frente al azar"
-                  value={s.skill == null ? "—" : `${s.skill >= 0 ? "+" : ""}${Math.round(s.skill * 100)}%`}
+                  value={fmtSkill(s.skill)}
                   hint={skillWords(s.skill)}
                   tone={skillTone(s.skill)}
                 />
@@ -179,16 +181,22 @@ export default function Calibration() {
                   hint={s.confidence == null ? undefined : `estaba un ${pct(s.confidence)} seguro`}
                 />
                 <Stat
-                  label="Brier medio"
-                  value={s.brier == null ? "—" : s.brier.toFixed(3)}
-                  hint={s.chance == null ? undefined : `el azar sacaría ${s.chance.toFixed(3)}`}
+                  label="Error (Brier)"
+                  value={fmtBrier(s.brier)}
+                  hint={s.chance == null ? undefined : `el azar sacaría ${fmtBrier(s.chance)}`}
                 />
-                <Stat label="Resueltas" value={String(s.n)} hint={`${s.open} pendientes de resolver`} />
+                <Stat label="Predicciones resueltas" value={String(s.n)} hint={`${s.open} pendientes de resolver`} />
               </div>
-              <p className="mt-3 text-xs text-muted">
-                Brier: 0 es perfecto y menos es mejor. «El azar» es repartir la probabilidad por igual entre los escenarios de cada
-                pregunta; superarlo es lo mínimo que se le pide.
-              </p>
+              {kind === "practica" && (
+                <p className="mt-3 text-sm">
+                  Son los mismos duelos que en{" "}
+                  <Link to="/practica" className="text-accent underline">
+                    Práctica
+                  </Link>
+                  : solo las predicciones de Oraqlo, sin las que ya se sabían. El mercado sale abajo, para comparar.
+                </p>
+              )}
+              <HowToRead />
             </>
           )
         )}
@@ -325,7 +333,13 @@ export default function Calibration() {
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate font-medium">{r.model}</span>
                   <span className={r.active ? "text-accent" : "text-muted"}>
-                    {r.active ? `activa · a=${r.a.toFixed(2)}` : r.n < r.min_resolved ? `${r.n}/${r.min_resolved}` : "sin corrección"}
+                    {r.active
+                      ? r.a > 1
+                        ? "activa · concentra sus probabilidades"
+                        : "activa · suaviza sus probabilidades"
+                      : r.n < r.min_resolved
+                        ? `empieza con ${r.min_resolved} resueltas (lleva ${r.n})`
+                        : "no le hace falta"}
                   </span>
                 </div>
                 <p className="text-xs text-muted">
@@ -333,7 +347,7 @@ export default function Calibration() {
                   {r.active &&
                     r.brier_before != null &&
                     r.brier_after != null &&
-                    ` Brier en su historial: ${r.brier_before.toFixed(3)} → ${r.brier_after.toFixed(3)}.`}
+                    ` Error (Brier) en su historial: ${fmtBrier(r.brier_before)} → ${fmtBrier(r.brier_after)}.`}
                 </p>
               </li>
             ))}

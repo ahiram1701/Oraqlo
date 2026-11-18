@@ -19,8 +19,17 @@ import math
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 
+from oraqlo.forecaster.base import Forecast
 from oraqlo.memory.calibration import ResolvedForecast, multiclass_brier
-from oraqlo.memory.recalibration import SOURCE_KINDS, is_practice, model_of
+from oraqlo.memory.recalibration import (
+    SOURCE_KINDS,
+    counts_for_score,
+    decided_markets,
+    is_market,
+    is_practice,
+    market_id_of,
+    model_of,
+)
 
 KINDS = ("prevision", "objetivo", "panel", "practica")
 HORIZONS = (
@@ -53,6 +62,24 @@ def _top(r: ResolvedForecast) -> tuple[str, float]:
     outcomes = r.forecast.distribution.outcomes
     label = max(outcomes, key=lambda k: outcomes[k]) if outcomes else ""
     return label, outcomes.get(label, 0.0)
+
+
+def split_market(
+    resolved: Iterable[ResolvedForecast], open_forecasts: Iterable[Forecast] = ()
+) -> tuple[list[ResolvedForecast], list[ResolvedForecast]]:
+    """(las de Oraqlo, las del mercado), sin las preguntas que ya se sabían.
+
+    El mercado es el rival de la Práctica, no parte del boletín de Oraqlo; antes se
+    mezclaba y la Calibración salía mucho mejor de lo que era."""
+    resolved = list(resolved)
+    decided = decided_markets([*open_forecasts, *(r.forecast for r in resolved)])
+    mine = [r for r in resolved if counts_for_score(r.forecast, decided)]
+    market = [
+        r
+        for r in resolved
+        if is_market(r.forecast.source) and market_id_of(r.forecast.question) not in decided
+    ]
+    return mine, market
 
 
 def _stats(items: list[ResolvedForecast]) -> dict:
@@ -104,7 +131,14 @@ def select(
     return out
 
 
-def scorecard(items: list[ResolvedForecast], bins: int = 10, worst: int = 5) -> dict:
+def scorecard(
+    items: list[ResolvedForecast],
+    bins: int = 10,
+    worst: int = 5,
+    reference: list[ResolvedForecast] | None = None,
+) -> dict:
+    """`reference`: previsiones del mercado; solo salen como fila de comparación en
+    «sources», nunca en el resto de cifras."""
     stats = _stats(items)
     tops = [_top(r) for r in items]
     hits = [label == r.actual_outcome for r, (label, _p) in zip(items, tops, strict=True)]
@@ -149,8 +183,15 @@ def scorecard(items: list[ResolvedForecast], bins: int = 10, worst: int = 5) -> 
         {"source": s, **_stats(g)} for s, g in _group(items, lambda r: r.forecast.source).items()
     ]
     by_source.sort(key=lambda x: x["brier"])
+    if reference:
+        by_source.append(
+            {"source": reference[0].forecast.source, **_stats(reference), "reference": True}
+        )
 
-    worst_items = sorted(items, key=lambda r: r.brier, reverse=True)[:worst]
+    # Solo fallos de verdad: acertar con un 52% también tiene Brier alto, pero no es
+    # «donde más falló».
+    misses = [r for r, hit in zip(items, hits, strict=True) if not hit]
+    worst_items = sorted(misses, key=lambda r: r.brier, reverse=True)[:worst]
     return {
         "summary": {
             **stats,

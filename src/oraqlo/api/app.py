@@ -1180,7 +1180,7 @@ def create_app(
     # ── práctica ──────────────────────────────────────────────────────────
 
     def practice_state() -> dict:
-        from oraqlo.autopractice import MARKET_SOURCE, calibration_advice, duels
+        from oraqlo.autopractice import calibration_advice, duels
         from oraqlo.llm.websearch import OllamaWebClient
 
         ledger = service.store.ledger
@@ -1189,15 +1189,16 @@ def create_app(
         return {
             "auto": practice_enabled(),
             "interval_min": practice_interval().total_seconds() / 60,
-            "last_run": service.store.settings.get("practice_last_run"),
+            # La misma fuente que «próxima», para que nunca se contradigan.
+            "last_run": last.isoformat()
+            if last
+            else service.store.settings.get("practice_last_run"),
             "next_run": (last + practice_interval()).isoformat()
             if last and practice_enabled()
             else None,
             "running": runner.active("practice") > 0,
             # Sin la clave de Ollama, Práctica predice sin investigar (y acierta menos).
             "research": OllamaWebClient().is_available(),
-            "reliability_oraqlo": ledger.reliability(source),
-            "reliability_market": ledger.reliability(MARKET_SOURCE),
             "advice": calibration_advice(ledger, source),
             "recent": runner.list(limit=20, kind="practice"),
             # Pregunta a pregunta: quién se acercó más, Oraqlo o el mercado.

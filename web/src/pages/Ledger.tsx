@@ -18,9 +18,19 @@ import {
 } from "../lib/api";
 import { useStoredState } from "../lib/useStoredState";
 
-/** El Brier en palabras: el color solo no basta. */
-function brierWords(b: number) {
-  return b < 0.1 ? "acierto muy bueno" : b < 0.25 ? "acierto bueno" : b < 0.5 ? "acierto flojo" : "fallo";
+/**
+ * El Brier relativo al azar de esa pregunta (repartir por igual entre sus `k` opciones
+ * saca 1 − 1/k). Así un 0.6 no es «fallo» en una pregunta de 4 opciones, donde el azar
+ * saca 0.75. Con sí/no las bandas son las de siempre: 0.1, 0.25 y 0.5.
+ */
+function vsChance(brier: number, k: number) {
+  return brier / (1 - 1 / Math.max(k, 2));
+}
+
+/** El acierto en palabras: el color solo no basta. */
+function brierWords(b: number, k = 2) {
+  const x = vsChance(b, k);
+  return x < 0.2 ? "acierto muy bueno" : x < 0.5 ? "acierto bueno" : x < 1 ? "acierto flojo" : "fallo";
 }
 
 /**
@@ -93,9 +103,10 @@ const RESOLVED_SORTS: Option<ResolvedSort>[] = [
   { value: "creadas", label: "Creadas hace poco" },
 ];
 
-/** Bandas de acierto (Brier): las mismas palabras que en cada fila. */
-export function accuracyBand(brier: number): Exclude<Accuracy, "todas"> {
-  return brier < 0.25 ? "bueno" : brier < 0.5 ? "flojo" : "fallo";
+/** Bandas de acierto: las mismas palabras que en cada fila («muy bueno» cuenta como bueno). */
+export function accuracyBand(brier: number, k = 2): Exclude<Accuracy, "todas"> {
+  const x = vsChance(brier, k);
+  return x < 0.5 ? "bueno" : x < 1 ? "flojo" : "fallo";
 }
 
 export function sortOpen(list: Forecast[], by: OpenSort): Forecast[] {
@@ -154,7 +165,7 @@ export default function Ledger() {
     () =>
       sortResolved(
         allResolved.filter(
-          (r) => kindOk(r) && includesText(r.question, query) && (accuracy === "todas" || accuracyBand(r.brier) === accuracy),
+          (r) => kindOk(r) && includesText(r.question, query) && (accuracy === "todas" || accuracyBand(r.brier, Object.keys(r.outcomes).length) === accuracy),
         ),
         resolvedSort,
       ),
@@ -353,8 +364,9 @@ export function OpenForecast({ f }: { f: Forecast }) {
           >
             <input
               className={inputClass}
-              placeholder="Otro resultado…"
-              aria-label="Otro resultado"
+              placeholder={outcomes.length ? "Otro resultado…" : "Escribe el valor que salió…"}
+              aria-label={outcomes.length ? "Otro resultado" : "Valor que salió"}
+              inputMode={outcomes.length ? undefined : "decimal"}
               value={other}
               onChange={(e) => setOther(e.target.value)}
             />
@@ -398,7 +410,9 @@ function ResolvedRow({ r }: { r: ResolvedForecast }) {
     },
   });
   // Clases literales: Tailwind no detecta nombres construidos dinámicamente.
-  const toneClass = r.brier < 0.1 ? "text-good" : r.brier < 0.25 ? "text-accent" : r.brier < 0.5 ? "text-warn" : "text-bad";
+  const k = Object.keys(r.outcomes).length;
+  const x = vsChance(r.brier, k);
+  const toneClass = x < 0.2 ? "text-good" : x < 0.5 ? "text-accent" : x < 1 ? "text-warn" : "text-bad";
   return (
     <li className="py-2">
       <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex w-full items-start justify-between gap-3 py-1 text-left">
@@ -410,7 +424,7 @@ function ResolvedRow({ r }: { r: ResolvedForecast }) {
         </span>
         <span className="flex shrink-0 flex-col items-end">
           <span className={cx("text-sm font-semibold tabular-nums", toneClass)}>{r.brier.toFixed(2)}</span>
-          <span className="text-xs text-muted">{brierWords(r.brier)}</span>
+          <span className="text-xs text-muted">{brierWords(r.brier, k)}</span>
         </span>
       </button>
       {open && (
@@ -435,6 +449,9 @@ function ResolvedRow({ r }: { r: ResolvedForecast }) {
           >
             Borrar
           </Button>
+          <div className="w-full">
+            <ErrorNote error={del.error} />
+          </div>
         </div>
       )}
     </li>

@@ -46,7 +46,9 @@ describe("orden y filtros (funciones puras)", () => {
     expect(sortResolved(list, "mejor")[0].id).toBe("bueno");
     expect(sortResolved(list, "peor")[0].id).toBe("malo");
     expect(sortResolved(list, "resueltas")[0].id).toBe("malo");
-    expect([0.05, 0.3, 0.9].map(accuracyBand)).toEqual(["bueno", "flojo", "fallo"]);
+    expect([0.05, 0.3, 0.9].map((b) => accuracyBand(b))).toEqual(["bueno", "flojo", "fallo"]);
+    // Con 4 opciones el azar saca 0.75: un 0.6 es flojo, no un fallo.
+    expect(accuracyBand(0.6, 4)).toBe("flojo");
   });
 
   it("historial y objetivos", () => {

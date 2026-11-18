@@ -100,7 +100,8 @@ export interface Calibration {
   trend?: (ScoreStats & { month: string })[];
   by_kind?: (ScoreStats & { kind: ForecastKind })[];
   by_horizon?: (ScoreStats & { horizon: string; label: string })[];
-  sources: (ScoreStats & { source: string })[];
+  /** `reference`: el mercado de Polymarket, solo para comparar (no cuenta en el resto). */
+  sources: (ScoreStats & { source: string; reference?: boolean })[];
   worst?: {
     id: string;
     question: string;
@@ -127,7 +128,7 @@ export interface Calibration {
 
 /** Nombre legible de una fuente del ledger (`llm:<modelo>[:tipo]`, `polymarket:mercado`…). */
 export function sourceLabel(source: string): string {
-  if (source === "polymarket:mercado") return "Mercado de Polymarket (referencia)";
+  if (source === "polymarket:mercado") return "Mercado (Polymarket), para comparar";
   if (!source.startsWith("llm:")) return source;
   const rest = source.slice(4);
   for (const [suffix, label] of [
@@ -148,8 +149,6 @@ export interface PracticeState {
   running: boolean;
   /** ¿Investiga en internet antes de predecir? (necesita la clave de Ollama) */
   research?: boolean;
-  reliability_oraqlo: number | null;
-  reliability_market: number | null;
   advice: string | null;
   recent: Job[];
   duels?: { items: Duel[]; summary: DuelSummary };
@@ -186,6 +185,9 @@ export interface DuelSummary {
   oraqlo_brier: number | null;
   market_brier: number | null;
   chance_brier: number | null;
+  /** 1 − brier/azar, la misma escala que Calibración. */
+  oraqlo_skill?: number | null;
+  market_skill?: number | null;
 }
 
 /** La pregunta sin la etiqueta interna del mercado («[polymarket:123] …»). */
@@ -473,8 +475,16 @@ export const answerJob = (jobId: string, answers: Record<string, string> | null)
 export const pct = (p: number | null | undefined, digits = 0) =>
   p == null ? "—" : `${(p * 100).toFixed(digits)}%`;
 
+/**
+ * Fecha del servidor. Las que pone SQLite por defecto («2026-11-18 02:51:07») están en
+ * UTC pero sin zona, y el navegador las leía como hora local: salían desfasadas.
+ */
+export function parseDate(iso: string): Date {
+  return new Date(/^\d{4}-\d\d-\d\d \d\d:\d\d(:\d\d)?$/.test(iso) ? `${iso.replace(" ", "T")}Z` : iso);
+}
+
 export const fmtDate = (iso: string | null | undefined) =>
-  iso ? new Date(iso).toLocaleString("es", { dateStyle: "medium", timeStyle: "short" }) : "—";
+  iso ? parseDate(iso).toLocaleString("es", { dateStyle: "medium", timeStyle: "short" }) : "—";
 
 /** Tipo de predicción según su fuente: qué la produjo y quién la resuelve. */
 export type ForecastKind = "prevision" | "objetivo" | "panel" | "practica";
