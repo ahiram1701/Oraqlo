@@ -203,7 +203,7 @@ def summarize(names: dict[str, str], probability: list[dict], voi: list[dict]) -
     lines = []
     for item in probability[:3]:
         verb = "bajara de" if item["direction"] == "baja" else "subiera de"
-        other = short(names.get(item["new_best"], item["new_best"]))
+        other = short(str(names.get(item["new_best"]) or item["new_best"]))
         if item["new_best"] == item["action"]:
             then = "esa pasaría a ser la mejor opción"
         else:
