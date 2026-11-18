@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.16.0](https://github.com/ahiram1701/Oraqlo/compare/v0.15.0...v0.16.0) (2026-11-18)
+
+
+### Novedades
+
+* todas las claves y APIs se configuran desde Ajustes ([6ca6182](https://github.com/ahiram1701/Oraqlo/commit/6ca6182e339b1e2f8c752b4bec886bb55d117e50))
+
+
+### Documentación
+
+* Mis APIs y claves desde Ajustes en la arquitectura ([b6c7faf](https://github.com/ahiram1701/Oraqlo/commit/b6c7faf3283dce306c57a33467d46a5faaae05bd))
+
 ## [0.15.0](https://github.com/ahiram1701/Oraqlo/compare/v0.14.0...v0.15.0) (2026-11-18)
 
 
