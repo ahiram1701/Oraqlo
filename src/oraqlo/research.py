@@ -46,7 +46,7 @@ _REFLECT_PROMPT = (
     '{"action": "search", "queries": ["<consulta>"], "reason": "<qué falta>"} — '
     "si falta un dato concreto (máx. 2 consultas nuevas, distintas de las ya hechas).\n"
     '{"action": "fetch", "urls": ["<url>"], "reason": "<por qué>"} — si una fuente '
-    "ya encontrada merece leerse completa (máx. 2 urls, SOLO de la lista de fuentes).\n"
+    "ya encontrada merece leerse completa (máx. 3 urls, SOLO de la lista de fuentes).\n"
     "Sé económico: cada ronda cuesta; pide más solo si cambia la estimación. No "
     "busques en internet datos personales del usuario (su dinero, su situación, sus "
     "planes): esos se le preguntan a él después."
@@ -235,8 +235,9 @@ class Researcher:
         max_queries: int = 4,
         results_per_query: int = 4,
         max_retries: int = 1,
-        max_rounds: int = 3,
-        max_fetches: int = 2,
+        max_rounds: int = 4,
+        max_fetches: int = 3,
+        exclude_domains: tuple[str, ...] = (),
     ) -> None:
         self.web = web
         self.provider = provider
@@ -246,6 +247,14 @@ class Researcher:
         self.max_retries = max_retries
         self.max_rounds = max_rounds
         self.max_fetches = max_fetches
+        # Webs que no deben entrar (p. ej. Polymarket en la Práctica: el duelo es a ciegas).
+        self.exclude_domains = tuple(d.lower() for d in exclude_domains)
+
+    def _allowed(self, url: str) -> bool:
+        from urllib.parse import urlparse
+
+        host = (urlparse(url).hostname or "").lower()
+        return not any(host == d or host.endswith("." + d) for d in self.exclude_domains)
 
     def _chat_json(self, system: str, user: str, temperature: float) -> dict:
         try:
@@ -308,7 +317,7 @@ class Researcher:
             found = 0
             for query in new_queries:
                 for result in self.web.search(query, max_results=self.results_per_query):
-                    if result.url not in seen_urls:
+                    if result.url not in seen_urls and self._allowed(result.url):
                         seen_urls.add(result.url)
                         sources.append(result)
                         found += 1
@@ -352,7 +361,7 @@ class Researcher:
                 # Solo URLs surgidas de la búsqueda: el modelo no elige destinos libres.
                 candidates = [str(u).strip() for u in decision.get("urls", [])]
                 urls = [u for u in candidates if u in seen_urls and u not in fetched]
-                urls = urls[: max(0, fetch_budget - len(fetched))][:2]
+                urls = urls[: max(0, fetch_budget - len(fetched))][:3]
                 if not urls:
                     break
                 rounds += 1

@@ -70,7 +70,7 @@ class Forecaster(ABC):
     - QuantForecaster: series temporales / Bayes para variables numéricas.
     - LLMForecaster: razonamiento vía Ollama para escenarios y probabilidades
       subjetivas donde no hay datos.
-    - EnsembleForecaster: combina las anteriores ponderando por su Brier
+    - Comité (forecaster.committee): varios modelos combinados según su historial
       histórico (memory.calibration).
     """
 

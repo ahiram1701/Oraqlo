@@ -18,8 +18,25 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
-from oraqlo.forecaster.aggregate import NO_DATA_NOTE, clamp, temper_without_data
+from oraqlo.forecaster.aggregate import (
+    NO_DATA_BASE_NOTE,
+    NO_DATA_NOTE,
+    clamp,
+    parse_base_rate,
+    pool_log_odds,
+    temper_without_data,
+)
 from oraqlo.forecaster.base import Distribution, Forecast
+from oraqlo.forecaster.committee import (
+    COMMITTEE_MODEL,
+    Member,
+    build_members,
+    combine,
+    member_source,
+    run_members,
+    weights_note,
+)
+from oraqlo.forecaster.ensemble import MEMBER_SEP
 from oraqlo.llm.base import LLMProvider
 from oraqlo.llm.jsonchat import JsonChatError, chat_json
 from oraqlo.memory.calibration import CalibrationLedger, ResolvedForecast
@@ -27,7 +44,12 @@ from oraqlo.memory.recalibration import (
     DECIDED,
     MARKET_SOURCE,
     Recalibration,
+    counts_for_score,
+    decided_markets,
     for_model,
+    is_member,
+    market_id_of,
+    raw_of,
 )
 from oraqlo.polymarket import Market, PolymarketClient, PolymarketError
 from oraqlo.research import Researcher, ResearchError
@@ -38,11 +60,20 @@ _FORECAST_PROMPT = (
     "Eres el Oráculo de Oraqlo: probabilidades calibradas, nunca certezas. "
     "Asigna probabilidad a CADA UNO de los resultados dados, usando EXACTAMENTE "
     "esas etiquetas (ni una más, ni una menos); deben sumar 1.0. Empieza por la "
-    "tasa base (en casos parecidos, con qué frecuencia pasa cada cosa), ajústala con "
-    "lo específico y evita 0 y 1. Si no tienes datos concretos de ESTE caso (ranking, forma, cuotas, encuestas, cifras recientes), quédate en la tasa base o cerca del reparto igual: una ventaja que solo intuyes no pasa del 55-60%. Responde SOLO con JSON: "
+    "tasa base (en casos parecidos, con qué frecuencia pasa cada cosa; dala también en "
+    "cifras), ajústala con lo específico y evita 0 y 1. Lee las reglas de resolución: "
+    "deciden qué cuenta como cada resultado. Si la pregunta es «¿pasará X antes de la "
+    "fecha?», aplica el ritmo al que suelen pasar estas cosas a los días que quedan: lo "
+    "más frecuente es que nada cambie. Si no tienes datos concretos de ESTE caso "
+    "(ranking, forma, cuotas, encuestas, cifras recientes), quédate en la tasa base o "
+    "cerca del reparto igual: una ventaja que solo intuyes no pasa del 55-60%. "
+    "Responde SOLO con JSON: "
     '{"base_rate": "<clase de referencia y frecuencia>", '
+    '"base_rate_outcomes": {"<etiqueta>": <prob según solo la tasa base>, ...}, '
     '"outcomes": {"<etiqueta>": <prob>, ...}, "assumptions": ["<supuesto>", ...]}'
 )
+RULES_CHARS = 1500  # de las reglas del mercado, lo que entra en el prompt
+MIN_ADVICE = 10  # resueltas válidas antes de dar consejos al modelo
 
 
 class PracticeError(RuntimeError):
@@ -72,37 +103,55 @@ def calibration_advice(
     ledger: CalibrationLedger,
     source: str,
     benchmark_source: str = MARKET_SOURCE,
-    min_resolved: int = 3,
+    min_resolved: int = MIN_ADVICE,
+    recalibrated: bool = False,
 ) -> str | None:
     """Consejo de calibración a partir del historial resuelto de `source`.
 
-    Mide Brier medio (vs. el benchmark si existe) y el acierto real cuando la
-    predicción fue confiada (top ≥ 70%): la sobre/subconfianza es lo más
-    corregible por prompt.
+    Solo con previsiones que cuentan (sin preguntas ya sabidas) y desde `min_resolved`:
+    con 3 casos un «sobreconfías» es ruido. Compara con el mercado en las MISMAS
+    preguntas y mide la confianza sobre las probabilidades brutas (antes de recalibrar).
+    Si la recalibración ya está corrigiendo (`recalibrated`), no pide al modelo que
+    concentre o reparta: las dos correcciones se perseguirían la una a la otra.
     """
-    resolved = [r for r in ledger.resolved_forecasts if r.forecast.source == source]
+    decided = decided_markets(
+        [*ledger.open_forecasts, *(r.forecast for r in ledger.resolved_forecasts)]
+    )
+    resolved = [
+        r
+        for r in ledger.resolved_forecasts
+        if r.forecast.source == source and counts_for_score(r.forecast, decided)
+    ]
     if len(resolved) < min_resolved:
         return None
 
-    briers = [r.brier for r in resolved]
-    mean_brier = sum(briers) / len(briers)
+    mean_brier = sum(r.brier for r in resolved) / len(resolved)
     parts = [
         f"En tus últimas {len(resolved)} predicciones resueltas tu Brier medio es "
         f"{mean_brier:.3f} (0 = perfecto)."
     ]
 
-    bench = ledger.reliability(benchmark_source)
-    if bench is not None:
-        comparison = "mejor" if mean_brier < bench else "peor"
-        parts.append(f"El mercado (multitud) tiene Brier {bench:.3f}: vas {comparison} que él.")
-
-    confident = [r for r in resolved if max(r.forecast.distribution.outcomes.values()) >= 0.7]
-    if len(confident) >= 3:
-        hits = sum(1 for r in confident if r.forecast.distribution.mode() == r.actual_outcome)
-        rate = hits / len(confident)
-        avg_conf = sum(max(r.forecast.distribution.outcomes.values()) for r in confident) / len(
-            confident
+    mids = {market_id_of(r.forecast.question) for r in resolved} - {None}
+    bench = [
+        r.brier
+        for r in ledger.resolved_forecasts
+        if r.forecast.source == benchmark_source and market_id_of(r.forecast.question) in mids
+    ]
+    if bench:
+        market = sum(bench) / len(bench)
+        comparison = "mejor" if mean_brier < market else "peor"
+        parts.append(
+            f"El mercado, en esas mismas preguntas, tiene Brier {market:.3f}: vas {comparison} que él."
         )
+    if recalibrated:
+        return " ".join(parts)
+
+    raws = [(raw_of(r.forecast), r) for r in resolved]
+    confident = [(o, r) for o, r in raws if o and max(o.values()) >= 0.7]
+    if len(confident) >= 5:
+        hits = sum(1 for o, r in confident if max(o, key=lambda k: o[k]) == r.actual_outcome)
+        rate = hits / len(confident)
+        avg_conf = sum(max(o.values()) for o, _r in confident) / len(confident)
         if rate < avg_conf - 0.1:
             parts.append(
                 f"Cuando afirmas con ≥70% de confianza solo aciertas el {rate:.0%} "
@@ -116,6 +165,37 @@ def calibration_advice(
     return " ".join(parts)
 
 
+PICK_POOL = 60  # mercados abiertos entre los que se elige
+INFORMATIVE = 0.9  # con el favorito por encima, el duelo enseña poco
+
+
+def _event_key(market: Market) -> str:
+    events = (market.raw or {}).get("events") or []
+    if events and isinstance(events[0], dict):
+        return str(events[0].get("slug") or events[0].get("id") or market.id)
+    return str((market.raw or {}).get("slug") or market.id)
+
+
+def choose_markets(markets: list[Market], n: int) -> list[Market]:
+    """Los `n` mercados que más enseñan: primero los inciertos (favorito ≤ 90%), uno por
+    evento (no cinco líneas del mismo partido) y, a igualdad, los de más volumen."""
+    ranked = sorted(
+        markets,
+        key=lambda m: (max(m.outcomes.values(), default=1.0) > INFORMATIVE, -m.volume_24h),
+    )
+    chosen: list[Market] = []
+    events: set[str] = set()
+    for m in ranked:
+        key = _event_key(m)
+        if key in events:
+            continue
+        chosen.append(m)
+        events.add(key)
+        if len(chosen) >= n:
+            break
+    return chosen
+
+
 class PracticeEngine:
     def __init__(
         self,
@@ -125,6 +205,8 @@ class PracticeEngine:
         ledger: CalibrationLedger,
         researcher: Researcher | None = None,
         markets_per_run: int = 2,
+        members: list[Member] | None = None,
+        weights: dict[str, float] | None = None,
     ) -> None:
         self.market_client = market_client
         self.provider = provider
@@ -132,7 +214,13 @@ class PracticeEngine:
         self.ledger = ledger
         self.researcher = researcher
         self.markets_per_run = markets_per_run
-        self.oraqlo_source = f"llm:{model}"
+        # Quién predice: el comité (varios modelos) o el modelo del rol, una vez.
+        self.members = members or build_members((provider, model), [], 1)
+        self.weights = weights
+        self.committee = len({m.model for m in self.members}) > 1
+        # Con comité, la previsión combinada aprende su propia calibración.
+        self.source_model = COMMITTEE_MODEL if self.committee else model
+        self.oraqlo_source = f"llm:{self.source_model}"
 
     # ── Predicción ────────────────────────────────────────────────────────
 
@@ -154,13 +242,42 @@ class PracticeEngine:
         delta = market.end_date - datetime.now(UTC)
         return max(delta, timedelta(days=1))
 
+    def _ask_member(
+        self, member: Member, system: str, user: str, labels: list[str]
+    ) -> tuple[dict[str, float], dict]:
+        try:
+            data = chat_json(
+                member.provider, member.model, system, f"{user}\n\n{member.lens}", temperature=0.2
+            )
+        except JsonChatError as e:
+            raise PracticeError(str(e)) from e
+        raw = data.get("outcomes", {})
+        by_norm = {" ".join(str(k).split()).casefold(): v for k, v in raw.items()}
+        try:
+            probs = {
+                label: float(
+                    raw[label] if label in raw else by_norm[" ".join(label.split()).casefold()]
+                )
+                for label in labels
+            }
+        except (KeyError, TypeError, ValueError) as e:
+            raise PracticeError(
+                f"{member.model} no dio probabilidad para todas las etiquetas {labels}: {e}"
+            ) from e
+        total = sum(probs.values())
+        if total <= 0 or any(v < 0 for v in probs.values()):
+            raise PracticeError(f"{member.model}: probabilidades no válidas.")
+        return {k: v / total for k, v in probs.items()}, data
+
     def _forecast_market(
         self,
         market: Market,
         advice: str | None,
         context: str | None,
         recal: Recalibration | None = None,
-    ) -> Forecast:
+        progress: Callable[[str], None] | None = None,
+    ) -> tuple[Forecast, list[Forecast]]:
+        """(la previsión de Oraqlo, lo que dijo cada modelo del comité)."""
         system = _FORECAST_PROMPT
         if advice:
             system += f"\n\nTu historial de calibración dice: {advice}"
@@ -172,44 +289,73 @@ class PracticeEngine:
             f"Resultados posibles (etiquetas exactas): {labels}\n"
             "NO te doy el precio del mercado: estima tú."
         )
+        rules = market.rules[:RULES_CHARS].strip()
+        if rules:
+            user += f"\n\nReglas de resolución:\n{rules}"
         if context:
             user += f"\n\n{context}"
-        try:
-            data = chat_json(self.provider, self.model, system, user, temperature=0.2)
-        except JsonChatError as e:
-            raise PracticeError(str(e)) from e
-        raw = data.get("outcomes", {})
-        try:
-            probs = {label: float(raw[label]) for label in labels}
-        except (KeyError, TypeError, ValueError) as e:
-            raise PracticeError(
-                f"El oráculo no dio probabilidad para todas las etiquetas {labels}: {e}"
-            ) from e
-        total = sum(probs.values())
-        if total <= 0:
-            raise PracticeError("Probabilidades no positivas.")
-        outcomes = clamp({k: v / total for k, v in probs.items()})
+        errors: list[str] = []
+
+        def failed(member: Member, e: Exception) -> None:
+            errors.append(str(e))
+            if progress:
+                progress(f"  {member.model} no respondió ({e}); sigo sin él")
+
+        answers = run_members(
+            self.members, lambda m: self._ask_member(m, system, user, labels), on_error=failed
+        )
+        if not answers:
+            raise PracticeError(errors[0] if errors else "Ningún modelo respondió.")
+        outcomes, per_model = combine(
+            [(m.model, dist) for m, (dist, _data) in answers], self.weights
+        )
+        data = answers[0][1][1]
         assumptions = [str(a) for a in data.get("assumptions", [])]
         if not context:  # sin investigación: solo intuición
-            outcomes = temper_without_data(outcomes)
-            assumptions.append(NO_DATA_NOTE)
+            bases = [
+                b
+                for _m, (_d, d) in answers
+                if (b := parse_base_rate(d.get("base_rate_outcomes"), labels)) is not None
+            ]
+            base = pool_log_odds(bases) if bases else None
+            outcomes = temper_without_data(outcomes, base)
+            assumptions.append(NO_DATA_BASE_NOTE if base else NO_DATA_NOTE)
         base_rate = str(data.get("base_rate") or "").strip()
         if base_rate:
             assumptions.append(f"Tasa base: {base_rate}")
+        if self.committee:
+            assumptions.append(weights_note(self.weights or {}, per_model))
         if recal is not None and recal.active:
             outcomes = clamp(recal.apply(outcomes))
             assumptions.append(recal.note())
         distribution = Distribution(outcomes=outcomes)
         distribution.validate()
-        return Forecast(
+        now = datetime.now(UTC)
+        question = f"{market_tag(market.id)} {market.question}"
+        forecast = Forecast(
             id=str(uuid.uuid4()),
-            question=f"{market_tag(market.id)} {market.question}",
+            question=question,
             distribution=distribution,
             horizon=self._horizon(market),
             assumptions=assumptions,
             source=self.oraqlo_source,
-            created_at=datetime.now(UTC),
+            created_at=now,
         )
+        members = []
+        if self.committee:
+            members = [
+                Forecast(
+                    id=f"{forecast.id}{MEMBER_SEP}{model}",
+                    question=question,
+                    distribution=Distribution(outcomes=dist),
+                    horizon=forecast.horizon,
+                    assumptions=["Lo que dijo este modelo del comité, antes de combinar."],
+                    source=member_source(model),
+                    created_at=now,
+                )
+                for model, dist in per_model.items()
+            ]
+        return forecast, members
 
     def _benchmark_forecast(self, market: Market) -> Forecast:
         total = sum(market.outcomes.values()) or 1.0
@@ -232,17 +378,24 @@ class PracticeEngine:
     ) -> list[tuple[Market, Forecast]]:
         progress = on_progress or (lambda msg: None)
         n = n or self.markets_per_run
-        advice = calibration_advice(self.ledger, self.oraqlo_source)
-        if advice:
-            progress(f"consejo de calibración activo: {advice}")
-        recal = for_model(self.ledger, self.model)
+        recal = for_model(self.ledger, self.source_model)
         if recal.active:
             progress(f"recalibración activa (a={recal.a:.2f}): {recal.describe()}")
+        advice = calibration_advice(self.ledger, self.oraqlo_source, recalibrated=recal.active)
+        if advice:
+            progress(f"consejo de calibración activo: {advice}")
+        if self.committee:
+            progress("comité: " + ", ".join(dict.fromkeys(m.model for m in self.members)))
 
         known = self._known_market_ids()
-        candidates = [
-            m for m in self.market_client.list_open(limit=n * 3 + len(known)) if m.id not in known
-        ][:n]
+        candidates = choose_markets(
+            [
+                m
+                for m in self.market_client.list_open(limit=PICK_POOL + len(known))
+                if m.id not in known
+            ],
+            n,
+        )
         if not candidates:
             progress("sin mercados nuevos que predecir")
             return []
@@ -260,9 +413,11 @@ class PracticeEngine:
                     )
                 except (ResearchError, Exception) as e:  # la práctica no se detiene por esto
                     progress(f"  investigación no disponible ({e}); prediciendo sin ella")
-            forecast = self._forecast_market(market, advice, context, recal)
+            forecast, members = self._forecast_market(market, advice, context, recal, progress)
             self.ledger.record(forecast)
             self.ledger.record(self._benchmark_forecast(market))
+            for member in members:
+                self.ledger.record(member)
             top = forecast.distribution.mode()
             progress(
                 f"  Oraqlo: {forecast.distribution.outcomes[top]:.0%} '{top}' · "
@@ -400,7 +555,7 @@ def duels(ledger: CalibrationLedger) -> dict:
 
     def add(f: Forecast, r: ResolvedForecast | None) -> None:
         mid = extract_market_id(f.question)
-        if mid:
+        if mid and not is_member(f.source):
             side = "market" if f.source == MARKET_SOURCE else "oraqlo"
             sides.setdefault(mid, {})[side] = (f, r)
 

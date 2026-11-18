@@ -18,9 +18,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
-from oraqlo.forecaster.aggregate import clamp, clamp_probability, pool_log_odds
+from oraqlo.forecaster.aggregate import clamp, clamp_probability
 from oraqlo.forecaster.base import Distribution, Forecast
-from oraqlo.forecaster.llm import SAMPLE_TEMPERATURE
+from oraqlo.forecaster.committee import Member, build_members, combine, run_members, weights_note
 from oraqlo.llm.base import LLMProvider
 from oraqlo.llm.jsonchat import JsonChatError, chat_json
 from oraqlo.memory.calibration import CalibrationLedger
@@ -156,6 +156,9 @@ class GoalStrategist:
         advice: str | None = None,
         recalibration: Recalibration | None = None,
         samples: int = 1,
+        members: list[Member] | None = None,
+        weights: dict[str, float] | None = None,
+        source_model: str | None = None,
     ) -> None:
         self.provider = provider
         self.model = model
@@ -166,12 +169,18 @@ class GoalStrategist:
         # Lo aprendido del historial resuelto (ver memory.recalibration).
         self.advice = advice
         self.recalibration = recalibration
+        # Quién estima P(objetivo): el comité de modelos, o el del rol con varios enfoques.
+        self.members = members or build_members((provider, model), [], self.samples)
+        self.weights = weights
+        self.source_model = source_model or model
 
-    def _chat(self, system: str, user: str, temperature: float = 0.2) -> dict:
+    def _chat(
+        self, system: str, user: str, temperature: float = 0.2, member: Member | None = None
+    ) -> dict:
         try:
             return chat_json(
-                self.provider,
-                self.model,
+                member.provider if member else self.provider,
+                member.model if member else self.model,
                 system,
                 user,
                 temperature=temperature,
@@ -185,26 +194,35 @@ class GoalStrategist:
     ) -> Forecast:
         if self.advice:
             system += f"\n\nTu historial de calibración dice: {self.advice}"
-        data = self._chat(system, user)
-        try:
-            p = clamp_probability(float(data["p_logro"]))
-        except (KeyError, TypeError, ValueError) as e:
-            raise GoalError(f"El oráculo no devolvió 'p_logro' numérico: {e}") from e
-        draws = [p]
-        for _ in range(self.samples - 1):
+
+        def ask(member: Member) -> tuple[dict, float]:
+            reply = self._chat(system, f"{user}\n\n{member.lens}", member=member)
             try:
-                extra = self._chat(system, user, temperature=SAMPLE_TEMPERATURE)
-                draws.append(clamp_probability(float(extra["p_logro"])))
-            except (GoalError, KeyError, TypeError, ValueError):
-                continue  # una muestra fallida no tumba la estimación
-        if len(draws) > 1:
-            pooled = pool_log_odds(
-                [{OUTCOME_ACHIEVED: q, OUTCOME_NOT_ACHIEVED: 1.0 - q} for q in draws]
-            )
-            p = clamp_probability(pooled[OUTCOME_ACHIEVED])
+                return reply, clamp_probability(float(reply["p_logro"]))
+            except (KeyError, TypeError, ValueError) as e:
+                raise GoalError(f"El oráculo no devolvió 'p_logro' numérico: {e}") from e
+
+        errors: list[Exception] = []
+        answers = run_members(self.members, ask, on_error=lambda m, e: errors.append(e))
+        if not answers:
+            first = errors[0] if errors else GoalError("Ningún modelo respondió.")
+            raise first if isinstance(first, GoalError) else GoalError(str(first)) from first
+        data = answers[0][1][0]
+        pooled, per_model = combine(
+            [
+                (m.model, {OUTCOME_ACHIEVED: q, OUTCOME_NOT_ACHIEVED: 1.0 - q})
+                for m, (_reply, q) in answers
+            ],
+            self.weights,
+        )
+        p = clamp_probability(pooled[OUTCOME_ACHIEVED])
         assumptions = [str(a) for a in data.get("assumptions", [])]
-        if len(draws) > 1:
-            assumptions.append(f"Agregado de {len(draws)} estimaciones independientes del modelo.")
+        if len(per_model) > 1:
+            assumptions.append(weights_note(self.weights or {}, per_model))
+        elif len(answers) > 1:
+            assumptions.append(
+                f"Agregado de {len(answers)} estimaciones independientes del modelo."
+            )
         base_rate = str(data.get("base_rate") or "").strip()
         if base_rate:
             assumptions.append(f"Tasa base: {base_rate}")
@@ -223,7 +241,7 @@ class GoalStrategist:
             distribution=distribution,
             horizon=horizon,
             assumptions=assumptions,
-            source=llm_source(self.model, "objetivo"),
+            source=llm_source(self.source_model, "objetivo"),
             created_at=datetime.now(UTC),
         )
 

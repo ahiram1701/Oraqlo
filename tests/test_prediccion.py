@@ -164,9 +164,10 @@ def test_varias_estimaciones_sobre_los_mismos_escenarios():
     )
     assert len(provider.calls) == 3
     assert progress == ["Estimación 1 de 3", "Estimación 2 de 3", "Estimación 3 de 3"]
-    # Las extra piden las mismas etiquetas y con más variedad.
+    # Las extra piden las mismas etiquetas y cada una mira con otro enfoque.
     assert '"sale", "no sale"' in provider.calls[1][0][-1].content
-    assert provider.calls[1][1] >= 0.7
+    lenses = [call[0][-1].content.split("Enfoque: ")[1][:12] for call in provider.calls]
+    assert len(set(lenses)) == 3
     assert set(f.distribution.outcomes) == {"sale", "no sale"}
     assert 0.6 < f.distribution.outcomes["sale"] < 0.8
     assert "Tasa base: 3 de cada 10 lanzamientos parecidos" in f.assumptions
@@ -204,7 +205,7 @@ def test_objetivo_sin_anclaje_y_con_fuente_propia(env, monkeypatch):
     _, service, *_ = env
     prompts: list[str] = []
 
-    def fake_chat(self, system, user, temperature=0.2):
+    def fake_chat(self, system, user, temperature=0.2, member=None):
         prompts.append(user)
         if "p_logro" in system:
             return {"base_rate": "1 de cada 3", "p_logro": 1.0, "assumptions": []}
@@ -233,7 +234,7 @@ def test_objetivo_sin_anclaje_y_con_fuente_propia(env, monkeypatch):
 
 def test_calibracion_expone_la_correccion_por_modelo(env):
     client, service, *_ = env
-    for i, (outcomes, actual) in enumerate(_overconfident_history(MIN_RESOLVED)):
+    for i, (outcomes, actual) in enumerate(_overconfident_history(40)):
         service.store.ledger.record(
             Forecast(
                 id=f"f{i}",

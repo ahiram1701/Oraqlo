@@ -97,7 +97,7 @@ def test_objetivo_anuncia_sus_pasos(env, monkeypatch):
 
     _, service, *_ = env
 
-    def fake_chat(self, system, user, temperature=0.2):
+    def fake_chat(self, system, user, temperature=0.2, member=None):
         if "p_logro" in system:
             return {"p_logro": 0.4, "assumptions": []}
         if "levers" in system:

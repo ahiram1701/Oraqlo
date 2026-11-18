@@ -100,7 +100,7 @@ export interface Calibration {
   trend?: (ScoreStats & { month: string })[];
   by_kind?: (ScoreStats & { kind: ForecastKind })[];
   by_horizon?: (ScoreStats & { horizon: string; label: string })[];
-  /** `reference`: el mercado de Polymarket, solo para comparar (no cuenta en el resto). */
+  /** `reference`: el mercado o cada modelo del comité por separado, solo para comparar. */
   sources: (ScoreStats & { source: string; reference?: boolean })[];
   worst?: {
     id: string;
@@ -127,18 +127,50 @@ export interface Calibration {
 }
 
 /** Nombre legible de una fuente del ledger (`llm:<modelo>[:tipo]`, `polymarket:mercado`…). */
+/** Nombre legible de un modelo; «comite» es la predicción combinada de varios. */
+export function modelLabel(model: string): string {
+  return model === "comite" ? "Comité de modelos" : model;
+}
+
 export function sourceLabel(source: string): string {
   if (source === "polymarket:mercado") return "Mercado (Polymarket), para comparar";
   if (!source.startsWith("llm:")) return source;
   const rest = source.slice(4);
   for (const [suffix, label] of [
-    [":prevision", "previsiones"],
+    [":prevision", "predicciones"],
     [":objetivo", "objetivos"],
     [":panel", "análisis completo"],
+    [":miembro", "solo, dentro del comité"],
   ] as const) {
-    if (rest.endsWith(suffix)) return `${rest.slice(0, -suffix.length)} · ${label}`;
+    if (rest.endsWith(suffix)) return `${modelLabel(rest.slice(0, -suffix.length))} · ${label}`;
   }
-  return `${rest} · práctica`;
+  return `${modelLabel(rest)} · práctica`;
+}
+
+/** El comité de modelos que predice (Ajustes). */
+export interface CommitteeView {
+  mode: "auto" | "custom" | "off";
+  /** El modelo del Oráculo, que siempre está. */
+  lead: string;
+  /** ¿Se llega a los modelos de la nube de Ollama (sesión en el PC o clave)? */
+  available: boolean;
+  /** Los que acompañan al Oráculo ahora mismo. */
+  models: string[];
+  recommended: string[];
+  catalog: { name: string; size: number | null }[];
+  samples: number;
+}
+
+/** ¿Qué forma de predecir funciona mejor? (validación cruzada sobre lo resuelto) */
+export interface EvaluationRow extends ScoreStats {
+  name: string;
+  note: string;
+}
+export interface Evaluation {
+  n: number;
+  models: { model: string; rows: EvaluationRow[] }[];
+  committee: { questions: number; rows: EvaluationRow[] } | null;
+  market: EvaluationRow[] | null;
 }
 
 export interface PracticeState {

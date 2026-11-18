@@ -818,23 +818,30 @@ def test_calibration_advice_detecta_sobreconfianza():
     from oraqlo.autopractice import calibration_advice
 
     ledger = CalibrationLedger()
-    # 4 resueltas confiadas (80% al outcome equivocado la mitad de las veces).
-    for i, actual in enumerate(["si", "no", "no", "no"]):
+    # 10 resueltas confiadas (80%) que aciertan solo 3 de cada 10.
+    for i, actual in enumerate(["si", "no", "no", "si", "no", "no", "si", "no", "no", "no"]):
         ledger.record(_forecast(f"c{i}", {"si": 0.8, "no": 0.2}, source="llm:fake"))
         ledger.resolve(f"c{i}", actual)
     advice = calibration_advice(ledger, "llm:fake")
     assert advice is not None
     assert "SOBRECONFÍAS" in advice
+    # Si la recalibración ya corrige, solo informa (no pide concentrar ni repartir).
+    assert "SOBRECONFÍAS" not in calibration_advice(ledger, "llm:fake", recalibrated=True)
 
-    # Con menos de 3 resueltas no hay consejo (evita sobreajustar al ruido).
-    assert calibration_advice(CalibrationLedger(), "llm:fake") is None
+    # Con pocas resueltas no hay consejo (evita sobreajustar al ruido).
+    small = CalibrationLedger()
+    for i in range(9):
+        small.record(_forecast(f"s{i}", {"si": 0.8, "no": 0.2}, source="llm:fake"))
+        small.resolve(f"s{i}", "no")
+    assert calibration_advice(small, "llm:fake") is None
 
 
 def test_practice_advice_llega_al_prompt():
     from oraqlo.autopractice import PracticeEngine
 
     ledger = CalibrationLedger()
-    for i, actual in enumerate(["no", "no", "no"]):
+    for i in range(10):
+        actual = "no"
         ledger.record(_forecast(f"h{i}", {"si": 0.9, "no": 0.1}, source="llm:fake"))
         ledger.resolve(f"h{i}", actual)
     provider = FakeProvider(['{"outcomes": {"Yes": 0.5, "No": 0.5}, "assumptions": []}'])

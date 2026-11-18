@@ -80,7 +80,7 @@ def main() -> int:
     print("\n── 4. Puntuación y calibración ──")
     print(f"Brier multiclase: {resolved.brier:.4f}  (0 = perfecto, 2 = certeza equivocada)")
     print(f"Fiabilidad histórica de {forecast.source}: {ledger.reliability(forecast.source):.4f}")
-    print("\nEste número es el que el EnsembleForecaster usará para ponderar esta fuente.")
+    print("\nEste historial es el que el comité de modelos usa para ponderar cada fuente.")
     return 0
 
 

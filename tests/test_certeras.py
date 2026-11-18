@@ -99,11 +99,11 @@ def test_practica_sin_investigar_tambien_es_prudente():
         None, _Fake({"outcomes": {"Yes": 0.7, "No": 0.3}}), "m", CalibrationLedger()
     )  # type: ignore[arg-type]
     market = _market(0.4)
-    blind = engine._forecast_market(market, None, None)
+    blind, _ = engine._forecast_market(market, None, None)
     assert blind.distribution.outcomes["Yes"] == pytest.approx(
         temper_without_data({"Yes": 0.7, "No": 0.3})["Yes"]
     )
-    informed = engine._forecast_market(market, None, "Hechos: ranking 12 vs 300")
+    informed, _ = engine._forecast_market(market, None, "Hechos: ranking 12 vs 300")
     assert informed.distribution.outcomes["Yes"] == pytest.approx(0.7)
 
 

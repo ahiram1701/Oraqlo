@@ -36,6 +36,11 @@ class Market:
     volume_24h: float = 0.0
     raw: dict = field(default_factory=dict)
 
+    @property
+    def rules(self) -> str:
+        """Las reglas de resolución (qué cuenta como cada resultado), tal cual las publica."""
+        return str((self.raw or {}).get("description") or "")
+
 
 DECIDED_PRICE = 0.97
 
@@ -118,36 +123,48 @@ class PolymarketClient:
         min_volume_24h: float = 10_000.0,
         max_days_to_close: int = 30,
         min_days_to_close: int = 1,
+        max_pages: int = 8,
     ) -> list[Market]:
         """Mercados abiertos ordenados por volumen, que cierran dentro de la ventana.
 
         Ventana corta = feedback rápido para el bucle de aprendizaje; volumen
         mínimo = preguntas serias con precio informativo.
         """
-        data = self._get(
-            "/markets",
-            {"closed": "false", "order": "volume24hr", "ascending": "false", "limit": limit * 4},
-        )
-        if not isinstance(data, list):
-            raise PolymarketError("Respuesta inesperada al listar mercados (no es una lista).")
         now = datetime.now(UTC)
-        markets = []
-        for item in data:
-            try:
-                market = _parse_market(item)
-            except PolymarketError:
-                continue
-            if not market.outcomes or market.closed or market.end_date is None:
-                continue
-            days = (market.end_date - now).total_seconds() / 86400
-            if not min_days_to_close <= days <= max_days_to_close:
-                continue
-            if market.volume_24h < min_volume_24h:
-                continue
-            if already_decided(market, now):
-                continue
-            markets.append(market)
-            if len(markets) >= limit:
+        markets: list[Market] = []
+        page = 100  # el máximo que devuelve Gamma por página
+        # Por páginas: la mayoría no pasa los filtros (casi decididos, fuera de plazo).
+        for offset in range(0, page * max_pages, page):
+            data = self._get(
+                "/markets",
+                {
+                    "closed": "false",
+                    "order": "volume24hr",
+                    "ascending": "false",
+                    "limit": page,
+                    "offset": offset,
+                },
+            )
+            if not isinstance(data, list):
+                raise PolymarketError("Respuesta inesperada al listar mercados (no es una lista).")
+            for item in data:
+                try:
+                    market = _parse_market(item)
+                except PolymarketError:
+                    continue
+                if not market.outcomes or market.closed or market.end_date is None:
+                    continue
+                days = (market.end_date - now).total_seconds() / 86400
+                if not min_days_to_close <= days <= max_days_to_close:
+                    continue
+                if market.volume_24h < min_volume_24h:
+                    continue
+                if already_decided(market, now):
+                    continue
+                markets.append(market)
+                if len(markets) >= limit:
+                    return markets
+            if len(data) < page:
                 break
         return markets
 

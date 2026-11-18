@@ -79,7 +79,7 @@ class CalibrationLedger:
     - `record(forecast)` registra una predicción abierta (idempotente por id).
     - `resolve(forecast_id, actual_outcome)` la cierra con Brier multiclase.
     - `reliability(source)` es el Brier medio de una fuente — el peso que usa
-      el EnsembleForecaster para ponderar fuentes (menor = más fiable).
+      el comité de modelos para ponderar fuentes (menor = más fiable).
     """
 
     def __init__(self) -> None:

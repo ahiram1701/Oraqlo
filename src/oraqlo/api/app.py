@@ -163,6 +163,12 @@ class ConfigIn(BaseModel):
     allowed_users: list[str] | None = None
 
 
+class CommitteeIn(BaseModel):
+    # "auto": los recomendados del catálogo; "custom": `models`; "off": sin comité.
+    mode: Literal["auto", "custom", "off"]
+    models: list[str] = Field(default_factory=list, max_length=8)
+
+
 class LegacyIn(BaseModel):
     # nombre de archivo (oraqlo_ledger.json, ...) -> contenido JSON como texto
     files: dict[str, str]
@@ -750,6 +756,22 @@ def create_app(
         service.reload_config(new)
         return config_view()
 
+    @app.get("/api/committee")
+    def get_committee() -> dict:
+        return service.committee_view()
+
+    @app.put("/api/committee", dependencies=[Depends(require_local)])
+    def put_committee(body: CommitteeIn) -> dict:
+        committee = {"auto": None, "off": [], "custom": body.models}[body.mode]
+        if body.mode == "custom" and not body.models:
+            raise HTTPException(400, "Elige al menos un modelo (o desactiva el comité).")
+        try:
+            new = apply_changes(cfg.home, {"committee": committee})
+        except ConfigError as e:
+            raise HTTPException(400, str(e)) from e
+        service.reload_config(new)
+        return service.committee_view()
+
     # ── avisos de Windows ────────────────────────────────────────────────
 
     def notify_view() -> dict:
@@ -1043,14 +1065,14 @@ def create_app(
     @app.delete("/api/ledger/open/{forecast_id}", status_code=204)
     def ledger_discard(forecast_id: str) -> None:
         try:
-            service.store.ledger.discard(forecast_id)
+            service.discard(forecast_id)
         except KeyError as e:
             raise HTTPException(404, _message(e)) from e
 
     @app.delete("/api/ledger/resolved/{forecast_id}", status_code=204)
     def ledger_delete_resolved(forecast_id: str) -> None:
         try:
-            service.store.ledger.delete_resolved(forecast_id)
+            service.delete_resolved(forecast_id)
         except KeyError as e:
             raise HTTPException(404, _message(e)) from e
 
@@ -1061,6 +1083,12 @@ def create_app(
         days: int | None = Query(None, ge=1, le=36500),
     ) -> dict:
         return service.calibration(kind=kind, model=model or None, days=days)
+
+    @app.get("/api/evaluate")
+    def evaluate_view() -> dict:
+        from oraqlo.evaluate import evaluate
+
+        return evaluate(service.store.ledger)
 
     # ── objetivos ─────────────────────────────────────────────────────────
 

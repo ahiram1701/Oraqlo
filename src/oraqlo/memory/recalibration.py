@@ -1,9 +1,15 @@
-"""Recalibración aprendida: el Brier histórico corrige las previsiones nuevas.
+"""Recalibración aprendida: el historial resuelto corrige las previsiones nuevas.
 
-Por modelo de IA se ajusta un único factor `a` (ver `forecaster.aggregate.power`)
-que minimiza el Brier de sus previsiones ya resueltas. Un solo parámetro con
-rango acotado es robusto con pocos datos: no sobreajusta, y con menos de
-`MIN_RESOLVED` resueltas no se activa (a = 1).
+Por modelo de IA (o para el comité) se ajusta un único factor `a` (ver
+`forecaster.aggregate.power`): a < 1 suaviza, a > 1 concentra (en un comité hace de
+«extremizado» aprendido). Para no aprender ruido:
+
+- solo cuentan sus previsiones válidas (`counts_for_score`: sin las preguntas que ya
+  se sabían, que enseñarían a confiar de más);
+- la pérdida es Brier + log-pérdida/4: castiga más los fallos con mucha seguridad;
+- el factor se acerca a 1 con una penalización que pesa más cuantos menos casos hay;
+- desde `MIN_RESOLVED` resueltas, y solo si mejora en validación cruzada (cada caso se
+  predice con el `a` aprendido de los demás). Si no mejora, a = 1.
 
 El ajuste se hace sobre las probabilidades CRUDAS (antes de recalibrar) para que
 la corrección no se aplique sobre sí misma en cada vuelta. No hace falta guardarlas
@@ -23,11 +29,15 @@ from oraqlo.forecaster.aggregate import power
 from oraqlo.forecaster.base import Forecast
 from oraqlo.memory.calibration import CalibrationLedger, multiclass_brier
 
-MIN_RESOLVED = 30
+MIN_RESOLVED = 15
 A_MIN, A_MAX, A_STEP = 0.5, 2.0, 0.05
+SHRINK = 1.0  # penalización (log a)² · SHRINK / n hacia a = 1
+LOG_WEIGHT = 0.25  # peso de la log-pérdida en la pérdida del ajuste
 LLM_PREFIX = "llm:"
 # Sufijos de fuente por tipo de pregunta (la práctica usa `llm:<modelo>` sin sufijo).
-SOURCE_KINDS = ("prevision", "objetivo", "panel")
+# «miembro»: lo que dijo cada modelo del comité por separado (no cuenta en el boletín).
+SOURCE_KINDS = ("prevision", "objetivo", "panel", "miembro")
+MEMBER_SUFFIX = ":miembro"
 _NOTE_RE = re.compile(r"^Recalibrado con su historial \(factor a=(\d+(?:\.\d+)?)\)")
 
 
@@ -66,6 +76,11 @@ def is_market(source: str) -> bool:
     return source.startswith("polymarket:")
 
 
+def is_member(source: str) -> bool:
+    """Lo que dijo un modelo del comité por separado (la previsión es la combinada)."""
+    return source.endswith(MEMBER_SUFFIX)
+
+
 def decided_markets(forecasts: Iterable[Forecast]) -> set[str]:
     """Mercados cuyo resultado ya se sabía cuando Oraqlo predijo."""
     return {
@@ -82,7 +97,7 @@ def counts_for_score(f: Forecast, decided: set[str]) -> bool:
 
     El mismo criterio que los duelos de la Práctica, para que las dos pantallas
     cuenten las mismas preguntas."""
-    if is_market(f.source):
+    if is_market(f.source) or is_member(f.source):
         return False
     mid = market_id_of(f.question)
     return not (mid and mid in decided)
@@ -139,24 +154,60 @@ class Recalibration:
         }
 
 
+def _loss(outcomes: dict[str, float], actual: str) -> float:
+    p = outcomes.get(actual, 0.0)
+    return multiclass_brier(outcomes, actual) - LOG_WEIGHT * math.log(max(p, 1e-3))
+
+
+GRID = [round(A_MIN + i * A_STEP, 2) for i in range(round((A_MAX - A_MIN) / A_STEP) + 1)]
+ONE = GRID.index(1.0)
+
+
+def tables(
+    pairs: list[tuple[dict[str, float], str]],
+) -> tuple[list[list[float]], list[list[float]]]:
+    """(Brier, pérdida) de cada caso para cada `a` de la rejilla: lo demás son sumas."""
+    briers = [[multiclass_brier(power(o, a), y) for o, y in pairs] for a in GRID]
+    losses = [[_loss(power(o, a), y) for o, y in pairs] for a in GRID]
+    return briers, losses
+
+
+def choose(briers: list[list[float]], losses: list[list[float]], keep: list[int]) -> int:
+    """Índice del `a` que aprende la regla con los casos `keep`: el de menor pérdida
+    encogida hacia 1, y solo si mejora el Brier en validación cruzada; si no, a = 1."""
+    m = len(keep)
+    if m < MIN_RESOLVED:
+        return ONE
+    grid = range(len(GRID))
+    totals = [sum(losses[g][j] for j in keep) for g in grid]
+
+    def best(total: list[float], k: int) -> int:
+        return min(
+            grid,
+            key=lambda g: (
+                total[g] / k + SHRINK * math.log(GRID[g]) ** 2 / k,
+                abs(GRID[g] - 1.0),
+            ),
+        )
+
+    g = best(totals, m)
+    if g == ONE:
+        return ONE
+    before = sum(briers[ONE][j] for j in keep) / m
+    cv = sum(briers[best([totals[k] - losses[k][j] for k in grid], m - 1)][j] for j in keep) / m
+    return g if cv < before else ONE
+
+
 def fit(pairs: list[tuple[dict[str, float], str]]) -> Recalibration:
-    """Busca en rejilla el `a` de menor Brier medio. Empate → el más cercano a 1."""
+    """El `a` aprendido de `pairs` (ver `choose`), con el Brier antes y después."""
     pairs = [(o, actual) for o, actual in pairs if len(o) >= 2]
     n = len(pairs)
     if n == 0:
         return Recalibration()
-
-    def mean_brier(a: float) -> float:
-        return sum(multiclass_brier(power(o, a), actual) for o, actual in pairs) / n
-
-    before = mean_brier(1.0)
-    if n < MIN_RESOLVED:
-        return Recalibration(1.0, n, before, before)
-    steps = round((A_MAX - A_MIN) / A_STEP)
-    grid = [round(A_MIN + i * A_STEP, 2) for i in range(steps + 1)]
-    # Penalización mínima hacia a = 1: solo se corrige si mejora de verdad.
-    best = min(grid, key=lambda a: (mean_brier(a) + 1e-4 * abs(math.log(a)), abs(a - 1.0)))
-    return Recalibration(best, n, before, mean_brier(best))
+    briers, losses = tables(pairs)
+    g = choose(briers, losses, list(range(n)))
+    before = sum(briers[ONE]) / n
+    return Recalibration(GRID[g], n, before, sum(briers[g]) / n)
 
 
 def raw_of(forecast: Forecast) -> dict[str, float]:
@@ -169,16 +220,24 @@ def raw_of(forecast: Forecast) -> dict[str, float]:
     return dict(outcomes)
 
 
+def valid_resolved(ledger: CalibrationLedger) -> list:
+    """Resueltas que cuentan (de Oraqlo y sobre preguntas que no se sabían ya)."""
+    decided = decided_markets(
+        [*ledger.open_forecasts, *(r.forecast for r in ledger.resolved_forecasts)]
+    )
+    return [r for r in ledger.resolved_forecasts if counts_for_score(r.forecast, decided)]
+
+
 def for_model(ledger: CalibrationLedger, model: str) -> Recalibration:
-    """Recalibración de un modelo con todas sus previsiones resueltas (cualquier tipo)."""
+    """Recalibración de un modelo (o del comité) con sus previsiones válidas resueltas."""
     pairs = [
         (raw_of(r.forecast), r.actual_outcome)
-        for r in ledger.resolved_forecasts
+        for r in valid_resolved(ledger)
         if model_of(r.forecast.source) == model
     ]
     return fit(pairs)
 
 
 def by_model(ledger: CalibrationLedger) -> dict[str, Recalibration]:
-    models = {m for r in ledger.resolved_forecasts if (m := model_of(r.forecast.source))}
+    models = {m for r in valid_resolved(ledger) if (m := model_of(r.forecast.source))}
     return {m: for_model(ledger, m) for m in sorted(models)}

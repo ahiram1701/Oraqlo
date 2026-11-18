@@ -52,26 +52,37 @@ def clamp(outcomes: dict[str, float], floor: float | None = None) -> dict[str, f
         low |= newly_low
 
 
-def pool_log_odds(samples: list[dict[str, float]]) -> dict[str, float]:
+def pool_log_odds(
+    samples: list[dict[str, float]], weights: list[float] | None = None
+) -> dict[str, float]:
     """Combina varias distribuciones sobre los MISMOS escenarios.
 
     Media geométrica normalizada (equivale a promediar log-odds en el caso binario):
     a diferencia de la media aritmética, no arrastra hacia el 50% cuando las
     muestras coinciden, y una sola muestra extrema pesa menos que en un máximo.
+    `weights` (opcional, uno por muestra) da más voz a quien acierta más.
     """
     if not samples:
         raise ValueError("Sin muestras que agregar")
     labels = list(samples[0])
     if any(set(s) != set(labels) for s in samples[1:]):
         raise ValueError("Las muestras no comparten los mismos escenarios")
+    if weights is not None and (len(weights) != len(samples) or min(weights) < 0):
+        raise ValueError("Hace falta un peso no negativo por muestra")
     if len(samples) == 1:
         return clamp(samples[0])
+    w = weights or [1.0] * len(samples)
+    total_w = sum(w)
+    if total_w <= 0:
+        raise ValueError("Los pesos suman cero")
     safe = [clamp(s) for s in samples]  # sin ceros: log(0) no existe
-    logs = {k: sum(math.log(s[k]) for s in safe) / len(safe) for k in labels}
+    logs = {
+        k: sum(wi * math.log(s[k]) for wi, s in zip(w, safe, strict=True)) / total_w for k in labels
+    }
     top = max(logs.values())
-    weights = {k: math.exp(v - top) for k, v in logs.items()}
-    total = sum(weights.values())
-    return {k: w / total for k, w in weights.items()}
+    unnorm = {k: math.exp(v - top) for k, v in logs.items()}
+    total = sum(unnorm.values())
+    return {k: u / total for k, u in unnorm.items()}
 
 
 def power(outcomes: dict[str, float], a: float) -> dict[str, float]:
@@ -93,7 +104,34 @@ def power(outcomes: dict[str, float], a: float) -> dict[str, float]:
 # fallaba con Brier ~0.9. Se suaviza hacia el reparto igual antes de recalibrar.
 NO_DATA_FACTOR = 0.8
 NO_DATA_NOTE = f"Sin datos concretos: probabilidades suavizadas hacia el reparto igual (factor {NO_DATA_FACTOR})."
+NO_DATA_BASE_NOTE = (
+    f"Sin datos concretos: probabilidades acercadas a la tasa base (factor {NO_DATA_FACTOR})."
+)
 
 
-def temper_without_data(outcomes: dict[str, float]) -> dict[str, float]:
-    return clamp(power(outcomes, NO_DATA_FACTOR))
+def temper_without_data(
+    outcomes: dict[str, float], base: dict[str, float] | None = None
+) -> dict[str, float]:
+    """Suaviza una estimación sin datos: p' ∝ p^0.8 · base^0.2.
+
+    Sin tasa base (o si no cubre los mismos escenarios) la base es el reparto igual,
+    que es justo `power(p, 0.8)`."""
+    if not base or set(base) != set(outcomes) or sum(base.values()) <= 0:
+        return clamp(power(outcomes, NO_DATA_FACTOR))
+    return clamp(pool_log_odds([outcomes, base], [NO_DATA_FACTOR, 1.0 - NO_DATA_FACTOR]))
+
+
+def parse_base_rate(raw: object, labels: list[str]) -> dict[str, float] | None:
+    """La tasa base numérica que da el modelo (`base_rate_outcomes`), sobre las mismas
+    etiquetas que la previsión; None si falta o no es utilizable."""
+    if not isinstance(raw, dict):
+        return None
+    by_norm = {" ".join(str(k).split()).casefold(): v for k, v in raw.items()}
+    try:
+        values = {k: float(by_norm[" ".join(k.split()).casefold()]) for k in labels}
+    except (KeyError, TypeError, ValueError):
+        return None
+    total = sum(values.values())
+    if total <= 0 or any(v < 0 for v in values.values()):
+        return None
+    return {k: v / total for k, v in values.items()}

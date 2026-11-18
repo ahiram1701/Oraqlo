@@ -109,6 +109,7 @@ def apply_changes(home: Path, changes: dict[str, Any]) -> OraqloConfig:
       quita ese ajuste (vuelve al heredado); un rol vacío se elimina.
     - `updates_mode`: "auto" | "notify" | "off".
     - `allowed_users`: lista de logins de Tailscale.
+    - `committee`: modelos del comité (lista; [] = sin comité) o None = los recomendados.
     """
     doc = read_document(home)
     roles = changes.get("roles")
@@ -129,6 +130,16 @@ def apply_changes(home: Path, changes: dict[str, Any]) -> OraqloConfig:
                     entry[field] = value
             if not entry:
                 del table[role]
+    if "committee" in changes:
+        # None: los recomendados (se quita el ajuste); lista: esos modelos ([] = sin comité).
+        committee = changes["committee"]
+        forecast = _table(doc, "forecast")
+        if committee is None:
+            forecast.pop("committee", None)
+            if not forecast:
+                del doc["forecast"]
+        else:
+            forecast["committee"] = [str(m).strip() for m in committee if str(m).strip()]
     if "updates_mode" in changes:
         _table(doc, "updates")["mode"] = changes["updates_mode"]
     if "allowed_users" in changes:
