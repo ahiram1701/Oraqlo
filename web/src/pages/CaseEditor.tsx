@@ -1,13 +1,13 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { JobTimeline } from "../components/JobView";
-import { ResultCard } from "../components/ResultCard";
+import { CASE_DRAFT_KEY, ResultCard } from "../components/ResultCard";
 import { Badge, Button, Card, ErrorNote, SectionTitle, Toggle, cx, inputClass, useFeedback } from "../components/ui";
 import { api } from "../lib/api";
 import { validateCase, type CaseData } from "../lib/caseValidation";
 import { useJob, useStoredJob } from "../lib/useJob";
 
-const DRAFT_KEY = "oraqlo.case.draft";
+const DRAFT_KEY = CASE_DRAFT_KEY;
 
 /** "Unexpected token } in JSON at position 120" → "JSON inválido en la línea 7". */
 export function jsonError(text: string, error: Error): string {

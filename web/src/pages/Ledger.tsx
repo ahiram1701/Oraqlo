@@ -86,7 +86,14 @@ export function dueTime(f: Forecast): number {
 const topProb = (f: Forecast) => Math.max(0, ...Object.values(f.outcomes ?? {}));
 const created = (f: Forecast) => (f.created_at ? new Date(f.created_at).getTime() : 0);
 
-type KindFilter = "todas" | ForecastKind;
+/** «tuyas»: todo menos la Práctica, que se resuelve sola con el mercado. */
+type KindFilter = "tuyas" | "todas" | ForecastKind;
+
+export function kindMatches(filter: KindFilter, kind: ForecastKind): boolean {
+  if (filter === "todas") return true;
+  if (filter === "tuyas") return kind !== "practica";
+  return kind === filter;
+}
 type OpenState = "todas" | "vencidas" | "por-venir";
 type OpenSort = "se-sabra" | "recientes" | "antiguas" | "probable";
 type Accuracy = "todas" | "bueno" | "flojo" | "fallo";
@@ -140,7 +147,8 @@ export default function Ledger() {
     queryFn: () => api.get<{ open: Forecast[]; resolved: ResolvedForecast[]; overdue?: number }>("/ledger"),
   });
   const [query, setQuery] = useState("");
-  const [kind, setKind] = useStoredState<KindFilter>("oraqlo.ledger.kind", "todas");
+  // Clave nueva: antes se guardaba «todas» y la Práctica llenaba la lista de cosas que no hay que tocar.
+  const [kind, setKind] = useStoredState<KindFilter>("oraqlo.ledger.kind.v2", "tuyas");
   const [state, setState] = useStoredState<OpenState>("oraqlo.ledger.state", "todas");
   const [openSort, setOpenSort] = useStoredState<OpenSort>("oraqlo.ledger.openSort", "se-sabra");
   const [accuracy, setAccuracy] = useStoredState<Accuracy>("oraqlo.ledger.accuracy", "todas");
@@ -150,7 +158,7 @@ export default function Ledger() {
   const allResolved = data?.resolved ?? [];
   const total = allOpen.length + allResolved.length;
   const now = Date.now();
-  const kindOk = (f: Forecast) => kind === "todas" || forecastKind(f.source, f.question) === kind;
+  const kindOk = (f: Forecast) => kindMatches(kind, forecastKind(f.source, f.question));
 
   const open = useMemo(() => {
     const filtered = allOpen.filter((f) => {
@@ -181,20 +189,22 @@ export default function Ledger() {
       const k = forecastKind(f.source, f.question);
       counts.set(k, (counts.get(k) ?? 0) + 1);
     }
-    const opts: Option<KindFilter>[] = [{ value: "todas", label: "Todas" }];
+    const mine = [...counts].filter(([k]) => k !== "practica").reduce((n, [, c]) => n + c, 0);
+    const opts: Option<KindFilter>[] = [{ value: "tuyas", label: "Tuyas", count: mine }];
     for (const k of ["prevision", "objetivo", "panel", "practica"] as const)
       if (counts.get(k)) opts.push({ value: k, label: FORECAST_KIND_LABEL[k], count: counts.get(k) });
+    opts.push({ value: "todas", label: "Todas" });
     return opts;
   }, [data]);
 
   const clearOpen = () => {
     setQuery("");
-    setKind("todas");
+    setKind("tuyas");
     setState("todas");
   };
   const clearResolved = () => {
     setQuery("");
-    setKind("todas");
+    setKind("tuyas");
     setAccuracy("todas");
   };
 
@@ -205,6 +215,11 @@ export default function Ledger() {
         <div className="space-y-2">
           <SearchInput value={query} onChange={setQuery} label="Buscar predicciones" />
           {kindOptions.length > 2 && <ChipGroup label="Tipo" options={kindOptions} value={kind} onChange={setKind} />}
+          {kind === "practica" && (
+            <p className="text-xs text-muted">
+              Las de Práctica se resuelven solas cuando cierra el mercado: no tienes que marcarlas.
+            </p>
+          )}
         </div>
       )}
       <Card>

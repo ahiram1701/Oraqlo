@@ -105,6 +105,34 @@ describe("Predicciones: filtrar y quitar filtros", () => {
     // Ninguna resuelta es de objetivos: se ofrece quitar los filtros.
     fireEvent.click(screen.getByRole("button", { name: "Quitar filtros" }));
     expect(screen.getByText("¿rapida?")).toBeInTheDocument();
-    expect(JSON.parse(localStorage.getItem("oraqlo.ledger.kind")!)).toBe("todas");
+    expect(JSON.parse(localStorage.getItem("oraqlo.ledger.kind.v2")!)).toBe("tuyas");
+  });
+
+  it("por defecto enseña solo las tuyas: la Práctica se resuelve sola", async () => {
+    localStorage.clear();
+    const data = {
+      open: [forecast("mia", "llm:m:prevision", 1, 30), forecast("mercado", "polymarket:mercado", 1, 30)],
+      resolved: [],
+      overdue: 0,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json" } })),
+    );
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <FeedbackProvider>
+            <Ledger />
+          </FeedbackProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    const tipo = await screen.findByRole("radiogroup", { name: "Tipo" });
+    expect(within(tipo).getByRole("radio", { name: /Tuyas/ })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText("¿mia?")).toBeInTheDocument();
+    expect(screen.queryByText(/mercado/)).not.toBeInTheDocument();
+    fireEvent.click(within(tipo).getByRole("radio", { name: /Práctica/ }));
+    expect(screen.getByText(/se resuelven solas/)).toBeInTheDocument();
   });
 });

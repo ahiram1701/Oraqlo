@@ -11,6 +11,7 @@ import { Button, Card, ErrorNote, Notice, Toggle, cx, inputClass, useFeedback } 
 import { ask, isQuestions, type AskMode } from "../lib/api";
 import { useSetup } from "../lib/setup";
 import { useJob, useStoredJob } from "../lib/useJob";
+import { RecentRuns } from "../components/RecentRuns";
 
 const MODES: { id: AskMode; title: string; hint: string }[] = [
   { id: "forecast", title: "Previsión", hint: "Si algo pasará, cuándo o cuánto, con su probabilidad. Tarda segundos." },
@@ -289,6 +290,13 @@ export default function Ask() {
           <ErrorNote error={submit.error} />
         </form>
       </Card>
+      {!jobId && <RecentRuns />}
+      <p className="text-center text-xs text-muted">
+        ¿Quieres definir tú las opciones y sus cifras?{" "}
+        <Link to="/caso" className="underline">
+          Editor de casos (avanzado)
+        </Link>
+      </p>
     </div>
   );
 }

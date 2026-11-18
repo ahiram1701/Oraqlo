@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { lazy, Suspense, useEffect, useState } from "react";
+import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Icon, type IconName } from "./components/icons";
 import UpdateBanner from "./components/UpdateBanner";
 import { cx, PageSkeleton } from "./components/ui";
@@ -14,8 +14,7 @@ const GoalsList = lazy(() => import("./pages/Goals").then((m) => ({ default: m.G
 const HistoryList = lazy(() => import("./pages/History").then((m) => ({ default: m.HistoryList })));
 const GoalDetail = lazy(() => import("./pages/Goals").then((m) => ({ default: m.GoalDetail })));
 const RunDetail = lazy(() => import("./pages/History").then((m) => ({ default: m.RunDetail })));
-const Practice = lazy(() => import("./pages/Practice"));
-const Calibration = lazy(() => import("./pages/Calibration"));
+const Precision = lazy(() => import("./pages/Precision"));
 const CaseEditor = lazy(() => import("./pages/CaseEditor"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Welcome = lazy(() => import("./pages/Welcome"));
@@ -24,39 +23,30 @@ interface NavItem {
   to: string;
   label: string;
   icon: IconName;
-  end?: boolean;
+  /** Rutas que encienden esta pestaña (además de `to`). */
+  match: RegExp;
 }
 
-/** Todas las secciones. En el celular, el primer grupo va en la barra y el segundo en «Más». */
-export const NAV: { group: string; items: NavItem[] }[] = [
-  {
-    group: "Usar",
-    items: [
-      { to: "/", label: "Preguntar", icon: "ask", end: true },
-      { to: "/objetivos", label: "Objetivos", icon: "goals" },
-      { to: "/predicciones", label: "Predicciones", icon: "ledger" },
-      { to: "/historial", label: "Historial", icon: "history" },
-    ],
-  },
-  {
-    group: "Precisión y ajustes",
-    items: [
-      { to: "/practica", label: "Práctica", icon: "practice" },
-      { to: "/calibracion", label: "Calibración", icon: "calibration" },
-      { to: "/caso", label: "Caso", icon: "case" },
-      { to: "/ajustes", label: "Ajustes", icon: "settings" },
-    ],
-  },
+/** Las cinco secciones: las mismas en el celular (barra inferior) y en el escritorio. */
+export const NAV: NavItem[] = [
+  { to: "/", label: "Preguntar", icon: "ask", match: /^\/($|historial)/ },
+  { to: "/objetivos", label: "Objetivos", icon: "goals", match: /^\/objetivos/ },
+  { to: "/predicciones", label: "Predicciones", icon: "ledger", match: /^\/predicciones/ },
+  { to: "/practica", label: "Precisión", icon: "precision", match: /^\/(practica|calibracion)/ },
+  { to: "/ajustes", label: "Ajustes", icon: "settings", match: /^\/(ajustes|caso)/ },
 ];
+
+export function activeNav(pathname: string): string | null {
+  return NAV.find((item) => item.match.test(pathname))?.to ?? null;
+}
 
 const TITLES: [RegExp, string][] = [
   [/^\/$/, "Preguntar"],
   [/^\/objetivos\/.+/, "Objetivo"],
   [/^\/objetivos/, "Objetivos"],
   [/^\/predicciones/, "Predicciones"],
-  [/^\/practica/, "Práctica"],
-  [/^\/caso/, "Caso"],
-  [/^\/calibracion/, "Calibración"],
+  [/^\/(practica|calibracion)/, "Precisión"],
+  [/^\/caso/, "Editor de casos"],
   [/^\/historial\/.+/, "Resultado"],
   [/^\/historial/, "Historial"],
   [/^\/ajustes/, "Ajustes"],
@@ -67,6 +57,8 @@ const TITLES: [RegExp, string][] = [
 const PARENT: [RegExp, string][] = [
   [/^\/objetivos\/.+/, "/objetivos"],
   [/^\/historial\/.+/, "/historial"],
+  [/^\/historial$/, "/"],
+  [/^\/caso/, "/"],
 ];
 
 /** Lo que espera al usuario en cada sección: hitos vencidos y predicciones por resolver. */
@@ -93,148 +85,116 @@ function navLabel(item: NavItem, badges: Record<string, number>) {
   return n > 0 ? `${item.label} (${n} ${BADGE_WORDS[item.to]})` : item.label;
 }
 
+/** «9+» a partir de 10: el número exacto va en la etiqueta accesible. */
+export function badgeText(n: number): string {
+  return n > 9 ? "9+" : String(n);
+}
+
 function SideNav() {
   const badges = useNavBadges();
+  const location = useLocation();
+  const current = activeNav(location.pathname);
   return (
     <nav className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col gap-1 border-r border-line p-4 md:flex" aria-label="Secciones">
       <div className="mb-6 flex items-center gap-2.5 px-2">
         <img src="/icons/icon-192.png" alt="" className="size-8 rounded-xl" />
         <span className="brand-text text-xl font-semibold tracking-tight">Oraqlo</span>
       </div>
-      {NAV.map((group) => (
-        <div key={group.group} className="mb-3">
-          <p className="mb-1 px-3 text-xs font-semibold tracking-wider text-muted uppercase">{group.group}</p>
-          {group.items.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              aria-label={navLabel(item, badges)}
-              className={({ isActive }) =>
-                cx(
-                  "flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition",
-                  isActive ? "bg-accent/15 font-medium text-accent" : "text-muted hover:bg-surface-2 hover:text-fg",
-                )
-              }
-            >
-              <Icon name={item.icon} />
-              {item.label}
-              {(badges[item.to] ?? 0) > 0 && (
-                <span aria-hidden className="ml-auto rounded-full bg-warn px-1.5 text-xs font-semibold text-black">
-                  {badges[item.to]}
-                </span>
-              )}
-            </NavLink>
-          ))}
-        </div>
-      ))}
+      {NAV.map((item) => {
+        const active = current === item.to;
+        return (
+          <Link
+            key={item.to}
+            to={item.to}
+            aria-label={navLabel(item, badges)}
+            aria-current={active ? "page" : undefined}
+            className={cx(
+              "flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm transition",
+              active ? "bg-accent/15 font-medium text-accent" : "text-muted hover:bg-surface-2 hover:text-fg",
+            )}
+          >
+            <Icon name={item.icon} />
+            {item.label}
+            {(badges[item.to] ?? 0) > 0 && (
+              <span aria-hidden className="ml-auto rounded-full bg-warn px-1.5 text-xs font-semibold text-black">
+                {badgeText(badges[item.to])}
+              </span>
+            )}
+          </Link>
+        );
+      })}
+      <Link to="/caso" className="mt-auto px-3 py-2 text-xs text-muted hover:text-fg">
+        Editor de casos (avanzado)
+      </Link>
     </nav>
   );
 }
 
-/** Barra inferior: lo de uso diario a un toque; el resto, en «Más». */
+/** ¿Está abierto el teclado del celular? (la ventana visible se encoge mucho) */
+function useKeyboardOpen(): boolean {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const onResize = () => setOpen(window.innerHeight - vv.height > 150);
+    vv.addEventListener("resize", onResize);
+    return () => vv.removeEventListener("resize", onResize);
+  }, []);
+  return open;
+}
+
+/** Barra inferior del celular: las cinco secciones a un toque, sin nada escondido. */
 function BottomNav() {
   const badges = useNavBadges();
   const location = useLocation();
-  const [primary, secondary] = [NAV[0].items, NAV[1].items];
-  const [open, setOpen] = useState(false);
-  const sheet = useRef<HTMLDivElement>(null);
-  const moreButton = useRef<HTMLButtonElement>(null);
-  const inMore = secondary.some((item) => location.pathname.startsWith(item.to));
-
-  useEffect(() => setOpen(false), [location.pathname]); // al navegar, se cierra
-
-  useEffect(() => {
-    if (!open) return;
-    sheet.current?.querySelector<HTMLElement>("a")?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setOpen(false);
-        moreButton.current?.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
-
-  const tab = (active: boolean) =>
-    cx("relative flex min-w-0 flex-1 flex-col items-center gap-0.5 py-2 text-[11px]", active ? "text-accent" : "text-muted");
-  const pill = (active: boolean) => cx("rounded-full px-3 py-0.5 transition", active && "bg-accent/15");
+  const current = activeNav(location.pathname);
+  const keyboard = useKeyboardOpen();
+  if (keyboard) return null; // no tapa lo que escribes
 
   return (
-    <>
-      {open && (
-        <div className="fixed inset-0 z-20 bg-black/40 md:hidden" aria-hidden onClick={() => setOpen(false)} />
-      )}
-      <nav
-        aria-label="Secciones"
-        className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface/95 backdrop-blur md:hidden"
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-      >
-        {open && (
-          <div
-            ref={sheet}
-            id="mas-secciones"
-            className="grid grid-cols-2 gap-2 border-b border-line p-3"
-            aria-label="Más secciones"
-            role="group"
-          >
-            {secondary.map((item) => (
-              <NavLink
-                key={item.to}
+    <nav
+      aria-label="Secciones"
+      className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface/95 shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.5)] backdrop-blur-md md:hidden"
+      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+    >
+      <ul className="mx-auto flex h-16 max-w-lg items-stretch px-1">
+        {NAV.map((item) => {
+          const active = current === item.to;
+          const n = badges[item.to] ?? 0;
+          return (
+            <li key={item.to} className="flex min-w-0 flex-1">
+              <Link
                 to={item.to}
-                className={({ isActive }) =>
-                  cx(
-                    "flex min-h-12 items-center gap-3 rounded-xl px-3 text-sm",
-                    isActive ? "bg-accent/15 font-medium text-accent" : "bg-surface-2 text-fg",
-                  )
-                }
+                aria-label={navLabel(item, badges)}
+                aria-current={active ? "page" : undefined}
+                className={cx(
+                  "flex min-w-0 flex-1 flex-col items-center justify-center gap-1 text-xs transition-colors active:scale-95",
+                  active ? "font-medium text-accent" : "text-muted",
+                )}
               >
-                <Icon name={item.icon} />
-                {item.label}
-              </NavLink>
-            ))}
-          </div>
-        )}
-        <div className="flex px-0.5">
-          {primary.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              aria-label={navLabel(item, badges)}
-              className={({ isActive }) => tab(isActive && !open)}
-            >
-              {({ isActive }) => (
-                <>
-                  <span className={pill(isActive && !open)}>
-                    <Icon name={item.icon} />
-                  </span>
-                  <span className="max-w-full truncate">{item.label}</span>
-                  {(badges[item.to] ?? 0) > 0 && (
-                    <span aria-hidden className="absolute top-1.5 right-[calc(50%-1.25rem)] size-2 rounded-full bg-warn" />
+                <span
+                  className={cx(
+                    "relative flex h-8 w-14 items-center justify-center rounded-full transition-colors",
+                    active && "bg-accent/15",
                   )}
-                </>
-              )}
-            </NavLink>
-          ))}
-          <button
-            ref={moreButton}
-            type="button"
-            className={tab(inMore || open)}
-            aria-expanded={open}
-            aria-controls="mas-secciones"
-            aria-current={inMore ? "page" : undefined}
-            onClick={() => setOpen(!open)}
-          >
-            <span className={pill(inMore || open)}>
-              <Icon name={open ? "x" : "more"} />
-            </span>
-            Más
-          </button>
-        </div>
-      </nav>
-    </>
+                >
+                  <Icon name={item.icon} className="size-6" />
+                  {n > 0 && (
+                    <span
+                      aria-hidden
+                      className="absolute -top-1 right-1.5 min-w-4.5 rounded-full bg-warn px-1 text-center text-[10px] leading-4.5 font-semibold text-black"
+                    >
+                      {badgeText(n)}
+                    </span>
+                  )}
+                </span>
+                <span className="max-w-full truncate text-[11.5px] tracking-tight">{item.label}</span>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
   );
 }
 
@@ -298,9 +258,9 @@ export default function App() {
             <Route path="/objetivos/:id" element={<GoalDetail />} />
             <Route path="/predicciones" element={<Ledger />} />
             <Route path="/ledger" element={<Navigate to="/predicciones" replace />} />
-            <Route path="/practica" element={<Practice />} />
+            <Route path="/practica" element={<Precision tab="practica" />} />
             <Route path="/caso" element={<CaseEditor />} />
-            <Route path="/calibracion" element={<Calibration />} />
+            <Route path="/calibracion" element={<Precision tab="calibracion" />} />
             <Route path="/historial" element={<HistoryList />} />
             <Route path="/historial/:id" element={<RunDetail />} />
             <Route path="/ajustes" element={<Settings />} />
