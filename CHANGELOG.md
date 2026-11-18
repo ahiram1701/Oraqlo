@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/ahiram1701/Oraqlo/compare/v0.14.0...v0.15.0) (2026-11-18)
+
+
+### Novedades
+
+* Oraqlo predice con mercados, vigila solo y dice qué cambiaría su consejo ([d6c7d37](https://github.com/ahiram1701/Oraqlo/commit/d6c7d37db4a6fb37a73633f162e5450f67a61068))
+
 ## [0.14.0](https://github.com/ahiram1701/Oraqlo/compare/v0.13.1...v0.14.0) (2026-11-18)
 
 
