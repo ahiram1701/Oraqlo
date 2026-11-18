@@ -189,3 +189,14 @@ def test_analisis_completo_incluye_puntos_de_ruptura(env):  # noqa: F811
     assert result["analysis"]["best"] in ("a", "b")
     assert "voi" in result["analysis"]
     assert "Qué haría cambiar la recomendación" in result["markdown"]
+
+
+def test_probabilidades_negativas_no_valen():
+    broken = json.loads(json.dumps(RIVAL_CASE))
+    broken["rival"]["reactions"]["bajar"]["iguala"]["outcomes"] = {"gano": 1.2, "pierdo": -0.2}
+    with pytest.raises(CaseError, match="entre 0 y 1"):
+        parse_case(broken)
+    plain = json.loads(json.dumps(TOY))
+    plain["actions"]["a"]["outcomes"] = {"bien": 1.3, "mal": -0.3}
+    with pytest.raises(CaseError, match="entre 0 y 1"):
+        parse_case(plain)

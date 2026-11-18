@@ -136,6 +136,8 @@ def parse_case(data: dict) -> CaseSpec:
                 f'La acción "{action_id}" necesita "outcomes" (resultado → probabilidad).'
             )
         probs = {str(k): float(v) for k, v in action_outcomes.items()}
+        if any(not 0.0 <= p <= 1.0 for p in probs.values()):
+            raise CaseError(f'Las probabilidades de "{action_id}" deben estar entre 0 y 1.')
         total = sum(probs.values())
         if not 0.99 <= total <= 1.01:
             raise CaseError(
@@ -215,6 +217,8 @@ def _parse_rival(raw, action_ids: list[str], utilities: dict[str, float]) -> Riv
                 probs = {str(k): float(v) for k, v in (entry.get("outcomes") or {}).items()}
             except (KeyError, TypeError, ValueError) as e:
                 raise CaseError(f"Valores inválidos en {where}: {e}") from e
+            if any(not 0.0 <= p <= 1.0 for p in probs.values()):
+                raise CaseError(f"Las probabilidades de {where} deben estar entre 0 y 1.")
             total = sum(probs.values())
             if not probs or not 0.99 <= total <= 1.01:
                 raise CaseError(f"Las probabilidades de {where} deben sumar 1.0.")

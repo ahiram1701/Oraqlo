@@ -1108,16 +1108,32 @@ class OraqloService:
         return numeric.label_for(spec[1], value)
 
     def resolve(self, forecast_id: str, outcome: str) -> list[dict]:
+        from oraqlo.memory.calibration import canonical_outcome
+
         before = {r.forecast.id for r in self.store.ledger.resolved_forecasts}
-        outcome = self._outcome_for(forecast_id, outcome)
-        chain, w = self._chain(forecast_id)
-        open_ids = {f.id for f in self.store.ledger.open_forecasts}
-        if forecast_id not in open_ids:
+        ledger = self.store.ledger
+        by_id = {f.id: f for f in ledger.open_forecasts}
+        if forecast_id not in by_id:
             raise KeyError(f"No hay una predicción abierta con id {forecast_id}")
+        raw = outcome
+        outcome = self._outcome_for(forecast_id, raw)
+        foreseen = canonical_outcome(by_id[forecast_id].distribution.outcomes, outcome)
+        foreseen_here = foreseen in by_id[forecast_id].distribution.outcomes
+        chain, w = self._chain(forecast_id)
         for fid in chain:
-            if fid in open_ids and fid != forecast_id:
-                resolve_group(self.store.ledger, fid, outcome)
-        resolve_group(self.store.ledger, forecast_id, outcome)
+            if fid not in by_id or fid == forecast_id:
+                continue
+            # Cada versión se resuelve con lo que salió traducido a SUS escenarios (sus
+            # intervalos, sus etiquetas). Si la versión vigente lo contemplaba y esta no
+            # (cambiaron los escenarios), no se puede puntuar con justicia: se descarta.
+            own = by_id[fid].distribution.outcomes
+            label = canonical_outcome(own, self._outcome_for(fid, raw))
+            if label in own or not foreseen_here:
+                resolve_group(ledger, fid, label)
+            else:
+                for mid in [fid, *self._members_of(fid, ledger.open_forecasts)]:
+                    ledger.discard(mid)
+        resolve_group(ledger, forecast_id, outcome)
         if w is not None:
             w.enabled = False
             self.watches.save(w)

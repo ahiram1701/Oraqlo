@@ -229,3 +229,29 @@ def test_utilidades():
     assert moved({"a": 0.5, "b": 0.5}, {"a": 0.8, "b": 0.2}) == pytest.approx(0.3)
     signals = signals_from_texts(["Sube el paro", "sube  el paro", "", "Baja la luz"])
     assert [s.text for s in signals] == ["Sube el paro", "Baja la luz"]
+
+
+def test_cada_version_se_resuelve_con_sus_propios_escenarios(vigia):
+    """Si la versión nueva cambió los escenarios, la vieja no se puntúa con una etiqueta
+    que nunca contempló: se descarta. Lo imprevisto para todas cuenta para todas."""
+    _, service, state = vigia
+    first = service.ask_forecast("¿Sube?", 60, research=False)["forecast"]["id"]
+    _make_due(service, first)
+    state["outcomes"] = {"sube mucho": 0.2, "sube poco": 0.3, "baja": 0.5}
+    service.watch_run()
+    latest = service.watches.get(first).latest
+    resolved = service.resolve(latest, "sube mucho")
+    ids = {r["id"] for r in resolved}
+    assert latest in ids and first not in ids
+    assert all(f.id != first for f in service.store.ledger.open_forecasts)
+
+
+def test_lo_imprevisto_puntua_en_todas_las_versiones(vigia):
+    _, service, state = vigia
+    first = service.ask_forecast("¿Sube?", 60, research=False)["forecast"]["id"]
+    _make_due(service, first)
+    state["outcomes"] = {"sube mucho": 0.2, "sube poco": 0.3, "baja": 0.5}
+    service.watch_run()
+    latest = service.watches.get(first).latest
+    ids = {r["id"] for r in service.resolve(latest, "se suspendió la bolsa")}
+    assert {first, latest} <= ids
