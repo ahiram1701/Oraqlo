@@ -1,16 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { DuelsCard, decidedNote, duelHeadline } from "../components/Duels";
+import { HowToRead } from "../components/HowToRead";
 import { JobTimeline } from "../components/JobView";
 import { ChipGroup, FilteredEmpty, countLabel } from "../components/listControls";
-import { Button, Card, ErrorNote, Notice, SectionTitle, StatusBadge, Toggle, cx, inputClass } from "../components/ui";
+import { Button, Card, ErrorNote, Notice, SectionTitle, Skeleton, StatusBadge, Toggle, cx, inputClass } from "../components/ui";
 import { api, fmtDate, type PracticeState } from "../lib/api";
+import { fmtBrier, fmtSkill, skillWords } from "../lib/score";
 import { useJob, useStoredJob } from "../lib/useJob";
 import { useStoredState } from "../lib/useStoredState";
 
 export default function Practice() {
   const qc = useQueryClient();
-  const { data: s, error } = useQuery({
+  const { data: s, error, isLoading, refetch } = useQuery({
     queryKey: ["practice"],
     queryFn: () => api.get<PracticeState>("/practice"),
     refetchInterval: 30_000,
@@ -28,27 +30,39 @@ export default function Practice() {
     onSuccess: (r) => setJobId(r.job_id),
   });
 
+  // Solo los duelos válidos: la misma población que Calibración con el tipo «Práctica».
   const summary = s?.duels?.summary;
-  const o = summary?.oraqlo_brier ?? s?.reliability_oraqlo;
-  const m = summary?.market_brier ?? s?.reliability_market;
-  const chance = summary?.chance_brier;
+  const o = summary?.oraqlo_skill ?? null;
+  const m = summary?.market_skill ?? null;
+  const intervals = [30, 60, 120, 240, 720, 1440];
+  if (s && !intervals.includes(s.interval_min)) intervals.push(s.interval_min);
+  intervals.sort((a, b) => a - b);
 
   return (
     <div className="space-y-4">
-      <ErrorNote error={error} />
+      <ErrorNote error={error} onRetry={() => void refetch()} />
       <Card>
         <SectionTitle>Oraqlo contra el mercado</SectionTitle>
-        <p className="mb-1 text-base font-medium">{duelHeadline(summary)}</p>
-        {decidedNote(summary) && <p className="mb-3 text-xs text-muted">{decidedNote(summary)}</p>}
-        <div className="grid grid-cols-2 gap-3">
-          <Stat label="Oraqlo" value={o} better={o != null && m != null && o < m} />
-          <Stat label="Polymarket" value={m} better={o != null && m != null && m <= o} />
-        </div>
-        <p className="mt-3 text-xs text-muted">
-          Error medio (Brier) en las preguntas ya resueltas: 0 es perfecto y menos es mejor.
-          {chance != null && ` Repartir la probabilidad por igual sacaría ${chance.toFixed(3)}.`}
-          {o != null && chance != null && o >= chance - 0.01 && " Oraqlo aún no supera al azar en estas preguntas."}
-        </p>
+        {isLoading && <Skeleton className="h-32" />}
+        {s && (
+          <>
+            <p className="mb-1 text-base font-medium">{duelHeadline(summary)}</p>
+            {decidedNote(summary) && <p className="mb-3 text-xs text-muted">{decidedNote(summary)}</p>}
+            <div className="grid grid-cols-2 gap-3">
+              <Stat label="Oraqlo" skill={o} brier={summary?.oraqlo_brier} better={o != null && m != null && o > m + 0.005} />
+              <Stat label="Mercado (Polymarket)" skill={m} brier={summary?.market_brier} better={o != null && m != null && m > o + 0.005} />
+            </div>
+            {o != null && o < 0.05 && <p className="mt-3 text-xs text-muted">Oraqlo aún no supera al azar en estas preguntas.</p>}
+            <p className="mt-3 text-xs text-muted">
+              Es lo mismo que verás en{" "}
+              <Link to="/calibracion" className="text-accent underline">
+                Calibración
+              </Link>{" "}
+              con el tipo «Práctica».
+            </p>
+            <HowToRead />
+          </>
+        )}
         {s?.research === false && (
           <Notice tone="warn" className="mt-3">
             Predice sin investigar en internet, así que va casi a ciegas en preguntas como partidos poco conocidos.{" "}
@@ -69,7 +83,7 @@ export default function Practice() {
         <SectionTitle>Práctica autónoma</SectionTitle>
         <p className="mb-3 text-sm text-muted">
           Solo lectura: cero cuentas, cero apuestas. Oraqlo predice mercados que cierran pronto sin ver el precio y
-          compara su Brier con el de la multitud. Corre en el servidor aunque cierres la app.
+          compara su acierto con el del mercado. Corre en el servidor aunque cierres la app.
         </p>
         {s && (
           <div className="space-y-3">
@@ -81,7 +95,7 @@ export default function Practice() {
                 value={s.interval_min}
                 onChange={(e) => save.mutate({ interval_min: Number(e.target.value) })}
               >
-                {[30, 60, 120, 240, 720, 1440].map((n) => (
+                {intervals.map((n) => (
                   <option key={n} value={n}>
                     {n < 60 ? `${n} min` : `${n / 60} h`}
                   </option>
@@ -143,13 +157,23 @@ export default function Practice() {
   );
 }
 
-function Stat({ label, value, better }: { label: string; value: number | null | undefined; better: boolean }) {
+function Stat({
+  label,
+  skill,
+  brier,
+  better,
+}: {
+  label: string;
+  skill: number | null;
+  brier: number | null | undefined;
+  better: boolean;
+}) {
   return (
     <div className={cx("rounded-xl border p-3", better ? "border-good/40 bg-good/5" : "border-line bg-surface-2")}>
       <p className="text-xs text-muted">{label}</p>
-      <p className={cx("mt-1 text-3xl font-semibold tracking-tight tabular-nums", better && "text-good")}>
-        {value == null ? "—" : value.toFixed(3)}
-      </p>
+      <p className={cx("mt-1 text-3xl font-semibold tracking-tight tabular-nums", better && "text-good")}>{fmtSkill(skill)}</p>
+      <p className="text-xs text-muted">{skill == null ? "sin duelos resueltos" : skillWords(skill)}</p>
+      {brier != null && <p className="text-xs text-muted">Error (Brier) {fmtBrier(brier)}</p>}
       {better && <p className="text-xs text-good">va ganando</p>}
     </div>
   );

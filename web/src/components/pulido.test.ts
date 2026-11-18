@@ -1,4 +1,5 @@
-import { forecastKind } from "../lib/api";
+import { forecastKind, parseDate } from "../lib/api";
+import { fmtSkill } from "../lib/score";
 import { isoInDays, localISODate } from "./HorizonPicker";
 
 describe("pulido de lo nuevo", () => {
@@ -7,6 +8,15 @@ describe("pulido de lo nuevo", () => {
     expect(forecastKind("llm:deepseek:cloud", "[polymarket:1] ¿Ganará?")).toBe("practica");
     expect(forecastKind("polymarket:mercado")).toBe("practica");
     expect(forecastKind("llm:m:panel")).toBe("panel");
+  });
+
+  it("las fechas de SQLite (UTC sin zona) se leen como UTC", () => {
+    expect(parseDate("2026-11-18 02:51:07").toISOString()).toBe("2026-11-18T02:51:07.000Z");
+    expect(parseDate("2026-11-18T02:51:07+00:00").toISOString()).toBe("2026-11-18T02:51:07.000Z");
+  });
+
+  it("la habilidad frente al azar con signo", () => {
+    expect([0.181, -0.2, 0.001, null].map(fmtSkill)).toEqual(["+18%", "−20%", "0%", "—"]);
   });
 
   it("las fechas salen en el calendario local, no en UTC", () => {

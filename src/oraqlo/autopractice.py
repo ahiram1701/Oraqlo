@@ -23,11 +23,15 @@ from oraqlo.forecaster.base import Distribution, Forecast
 from oraqlo.llm.base import LLMProvider
 from oraqlo.llm.jsonchat import JsonChatError, chat_json
 from oraqlo.memory.calibration import CalibrationLedger, ResolvedForecast
-from oraqlo.memory.recalibration import Recalibration, for_model
+from oraqlo.memory.recalibration import (
+    DECIDED,
+    MARKET_SOURCE,
+    Recalibration,
+    for_model,
+)
 from oraqlo.polymarket import Market, PolymarketClient, PolymarketError
 from oraqlo.research import Researcher, ResearchError
 
-MARKET_SOURCE = "polymarket:mercado"
 _TAG_RE = re.compile(r"^\[polymarket:(\d+)\]")
 
 _FORECAST_PROMPT = (
@@ -365,9 +369,6 @@ if __name__ == "__main__":
 # ── duelos: Oraqlo frente al mercado, pregunta a pregunta ─────────────────
 
 TIE = 0.005  # diferencias de Brier menores son un empate
-# Si el mercado ya daba ≥98,5% al predecir, el resultado ya se sabía (p. ej. un
-# partido ya jugado y aún abierto en Polymarket): ese duelo no mide nada.
-DECIDED = 0.985
 
 
 def strip_tag(question: str) -> str:
@@ -383,6 +384,10 @@ def _focus_label(oraqlo: Forecast, market: Forecast, actual: str | None) -> str:
         if label.strip().lower() in ("yes", "sí", "si"):
             return label
     return max(labels, key=lambda k: market.distribution.outcomes.get(k, 0.0)) if labels else ""
+
+
+def _skill(brier: float | None, chance: float | None) -> float | None:
+    return 1 - brier / chance if brier is not None and chance else None
 
 
 def duels(ledger: CalibrationLedger) -> dict:
@@ -453,5 +458,8 @@ def duels(ledger: CalibrationLedger) -> dict:
             "oraqlo_brier": mean("oraqlo_brier"),
             "market_brier": mean("market_brier"),
             "chance_brier": mean("chance_brier"),
+            # «% mejor que el azar», la misma escala que Calibración.
+            "oraqlo_skill": _skill(mean("oraqlo_brier"), mean("chance_brier")),
+            "market_skill": _skill(mean("market_brier"), mean("chance_brier")),
         },
     }

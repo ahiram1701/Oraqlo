@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from oraqlo.forecaster.aggregate import power
@@ -47,6 +48,44 @@ def model_of(source: str) -> str | None:
 
 
 MARKET_TAG_PREFIX = "[polymarket:"  # ver autopractice.market_tag
+MARKET_SOURCE = "polymarket:mercado"  # la previsión del mercado, el rival de la Práctica
+# Si el mercado ya daba ≥98,5% al predecir, el resultado ya se sabía (p. ej. un
+# partido ya jugado y aún abierto en Polymarket): esa pregunta no mide nada.
+DECIDED = 0.985
+_MARKET_ID_RE = re.compile(r"^\[polymarket:(\d+)\]")
+
+
+def market_id_of(question: str) -> str | None:
+    """Id del mercado de Polymarket de una pregunta de la Práctica."""
+    match = _MARKET_ID_RE.match(question)
+    return match.group(1) if match else None
+
+
+def is_market(source: str) -> bool:
+    """La previsión es del mercado (el rival), no de Oraqlo."""
+    return source.startswith("polymarket:")
+
+
+def decided_markets(forecasts: Iterable[Forecast]) -> set[str]:
+    """Mercados cuyo resultado ya se sabía cuando Oraqlo predijo."""
+    return {
+        mid
+        for f in forecasts
+        if is_market(f.source)
+        and (mid := market_id_of(f.question))
+        and max(f.distribution.outcomes.values(), default=0.0) >= DECIDED
+    }
+
+
+def counts_for_score(f: Forecast, decided: set[str]) -> bool:
+    """Entra en el boletín de Oraqlo: es suya y no era una pregunta ya sabida.
+
+    El mismo criterio que los duelos de la Práctica, para que las dos pantallas
+    cuenten las mismas preguntas."""
+    if is_market(f.source):
+        return False
+    mid = market_id_of(f.question)
+    return not (mid and mid in decided)
 
 
 def is_practice(source: str, question: str = "") -> bool:
@@ -54,7 +93,7 @@ def is_practice(source: str, question: str = "") -> bool:
 
     Se reconoce por la etiqueta del mercado en la pregunta: la fuente sola no
     basta, porque las previsiones de antes de la 0.7 eran todas `llm:<modelo>`."""
-    return source.startswith("polymarket:") or question.startswith(MARKET_TAG_PREFIX)
+    return is_market(source) or question.startswith(MARKET_TAG_PREFIX)
 
 
 def user_resolvable(source: str, question: str = "") -> bool:

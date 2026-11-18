@@ -61,7 +61,7 @@ describe("Calibración en palabras", () => {
       </QueryClientProvider>,
     );
     expect(await screen.findByText("+40%")).toBeInTheDocument();
-    expect(screen.getByText("el azar sacaría 0.500")).toBeInTheDocument();
+    expect(screen.getByText("el azar sacaría 0.50")).toBeInTheDocument();
     expect(screen.getByText("3 pendientes de resolver")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Por tipo" })).toBeInTheDocument();
     expect(screen.getByText("10% peor que el azar")).toBeInTheDocument();

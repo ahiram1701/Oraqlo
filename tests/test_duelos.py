@@ -72,3 +72,28 @@ def test_la_api_de_practica_incluye_los_duelos(env):
     body = client.get("/api/practice").json()
     assert body["duels"]["summary"]["won"] == 1
     assert body["duels"]["items"][0]["question"] == "¿Pregunta 1?"
+
+
+def test_calibracion_y_practica_cuentan_lo_mismo(env):
+    """El mercado no entra en el boletín de Oraqlo y las preguntas que ya se sabían
+    no cuentan en ninguna de las dos pantallas: las cifras tienen que cuadrar."""
+    client, service, *_ = env
+    ledger = service.store.ledger
+    _pair(ledger, "1", {"Yes": 0.9, "No": 0.1}, {"Yes": 0.6, "No": 0.4}, winner="Yes")
+    _pair(ledger, "2", {"Yes": 0.2, "No": 0.8}, {"Yes": 0.7, "No": 0.3}, winner="Yes")
+    _pair(
+        ledger, "3", {"Yes": 0.5, "No": 0.5}, {"Yes": 0.99, "No": 0.01}, winner="Yes"
+    )  # ya se sabía
+
+    duel = client.get("/api/practice").json()["duels"]["summary"]
+    cal = client.get("/api/calibration?kind=practica").json()
+    assert duel["resolved"] == cal["n"] == 2
+    assert cal["summary"]["skill"] == pytest.approx(duel["oraqlo_skill"])
+    assert duel["market_skill"] == pytest.approx(1 - duel["market_brier"] / duel["chance_brier"])
+    # El mercado sale aparte, solo como referencia.
+    ref = [s for s in cal["sources"] if s.get("reference")]
+    assert [(s["source"], s["n"]) for s in ref] == [(MARKET_SOURCE, 2)]
+    assert all(
+        not s.get("reference")
+        for s in client.get("/api/calibration?kind=prevision").json()["sources"]
+    )

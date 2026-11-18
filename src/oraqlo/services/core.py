@@ -567,15 +567,26 @@ class OraqloService:
         """Cómo de bien acierta: resumen frente al azar, fiabilidad, tendencia,
         desgloses y peores fallos (ver memory.scorecard), con filtros."""
         ledger = self.store.ledger
-        everything = ledger.resolved_forecasts
+        # Solo las de Oraqlo: el mercado es el rival de la Práctica (sale aparte, como
+        # referencia) y las preguntas que ya se sabían no cuentan, igual que en los duelos.
+        everything, market = scorecard.split_market(
+            ledger.resolved_forecasts, ledger.open_forecasts
+        )
         items = scorecard.select(everything, kind=kind, model=model, days=days)
+        reference = (
+            scorecard.select(market, days=days) if kind in (None, "practica") and not model else []
+        )
+        decided = recalibration.decided_markets(
+            [*ledger.open_forecasts, *(r.forecast for r in ledger.resolved_forecasts)]
+        )
         open_n = sum(
             1
             for f in ledger.open_forecasts
-            if (not kind or scorecard.forecast_kind(f.source, f.question) == kind)
+            if recalibration.counts_for_score(f, decided)
+            and (not kind or scorecard.forecast_kind(f.source, f.question) == kind)
             and (not model or recalibration.model_of(f.source) == model)
         )
-        card = scorecard.scorecard(items, bins=bins)
+        card = scorecard.scorecard(items, bins=bins, reference=reference)
         card["summary"]["open"] = open_n
         return {
             "n": len(items),

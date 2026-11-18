@@ -96,6 +96,8 @@ def test_tendencia_desgloses_peores_y_filtros():
     worst = card["worst"][0]
     assert worst["id"] == "nov" and worst["predicted"] == "sí" and worst["actual"] == "no"
     assert worst["actual_p"] == pytest.approx(0.05)
+    # Los aciertos no salen entre los peores fallos, aunque su Brier no sea bajo.
+    assert [w["id"] for w in card["worst"]] == ["nov"]
 
     assert [r.forecast.id for r in select(items, kind="panel")] == ["nov"]
     assert [r.forecast.id for r in select(items, model="m")] == ["oct", "prac"]

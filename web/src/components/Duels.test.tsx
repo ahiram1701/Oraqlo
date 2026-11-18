@@ -32,7 +32,7 @@ beforeEach(() => localStorage.clear());
 describe("Duelos con el mercado", () => {
   it("resume, filtra y ordena", () => {
     expect(duelHeadline({ resolved: 10, open: 2, won: 3, lost: 6, tied: 1, oraqlo_brier: 0.4, market_brier: 0.1, chance_brier: 0.5 })).toBe(
-      "Oraqlo gana 3 de 10 duelos (1 empate).",
+      "De 10 duelos resueltos: Oraqlo gana 3 y el mercado 6; 1 empate.",
     );
     expect(duelHeadline(undefined)).toMatch(/ningún duelo/);
     expect(filterDuels(items, "perdidos").map((d) => d.market_id)).toEqual(["2"]);
