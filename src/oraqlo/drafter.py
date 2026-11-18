@@ -31,7 +31,16 @@ _SYSTEM_PROMPT = (
     "Las acciones son de quien pregunta, una persona: no supongas que tiene "
     "inversiones, empresa o patrimonio si la pregunta no lo dice. Si la pregunta es "
     "informativa (si algo pasará o cuándo), propón cosas sencillas y cotidianas que "
-    "esa persona podría hacer al respecto, descritas en lenguaje llano."
+    "esa persona podría hacer al respecto, descritas en lenguaje llano.\n"
+    "RIVAL (opcional): si hay alguien concreto que REACCIONARÁ a lo que haga quien pregunta "
+    "buscando lo suyo (la competencia, la otra parte de una negociación, un jefe, un "
+    "regulador), añade también:\n"
+    '"rival": {"description": "<quién>", "responses": {"<id-kebab>": {"description": '
+    '"<qué podría hacer>"}, ...}, "reactions": {"<id de TU acción>": {"<id de SU respuesta>": '
+    '{"their_utility": <-1 a 1, lo bueno que es para ÉL>, "outcomes": {"<resultado>": '
+    "<prob>, ...}}, ...}, ...}}\n"
+    "Entre 2 y 3 respuestas suyas; una reacción por cada par (tu acción, su respuesta); "
+    "los resultados usan las mismas utilidades. Si nadie reacciona, NO pongas rival."
 )
 
 
@@ -67,7 +76,7 @@ def draft_case(
         ChatMessage(role="user", content=user_prompt),
     ]
     last_error: Exception | None = None
-    for _ in range(max_retries + 1):
+    for attempt in range(max_retries + 1):
         response = provider.chat(
             messages=messages, model=model, temperature=temperature, json_mode=True
         )
@@ -78,6 +87,7 @@ def draft_case(
                 "horizon_days": horizon_days,
                 "actions": data.get("actions", {}),
                 "utilities": data.get("utilities", {}),
+                "rival": data.get("rival"),
                 # Riesgo por defecto conservador; el usuario lo ajusta en el formulario.
                 "risk": {
                     "risk_aversion": 0.3,
@@ -85,7 +95,14 @@ def draft_case(
                     "max_ruin_probability": 0.25,
                 },
             }
-            return parse_case(case)
+            try:
+                return parse_case(case)
+            except CaseError:
+                # Un rival mal descrito no tumba un caso por lo demás válido: se pide
+                # corregirlo y, en el último intento, se sigue sin rival.
+                if case.get("rival") is None or attempt < max_retries:
+                    raise
+                return parse_case({**case, "rival": None})
         except (CaseError, json.JSONDecodeError, TypeError, ValueError) as e:
             last_error = e
             messages.append(ChatMessage(role="assistant", content=response.content))

@@ -134,6 +134,20 @@ class PracticeIn(BaseModel):
     interval_min: float | None = Field(None, ge=5, le=24 * 60)
 
 
+class OptionsIn(BaseModel):
+    markets: bool | None = None
+    decompose: bool | None = None
+    reference: bool | None = None
+    watch: bool | None = None
+    watch_interval_hours: float | None = Field(None, ge=1, le=24 * 30)
+    watch_daily_budget: int | None = Field(None, ge=0, le=100)
+    watch_alert_points: float | None = Field(None, ge=1, le=100)
+
+
+class WatchIn(BaseModel):
+    enabled: bool
+
+
 # ── fábrica ──────────────────────────────────────────────────────────────
 
 
@@ -212,6 +226,11 @@ def create_app(
     started = time.time()
 
     def notify_job(job: dict) -> None:
+        if job.get("kind") == "watch":
+            # La vigilancia corre sola: solo avisa de lo que cambió de verdad.
+            for alert in (job.get("result") or {}).get("alerts") or []:
+                push.send(alert["title"], alert["body"], url=alert["url"], tag=alert["tag"])
+            return
         if job.get("kind") == "practice":
             # Corre sola cada hora: se cuentan los fallos seguidos y solo se avisa al 2.º.
             failures = 0
@@ -287,6 +306,21 @@ def create_app(
             runner.submit("practice", {})
 
     scheduler.add(PeriodicTask("practice", practice_interval, practice_enabled, submit_practice))
+
+    def submit_watch() -> None:
+        """Mira cada hora si alguna vigilancia toca; el intervalo de cada una y el
+        presupuesto diario los respeta `watch_due`."""
+        if runner.active("watch") == 0 and service.watch_due():
+            runner.submit("watch", {})
+
+    scheduler.add(
+        PeriodicTask(
+            "watch",
+            lambda: timedelta(hours=1),
+            lambda: bool(service.watches.roots()),
+            submit_watch,
+        )
+    )
 
     # ── auto-actualización ────────────────────────────────────────────────
     settings = service.store.settings
@@ -1075,6 +1109,33 @@ def create_app(
             service.delete_resolved(forecast_id)
         except KeyError as e:
             raise HTTPException(404, _message(e)) from e
+
+    @app.put("/api/ledger/{forecast_id}/watch")
+    def ledger_watch(forecast_id: str, body: WatchIn) -> dict:
+        try:
+            return service.set_watch(forecast_id, body.enabled)
+        except KeyError as e:
+            raise HTTPException(404, _message(e)) from e
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from e
+
+    @app.post("/api/watch/run", status_code=202)
+    def watch_run() -> dict:
+        if runner.active("watch"):
+            raise HTTPException(409, "Ya hay una revisión de vigilancia en curso.")
+        if not service.watch_due():
+            raise HTTPException(
+                409, "Ahora no toca revisar nada (o se acabó el presupuesto de hoy)."
+            )
+        return {"job_id": runner.submit("watch", {})}
+
+    @app.get("/api/options")
+    def options_get() -> dict:
+        return service.options()
+
+    @app.put("/api/options", dependencies=[Depends(require_local)])
+    def options_put(body: OptionsIn) -> dict:
+        return service.set_options(body.model_dump(exclude_none=True))
 
     @app.get("/api/calibration")
     def calibration(

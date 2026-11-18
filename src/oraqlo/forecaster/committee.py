@@ -120,16 +120,27 @@ def member_source(model: str) -> str:
     return f"llm:{model}:{MEMBER_KIND}"
 
 
+def _history_sources(model: str) -> set[str]:
+    """Filas del ledger que cuentan como historial de una voz. El mercado de Polymarket
+    ya tiene historial antes de ser voz: es el rival de la Práctica."""
+    from oraqlo.memory.recalibration import MARKET_SOURCE
+
+    sources = {member_source(model)}
+    if model == "mercado:polymarket":
+        sources.add(MARKET_SOURCE)
+    return sources
+
+
 def model_skill(ledger: CalibrationLedger, model: str, decided: set[str]) -> tuple[float, int]:
-    """(habilidad frente al azar, n) de las respuestas de `model` como miembro del comité,
-    sin las preguntas que ya se sabían."""
+    """(habilidad frente al azar, n) de las respuestas de `model` como miembro del comité
+    (o de una voz como el mercado), sin las preguntas que ya se sabían."""
     from oraqlo.memory.recalibration import market_id_of
 
-    source = member_source(model)
+    sources = _history_sources(model)
     rows = [
         r
         for r in ledger.resolved_forecasts
-        if r.forecast.source == source and market_id_of(r.forecast.question) not in decided
+        if r.forecast.source in sources and market_id_of(r.forecast.question) not in decided
     ]
     if not rows:
         return 0.0, 0
@@ -207,4 +218,15 @@ def weights_note(weights: dict[str, float], models: Iterable[str]) -> str:
     models = list(models)
     total = sum(weights.get(m, 1.0) for m in models) or 1.0
     parts = ", ".join(f"{m} {weights.get(m, 1.0) / total:.0%}" for m in models)
-    return f"Comité de {len(models)} modelos ({parts})."
+    what = "voces" if any(is_extra_voice(m) for m in models) else "modelos"
+    return f"Comité de {len(models)} {what} ({parts})."
+
+
+STRUCTURE_VOICE = "estructura"  # la estimación por partes (ver forecaster.decompose)
+
+
+def is_extra_voice(name: str) -> bool:
+    """Voces que no son un modelo preguntado con un enfoque: el mercado y la estructura."""
+    from oraqlo.forecaster.markets import VOICE_PREFIX
+
+    return name.startswith(VOICE_PREFIX) or name == STRUCTURE_VOICE

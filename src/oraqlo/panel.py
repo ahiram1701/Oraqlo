@@ -30,9 +30,13 @@ ROLE_PROMPTS: dict[str, str] = {
     "red_team": (
         "Eres el Red Team. Tu único trabajo es refutar el plan propuesto: encuentra "
         "supuestos frágiles, modos de fallo, y cómo un adversario competente lo "
-        "explotaría. No propongas alternativas; solo ataca. "
-        'Responde SOLO con JSON: {"objections": ["<objeción concreta>", ...]} '
-        "(entre 2 y 5 objeciones, las más letales primero)."
+        "explotaría. No propongas alternativas; solo ataca. Haz también un PRE-MORTEM: "
+        "imagina que ya pasó el plazo y el plan FRACASÓ; cuenta las causas más probables y, "
+        "para cada una, la primera señal observable que avisaría a tiempo. "
+        'Responde SOLO con JSON: {"objections": ["<objeción concreta>", ...], '
+        '"premortem": [{"cause": "<por qué fracasó>", "signal": "<señal temprana '
+        'observable, en lenguaje llano>"}, ...]} (entre 2 y 5 objeciones, las más letales '
+        "primero; entre 2 y 4 causas)."
     ),
     "oraculo": (
         "Eres el Oráculo. Asigna probabilidades numéricas en [0,1] a: (a) que el plan "
@@ -83,6 +87,8 @@ class Verdict:
     p_success: float | None = None
     review_triggers: list[str] = field(default_factory=list)
     transcript: list[tuple[str, str]] = field(default_factory=list)  # (rol, texto)
+    # Pre-mortem del Red Team: [{"cause", "signal"}] (las señales se vigilan después).
+    premortem: list[dict] = field(default_factory=list)
 
 
 class DecisionPanel(ABC):
@@ -185,7 +191,15 @@ class SequentialPanel(DecisionPanel):
             raise PanelError(
                 "El Red Team no produjo objeciones: el debate no es válido sin ataque."
             )
-        turn("red_team", json.dumps({"objections": objections}, ensure_ascii=False))
+        premortem = [
+            {"cause": str(p.get("cause", "")).strip(), "signal": str(p.get("signal", "")).strip()}
+            for p in rt.get("premortem") or []
+            if isinstance(p, dict) and str(p.get("cause", "")).strip()
+        ][:4]
+        turn(
+            "red_team",
+            json.dumps({"objections": objections, "premortem": premortem}, ensure_ascii=False),
+        )
 
         # 3. Oráculo: probabilidades de éxito y de cada objeción.
         oracle = self._speak_json(
@@ -220,4 +234,5 @@ class SequentialPanel(DecisionPanel):
             p_success=p_success,
             review_triggers=[str(t) for t in judge.get("review_triggers", [])],
             transcript=transcript,
+            premortem=premortem,
         )

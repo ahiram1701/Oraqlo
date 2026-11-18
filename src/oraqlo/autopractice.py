@@ -47,6 +47,7 @@ from oraqlo.memory.recalibration import (
     counts_for_score,
     decided_markets,
     for_model,
+    group_key,
     is_member,
     market_id_of,
     raw_of,
@@ -325,9 +326,10 @@ class PracticeEngine:
             assumptions.append(f"Tasa base: {base_rate}")
         if self.committee:
             assumptions.append(weights_note(self.weights or {}, per_model))
-        if recal is not None and recal.active:
-            outcomes = clamp(recal.apply(outcomes))
-            assumptions.append(recal.note())
+        group = group_key("practica", len(outcomes), self._horizon(market).days)
+        if recal is not None and recal.active_for(group):
+            outcomes = clamp(recal.apply(outcomes, group))
+            assumptions.append(recal.note(group))
         distribution = Distribution(outcomes=outcomes)
         distribution.validate()
         now = datetime.now(UTC)
