@@ -111,7 +111,8 @@ SQLite en modo WAL, con migraciones versionadas por `PRAGMA user_version` y back
   - Si no hay WebView2 o algo falla, sale con el código 3 y `launcher.py --open` abre el navegador.
   - Los avisos nativos (`services/notify.py`, `windows-toasts`) los emite el servidor (`PushService.send`), así que llegan aunque la ventana esté cerrada. Al pulsarlos se ejecuta `launcher.py --open --path`.
 - **Configuración desde la app** (`services/userconfig.py`, `services/doctor.py`):
-  - La bienvenida y Ajustes escriben `.env` (claves, de forma atómica) y `oraqlo.toml` (con tomlkit, que conserva los comentarios). Antes de guardar se valida con el cargador real.
+  - Todas las claves se ponen en la bienvenida o en Ajustes: proveedores, cuenta de Ollama, token de Metaculus y APIs propias. La app las guarda en `.env` (interno, de forma atómica) y escribe `oraqlo.toml` con tomlkit, que conserva los comentarios. Antes de guardar se valida con el cargador real. Nadie tiene que editar archivos a mano.
+  - «Mis APIs» crea, prueba y quita `[providers.<nombre>]` (OpenAI-compatible, Ollama o Anthropic). La clave de cada una va a una variable interna `ORAQLO_KEY_<NOMBRE>`. No se puede quitar una API que use algún rol.
   - Los cambios se recargan en caliente: `OraqloService.reload_config` actualiza el mismo objeto de config y vacía la caché de proveedores.
   - Estas rutas exigen acceso local (`require_local`): desde la tailnet se pueden leer, pero no cambiar.
 - **`updater.py`**: modelo *pull* contra la API pública de GitHub. Su secuencia es:
