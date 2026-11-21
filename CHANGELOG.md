@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/ahiram1701/Oraqlo/compare/v0.17.0...v0.18.0) (2026-11-21)
+
+
+### Novedades
+
+* el comité escucha más a quien más acierta ([c630176](https://github.com/ahiram1701/Oraqlo/commit/c630176c4ecde3a0fee86b2baa970b69e7cb03e2))
+
 ## [0.17.0](https://github.com/ahiram1701/Oraqlo/compare/v0.16.0...v0.17.0) (2026-11-18)
 
 
