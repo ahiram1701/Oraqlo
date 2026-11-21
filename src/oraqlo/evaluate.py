@@ -22,7 +22,7 @@ import math
 from collections import defaultdict
 
 from oraqlo.forecaster.aggregate import clamp, pool_log_odds, power
-from oraqlo.forecaster.committee import PRIOR_N, WEIGHT_SCALE, is_extra_voice
+from oraqlo.forecaster.committee import is_extra_voice, skill_weights
 from oraqlo.forecaster.ensemble import MEMBER_SEP
 from oraqlo.memory.calibration import CalibrationLedger, ResolvedForecast, multiclass_brier
 from oraqlo.memory.recalibration import (
@@ -96,11 +96,6 @@ def _loo_groups(pairs: list[tuple[dict[str, float], str]], groups: list[str]) ->
         a = recal.factor(groups[i])
         out.append(multiclass_brier(clamp(power(outcomes, a)), actual))
     return out
-
-
-def _weight(skill: float, n: int) -> float:
-    shrunk = skill * n / (n + PRIOR_N)
-    return math.exp(WEIGHT_SCALE * max(-1.0, min(1.0, shrunk)))
 
 
 def evaluate(ledger: CalibrationLedger) -> dict:
@@ -187,11 +182,15 @@ def evaluate(ledger: CalibrationLedger) -> dict:
                 {k: r.forecast.distribution.outcomes.get(k, 0.0) for k in labels}
                 for r in q.values()
             ]
-            weights = []
+            stats = {}
             for m, r in q.items():
                 b, c, n = totals[m]
                 b, c, n = b - r.brier, c - chance_brier(r), n - 1  # sin esta pregunta
-                weights.append(_weight(1 - b / c if n and c else 0.0, n))
+                stats[m] = (1 - b / c if n and c else 0.0, n)
+            learned_w = skill_weights(stats)  # la misma fórmula que usa la app
+            weights = [learned_w[m] for m in q]
+            if not any(weights):
+                weights = [1.0] * len(weights)
             y = r0.actual_outcome
             equal.append(multiclass_brier(clamp(pool_log_odds(dists)), y))
             pooled = multiclass_brier(clamp(pool_log_odds(dists, weights)), y)
@@ -199,7 +198,8 @@ def evaluate(ledger: CalibrationLedger) -> dict:
             chances.append(chance_brier(r0))
             keep = [i for i, m in enumerate(q) if not is_extra_voice(m)]
             if keep and len(keep) < len(q):
-                only = pool_log_odds([dists[i] for i in keep], [weights[i] for i in keep])
+                kw = [weights[i] for i in keep]
+                only = pool_log_odds([dists[i] for i in keep], kw if any(kw) else None)
                 plain.append(multiclass_brier(clamp(only), y))
                 with_extra.append(pooled)
                 plain_chances.append(chance_brier(r0))

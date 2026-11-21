@@ -177,23 +177,42 @@ def _event_key(market: Market) -> str:
     return str((market.raw or {}).get("slug") or market.id)
 
 
+MAX_GAMES_PER_RUN = 1  # partidos por pasada: el resto, de otros temas
+
+
+def is_game(market: Market) -> bool:
+    """Un partido o evento deportivo (Polymarket les pone hora de comienzo o tipo)."""
+    raw = market.raw or {}
+    return bool(raw.get("gameStartTime") or raw.get("sportsMarketType"))
+
+
 def choose_markets(markets: list[Market], n: int) -> list[Market]:
     """Los `n` mercados que más enseñan: primero los inciertos (favorito ≤ 90%), uno por
-    evento (no cinco líneas del mismo partido) y, a igualdad, los de más volumen."""
+    evento (no cinco líneas del mismo partido) y, a igualdad, los de más volumen.
+
+    Como mucho MAX_GAMES_PER_RUN partidos por pasada: Polymarket está lleno de partidos
+    de tenis poco conocidos y, sin límite, la Práctica aprendía casi solo de eso, que no
+    se parece a lo que se le pregunta a Oraqlo. Si no hay otra cosa, se rellena con
+    partidos: nunca se queda sin práctica."""
     ranked = sorted(
         markets,
         key=lambda m: (max(m.outcomes.values(), default=1.0) > INFORMATIVE, -m.volume_24h),
     )
     chosen: list[Market] = []
     events: set[str] = set()
-    for m in ranked:
-        key = _event_key(m)
-        if key in events:
-            continue
-        chosen.append(m)
-        events.add(key)
-        if len(chosen) >= n:
-            break
+    games = 0
+    for strict in (True, False):
+        for m in ranked:
+            if len(chosen) >= n:
+                return chosen
+            key = _event_key(m)
+            if key in events:
+                continue
+            if strict and is_game(m) and games >= MAX_GAMES_PER_RUN:
+                continue
+            chosen.append(m)
+            events.add(key)
+            games += is_game(m)
     return chosen
 
 
