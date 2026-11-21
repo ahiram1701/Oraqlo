@@ -8,8 +8,11 @@ mejora una predicción combinada es que los errores sean independientes, así qu
   además, mira la pregunta con un ENFOQUE distinto (tasa base, datos del caso,
   abogado del diablo, ritmo en el tiempo);
 - se combinan en log-odds (`pool_log_odds`) con un peso por modelo que sale de su
-  habilidad frente al azar en la Práctica, acercada a «todos iguales» mientras haya
-  pocos casos (encogimiento bayesiano con `PRIOR_N` casos ficticios);
+  habilidad frente al azar en la Práctica COMPARADA con la media del comité (lo que
+  cuenta es acertar más que los demás), acercada a esa media mientras haya pocos
+  casos (encogimiento bayesiano con `PRIOR_N` casos ficticios);
+- quien, con historial suficiente, va claramente por detrás del mejor se sienta en
+  el banquillo (peso 0) y, en el comité automático, otra familia ocupa su sitio;
 - cada miembro se registra aparte (`llm:<modelo>:miembro`) para que los pesos
   aprendan; esas filas no cuentan en el boletín de Oraqlo.
 
@@ -32,7 +35,12 @@ COMMITTEE_MODEL = "comite"  # «modelo» con el que se registra la predicción c
 MEMBER_KIND = "miembro"
 DEFAULT_SIZE = 4  # miembros por defecto (contando el modelo del rol)
 PRIOR_N = 10  # casos ficticios «del montón» con los que empieza cada modelo
-WEIGHT_SCALE = 2.0  # peso = exp(2·habilidad): +25% de habilidad ≈ 1,6× de voz
+# peso = exp(8·(habilidad − media)): 5 puntos por encima de la media ≈ 1,5× de voz.
+# Validado con la Práctica real (validación cruzada): con 2 apenas se distinguía al
+# mejor del peor; 8–12 bajan el Brier del comité sin depender de un solo modelo.
+WEIGHT_SCALE = 8.0
+BENCH_MIN_N = 20  # resueltas que hacen falta antes de poder sentar a alguien
+BENCH_GAP = 0.10  # 10 puntos de habilidad por debajo del mejor: al banquillo
 
 LENSES = (
     "Enfoque: VISIÓN EXTERNA. Antes de nada fija la clase de referencia (casos parecidos) "
@@ -76,10 +84,16 @@ def family(model: str) -> str:
     return re.split(r"[-:._\d]", name, maxsplit=1)[0] or name
 
 
-def pick_committee(catalog: Iterable[dict], lead_model: str, size: int = DEFAULT_SIZE) -> list[str]:
+def pick_committee(
+    catalog: Iterable[dict],
+    lead_model: str,
+    size: int = DEFAULT_SIZE,
+    skip_families: Iterable[str] = (),
+) -> list[str]:
     """Modelos de la nube para acompañar al del rol: uno por familia, de las preferidas,
-    el más grande y no especializado. `catalog`: [{"name", "size"}] de ollama.com."""
-    taken = {family(lead_model)}
+    el más grande y no especializado. `catalog`: [{"name", "size"}] de ollama.com.
+    `skip_families`: las que están en el banquillo (su sitio lo ocupa la siguiente)."""
+    taken = {family(lead_model), *skip_families}
     best: dict[str, tuple] = {}
     for m in catalog:
         name = str(m.get("name") or "")
@@ -153,20 +167,44 @@ def model_skill(ledger: CalibrationLedger, model: str, decided: set[str]) -> tup
     return (1 - brier / chance if chance else 0.0), len(rows)
 
 
+def skill_weights(stats: dict[str, tuple[float, int]]) -> dict[str, float]:
+    """Peso de cada voz a partir de (habilidad frente al azar, n resueltas).
+
+    1. La habilidad se acerca a la media del grupo (ponderada por n, con PRIOR_N casos
+       ficticios de habilidad 0) en proporción a lo poco que se sabe: un modelo nuevo
+       empieza «como los demás», no castigado.
+    2. Peso = exp(WEIGHT_SCALE · (habilidad − media)): cuenta acertar MÁS que el resto.
+    3. Banquillo (peso 0): con al menos BENCH_MIN_N resueltas y BENCH_GAP o más por
+       debajo del mejor. El mejor nunca se sienta, así que nunca se quedan todos fuera.
+    """
+    # La media lleva también PRIOR_N casos «del montón» (habilidad 0): si solo una voz
+    # tiene historial, no es ella misma la vara de medir y su ventaja se nota.
+    total_n = sum(n for _s, n in stats.values()) + PRIOR_N
+    mean = sum(s * n for s, n in stats.values()) / total_n
+    shrunk = {m: (s * n + mean * PRIOR_N) / (n + PRIOR_N) for m, (s, n) in stats.items()}
+    best = max(shrunk.values(), default=0.0)
+    weights = {}
+    for m, sk in shrunk.items():
+        if stats[m][1] >= BENCH_MIN_N and sk <= best - BENCH_GAP:
+            weights[m] = 0.0
+        else:
+            weights[m] = math.exp(WEIGHT_SCALE * max(-1.0, min(1.0, sk - mean)))
+    return weights
+
+
 def model_weights(ledger: CalibrationLedger, models: Iterable[str]) -> dict[str, float]:
-    """Peso de cada modelo: exp(2 · habilidad encogida), con la habilidad acercada a 0
-    («como los demás») en proporción a lo poco que se sabe de él."""
+    """Peso de cada modelo (o voz) del comité según su historial: ver `skill_weights`."""
     from oraqlo.memory.recalibration import decided_markets
 
     decided = decided_markets(
         [*ledger.open_forecasts, *(r.forecast for r in ledger.resolved_forecasts)]
     )
-    weights = {}
-    for model in models:
-        skill, n = model_skill(ledger, model, decided)
-        shrunk = skill * n / (n + PRIOR_N)
-        weights[model] = math.exp(WEIGHT_SCALE * max(-1.0, min(1.0, shrunk)))
-    return weights
+    return skill_weights({m: model_skill(ledger, m, decided) for m in dict.fromkeys(models)})
+
+
+def benched(weights: dict[str, float]) -> list[str]:
+    """Los que están en el banquillo (peso 0)."""
+    return [m for m, w in weights.items() if w == 0.0]
 
 
 def run_members[T](
@@ -210,16 +248,23 @@ def combine(
     per_model = {m: clamp(pool_log_odds(ds)) for m, ds in by_model.items()}
     models = list(per_model)
     w = [(weights or {}).get(m, 1.0) for m in models]
+    if not any(w):  # todos sentados (no debería pasar): mejor iguales que nada
+        w = [1.0] * len(models)
     pooled = clamp(pool_log_odds([per_model[m] for m in models], w))
     return pooled, per_model
 
 
 def weights_note(weights: dict[str, float], models: Iterable[str]) -> str:
     models = list(models)
-    total = sum(weights.get(m, 1.0) for m in models) or 1.0
-    parts = ", ".join(f"{m} {weights.get(m, 1.0) / total:.0%}" for m in models)
-    what = "voces" if any(is_extra_voice(m) for m in models) else "modelos"
-    return f"Comité de {len(models)} {what} ({parts})."
+    playing = [m for m in models if weights.get(m, 1.0) > 0] or models
+    total = sum(weights.get(m, 1.0) for m in playing) or 1.0
+    parts = ", ".join(f"{m} {weights.get(m, 1.0) / total:.0%}" for m in playing)
+    what = "voces" if any(is_extra_voice(m) for m in playing) else "modelos"
+    note = f"Comité de {len(playing)} {what} ({parts})."
+    bench = [m for m in models if m not in playing]
+    if bench:
+        note += f" En el banquillo por acertar menos: {', '.join(bench)}."
+    return note
 
 
 STRUCTURE_VOICE = "estructura"  # la estimación por partes (ver forecaster.decompose)

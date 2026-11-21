@@ -19,6 +19,7 @@ from oraqlo.forecaster.committee import (
     family,
     model_weights,
     pick_committee,
+    weights_note,
 )
 from oraqlo.forecaster.llm import LLMForecaster
 from oraqlo.llm.base import LLMProvider, LLMResponse
@@ -305,3 +306,55 @@ def test_ajustes_del_comite(env, monkeypatch):  # noqa: F811
     assert client.put("/api/committee", json={"mode": "auto"}).json()["mode"] == "auto"
     assert service.config.forecast.committee is None
     assert client.put("/api/committee", json={"mode": "custom", "models": []}).status_code == 400
+
+
+def test_pesos_relativos_a_la_media_y_banquillo():
+    from oraqlo.forecaster.committee import BENCH_MIN_N, benched, skill_weights
+
+    # sin historial: todos iguales
+    assert skill_weights({"a": (0.0, 0), "b": (0.0, 0)}) == {"a": 1.0, "b": 1.0}
+    # un recién llegado empieza en la media del grupo (peso 1), no castigado
+    w = skill_weights({"a": (0.30, 40), "b": (0.20, 40), "nuevo": (0.0, 0)})
+    assert w["a"] > w["nuevo"] > w["b"] > 0 and w["nuevo"] == pytest.approx(1.0)
+    # muy por detrás del mejor y con historial: banquillo
+    w = skill_weights({"a": (0.26, 38), "b": (0.23, 38), "c": (0.07, 37)})
+    assert benched(w) == ["c"] and w["a"] > w["b"] > 0
+    # el mismo hueco con pocas resueltas: aún no
+    w = skill_weights({"a": (0.26, 38), "c": (0.07, BENCH_MIN_N - 1)})
+    assert benched(w) == []
+    # el mejor nunca se sienta: el comité no se queda vacío
+    w = skill_weights({"a": (-0.5, 50)})
+    assert w["a"] > 0
+
+
+def test_el_banquillo_no_vota_y_se_dice():
+    from oraqlo.forecaster.committee import combine
+
+    pooled, _ = combine(
+        [("a", {"sí": 0.8, "no": 0.2}), ("c", {"sí": 0.1, "no": 0.9})], {"a": 1.0, "c": 0.0}
+    )
+    assert abs(pooled["sí"] - 0.8) < 1e-6
+    note = weights_note({"a": 1.0, "c": 0.0}, ["a", "c"])
+    assert "a 100%" in note and "banquillo" in note and "c 0%" not in note
+
+
+def test_comite_automatico_salta_la_familia_en_el_banquillo():
+    catalog = [{"name": n, "size": 1} for n in ("kimi-k3", "glm-5", "gpt-oss:120b", "qwen4")]
+    assert pick_committee(catalog, "deepseek-v4") == ["kimi-k3", "glm-5", "gpt-oss:120b"]
+    assert pick_committee(catalog, "deepseek-v4", skip_families={"gpt-oss"}) == [
+        "kimi-k3",
+        "glm-5",
+        "qwen4",
+    ]
+
+
+def test_como_mucho_un_partido_por_pasada():
+    def game(mid, event):
+        m = _market(mid, yes=0.5, event=event)
+        m.raw["gameStartTime"] = "2099-01-01 10:00:00+00"
+        return m
+
+    markets = [game("1", "p1"), game("2", "p2"), _market("3", yes=0.6, event="x")]
+    assert [m.id for m in choose_markets(markets, 2)] == ["1", "3"]
+    # sin otra cosa, se rellena con partidos
+    assert [m.id for m in choose_markets(markets[:2], 2)] == ["1", "2"]

@@ -33,7 +33,9 @@ from oraqlo.forecaster.base import Distribution, Forecast, Forecaster
 from oraqlo.forecaster.committee import (
     COMMITTEE_MODEL,
     Member,
+    benched,
     build_members,
+    family,
     member_source,
     model_weights,
     pick_committee,
@@ -164,9 +166,22 @@ class OraqloService:
             return []
         chosen = self.config.forecast.committee
         if chosen is None:
-            chosen = pick_committee(self.cloud_catalog(), api_cloud_name(lead_model))
+            chosen = self._auto_committee(provider_name, lead_model)
         lead = api_cloud_name(lead_model)
         return [m for m in dict.fromkeys(api_cloud_name(c) for c in chosen) if m and m != lead]
+
+    def _auto_committee(self, provider_name: str, lead_model: str) -> list[str]:
+        """Los recomendados del catálogo, sin las familias que se han ganado el banquillo
+        (con historial, acertando claramente menos que el mejor): su sitio lo ocupa la
+        siguiente familia. El modelo del rol no se toca: es elección del usuario."""
+        catalog = self.cloud_catalog()
+        lead = api_cloud_name(lead_model)
+        chosen = pick_committee(catalog, lead)
+        local = self._cloud_route(provider_name, lead_model) == "ollama-local"
+        as_member = {(local_cloud_name(m) if local else m): m for m in chosen}
+        weights = model_weights(self.store.ledger, [lead_model, *as_member])
+        skip = {family(as_member[m]) for m in benched(weights) if m in as_member}
+        return pick_committee(catalog, lead, skip_families=skip) if skip else chosen
 
     def committee_view(self) -> dict:
         """Lo que la app necesita para elegir el comité del Oráculo."""
@@ -180,7 +195,7 @@ class OraqloService:
             "lead": r.model,
             "available": route is not None,
             "models": self.committee_models(r.provider, r.model),
-            "recommended": pick_committee(catalog, lead) if route else [],
+            "recommended": self._auto_committee(r.provider, r.model) if route else [],
             "catalog": [
                 {"name": str(m["name"]), "size": m.get("size") or None}
                 for m in catalog
