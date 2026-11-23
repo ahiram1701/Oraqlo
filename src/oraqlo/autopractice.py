@@ -89,6 +89,8 @@ class PracticeReport:
     reliability_oraqlo: float | None = None
     reliability_market: float | None = None
     errors: list[str] = field(default_factory=list)
+    offline: bool = False  # algún paso falló por falta de conexión
+    market_status: dict[str, str] = field(default_factory=dict)
 
 
 def market_tag(market_id: str) -> str:
@@ -241,6 +243,8 @@ class PracticeEngine:
         # Con comité, la previsión combinada aprende su propia calibración.
         self.source_model = COMMITTEE_MODEL if self.committee else model
         self.oraqlo_source = f"llm:{self.source_model}"
+        # Fase en Polymarket de los mercados vencidos sin resolver (la llena resolve_due).
+        self.market_status: dict[str, str] = {}
 
     # ── Predicción ────────────────────────────────────────────────────────
 
@@ -449,27 +453,68 @@ class PracticeEngine:
 
     # ── Resolución ────────────────────────────────────────────────────────
 
+    def _fetch_markets(
+        self, ids: list[str], due: set[str], progress: Callable[[str], None]
+    ) -> dict[str, Market]:
+        """Los mercados a revisar: por lotes (solo los cerrados, y de los vencidos aún
+        abiertos su fase en UMA) o, si el cliente no sabe o el lote falla, uno a uno."""
+        batch = getattr(self.market_client, "get_markets", None)
+        if batch is not None:
+            try:
+                found = batch(ids, closed=True)
+                pending = [mid for mid in ids if mid in due and mid not in found]
+                if pending:
+                    found.update(batch(pending, closed=False))
+                return found
+            except PolymarketError as e:
+                if e.offline:
+                    raise  # sin red, uno a uno tampoco va a funcionar
+                progress(f"consulta por lotes no disponible ({e}); se consulta uno a uno")
+        found = {}
+        for mid in ids:
+            try:
+                found[mid] = self.market_client.get_market(mid)
+            except PolymarketError as e:
+                if e.offline:
+                    raise
+                progress(f"mercado {mid}: no consultable ({e})")
+        return found
+
     def resolve_due(
         self, on_progress: Callable[[str], None] | None = None
     ) -> list[ResolvedForecast]:
+        """Cierra las previsiones de mercados ya resueltos en Polymarket y descarta las de
+        mercados anulados. De los vencidos que siguen sin resolver deja su fase en UMA en
+        `self.market_status` ({id: "pendiente" | "proposed" | "disputed"})."""
         progress = on_progress or (lambda msg: None)
+        now = datetime.now(UTC)
         by_market: dict[str, list[Forecast]] = {}
+        due: set[str] = set()
         for f in self.ledger.open_forecasts:
             mid = extract_market_id(f.question)
             if mid:
                 by_market.setdefault(mid, []).append(f)
+                if f.created_at and f.created_at + f.horizon <= now:
+                    due.add(mid)
 
+        markets = self._fetch_markets(list(by_market), due, progress)
         resolved: list[ResolvedForecast] = []
+        self.market_status = {}
         for mid, forecasts in by_market.items():
-            try:
-                market = self.market_client.get_market(mid)
-            except PolymarketError as e:
-                progress(f"mercado {mid}: no consultable ({e})")
+            market = markets.get(mid)
+            if market is None or not market.resolved:
+                if mid in due:
+                    status = market.uma_status if market else None
+                    self.market_status[mid] = status or "pendiente"
                 continue
-            if not market.resolved or market.winner is None:
+            winner = market.winner
+            if winner is None:  # anulado (p. ej. 0.5/0.5): nunca tendrá ganador
+                for f in forecasts:
+                    self.ledger.discard(f.id)
+                progress(f"anulado en Polymarket, se descarta: '{market.question}'")
                 continue
             for f in forecasts:
-                r = self.ledger.resolve(f.id, market.winner)
+                r = self.ledger.resolve(f.id, winner)
                 resolved.append(r)
                 progress(
                     f"resuelto [{f.source}] '{market.question}' → "
@@ -485,12 +530,17 @@ class PracticeEngine:
         report = PracticeReport()
         try:
             report.resolved = self.resolve_due(on_progress)
+            report.market_status = dict(self.market_status)
         except PolymarketError as e:
             report.errors.append(str(e))
+            report.offline |= e.offline
+        if report.offline:
+            return report  # sin red no hay mercados nuevos que pedir
         try:
             report.predicted = self.predict_new(research=research, on_progress=on_progress)
         except (PolymarketError, PracticeError) as e:
             report.errors.append(str(e))
+            report.offline |= getattr(e, "offline", False)
         report.advice = calibration_advice(self.ledger, self.oraqlo_source)
         report.reliability_oraqlo = self.ledger.reliability(self.oraqlo_source)
         report.reliability_market = self.ledger.reliability(MARKET_SOURCE)

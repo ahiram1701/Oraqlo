@@ -20,6 +20,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
 
 from oraqlo.agent import OraqloAgent
+from oraqlo.autopractice import extract_market_id
 from oraqlo.casefile import CaseSpec, case_to_dict, parse_case
 from oraqlo.config import (
     OraqloConfig,
@@ -68,6 +69,9 @@ from oraqlo.world_model import WorldModel, WorldState
 log = logging.getLogger(__name__)
 
 Emit = Callable[[str, dict[str, Any]], None]
+
+
+PRACTICE_STATUS_KEY = "practice.market_status"  # fase en Polymarket de las vencidas
 
 
 class PracticeFailed(RuntimeError):
@@ -991,9 +995,23 @@ class OraqloService:
         report = engine.run_once(
             research=researcher is not None, on_progress=lambda msg: emit("log", {"msg": msg})
         )
+        if report.offline and not report.predicted and not report.resolved:
+            # Sin conexión (PC dormido, red caída): no es un fallo de Oraqlo ni merece aviso.
+            emit("log", {"msg": "Sin conexión con Polymarket: se reintenta en la próxima pasada."})
+            return {
+                "kind": "practice",
+                "offline": True,
+                "predicted": [],
+                "resolved": [],
+                "advice": None,
+                "reliability_oraqlo": None,
+                "reliability_market": None,
+                "errors": [],
+            }
         if report.errors and not report.predicted and not report.resolved:
             # Nada salió bien: es un fallo (rojo y con aviso), no un "listo" engañoso.
             raise PracticeFailed("; ".join(dict.fromkeys(report.errors))[:400])
+        self.store.settings.set(PRACTICE_STATUS_KEY, report.market_status)
         for error in report.errors:
             emit("log", {"msg": f"Aviso: {error}"})
         result = {
@@ -1061,9 +1079,17 @@ class OraqloService:
             item["watch"] = w.view() if w else None
             return item
 
+        # Las de Práctica las resuelve Polymarket: se dice en qué fase está cada una.
+        market_status = self.store.settings.get(PRACTICE_STATUS_KEY) or {}
+
+        def with_market(item: dict) -> dict:
+            mid = extract_market_id(item["question"])
+            item["market_status"] = market_status.get(mid) if mid else None
+            return item
+
         return {
             "overdue": len(overdue),
-            "open": [with_watch(forecast_json(f)) for f in open_forecasts],
+            "open": [with_market(with_watch(forecast_json(f))) for f in open_forecasts],
             "resolved": [
                 with_watch(resolved_json(r))
                 for r in reversed(ledger.resolved_forecasts)
