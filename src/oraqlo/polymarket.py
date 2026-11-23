@@ -23,6 +23,11 @@ GAMMA_HOST = "https://gamma-api.polymarket.com"
 class PolymarketError(RuntimeError):
     """La API de Polymarket no respondió o devolvió algo inesperado."""
 
+    def __init__(self, message: str, offline: bool = False) -> None:
+        super().__init__(message)
+        # Sin conexión (DNS, red caída, PC recién despertado): no es un fallo de Oraqlo.
+        self.offline = offline
+
 
 @dataclass
 class Market:
@@ -35,6 +40,18 @@ class Market:
     winner: str | None = None
     volume_24h: float = 0.0
     raw: dict = field(default_factory=dict)
+
+    @property
+    def voided(self) -> bool:
+        """Resuelto sin ganador (p. ej. 0.5/0.5: partido anulado o retirada). Nunca
+        tendrá ganador: las previsiones sobre él se descartan."""
+        return self.resolved and self.winner is None
+
+    @property
+    def uma_status(self) -> str | None:
+        """Fase de la resolución en UMA: None (sin proponer), proposed, disputed, resolved."""
+        value = (self.raw or {}).get("umaResolutionStatus")
+        return str(value).lower() if value else None
 
     @property
     def rules(self) -> str:
@@ -104,7 +121,7 @@ class PolymarketClient:
         self.host = host.rstrip("/")
         self.timeout_s = timeout_s
 
-    def _get(self, path: str, params: dict | None = None):
+    def _get(self, path: str, params: dict | list[tuple[str, object]] | None = None):
         url = f"{self.host}{path}"
         if params:
             url += "?" + urllib.parse.urlencode(params)
@@ -114,8 +131,12 @@ class PolymarketClient:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             raise PolymarketError(f"HTTP {e.code} de Polymarket en {path}") from e
-        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as e:
-            raise PolymarketError(f"No se pudo consultar Polymarket ({path}): {e}") from e
+        except json.JSONDecodeError as e:
+            raise PolymarketError(f"Respuesta ilegible de Polymarket ({path}): {e}") from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise PolymarketError(
+                f"No se pudo consultar Polymarket ({path}): {e}", offline=True
+            ) from e
 
     def list_open(
         self,
@@ -191,6 +212,29 @@ class PolymarketClient:
                     found.append(market)
                 if len(found) >= limit:
                     return found
+        return found
+
+    BATCH = 50  # ids por petición en get_markets
+
+    def get_markets(self, market_ids: list[str], closed: bool) -> dict[str, Market]:
+        """Varios mercados en pocas peticiones (`?id=..&id=..`). Gamma filtra por
+        `closed`: con False no devuelve los cerrados y con True solo los cerrados.
+        Los ids que no aparecen simplemente no están en el resultado."""
+        found: dict[str, Market] = {}
+        ids = list(dict.fromkeys(market_ids))
+        for i in range(0, len(ids), self.BATCH):
+            chunk = ids[i : i + self.BATCH]
+            params = [("id", mid) for mid in chunk]
+            params += [("closed", "true" if closed else "false"), ("limit", len(chunk))]
+            data = self._get("/markets", params)
+            if not isinstance(data, list):
+                raise PolymarketError("Respuesta inesperada al pedir mercados (no es una lista).")
+            for item in data:
+                try:
+                    market = _parse_market(item)
+                except PolymarketError:
+                    continue
+                found[market.id] = market
         return found
 
     def get_market(self, market_id: str) -> Market:

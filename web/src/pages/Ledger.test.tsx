@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { vi } from "vitest";
 import { FeedbackProvider } from "../components/ui";
 import type { Forecast } from "../lib/api";
-import { OpenForecast, UNDO_MS } from "./Ledger";
+import { OpenForecast, UNDO_MS, marketStatusLabel, overdueForUser } from "./Ledger";
 
 const forecast = {
   id: "f1",
@@ -15,12 +15,12 @@ const forecast = {
   horizon_days: 1,
 } as unknown as Forecast;
 
-function renderRow() {
+function renderRow(f: Forecast = forecast) {
   return render(
     <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter>
         <FeedbackProvider>
-          <OpenForecast f={forecast} />
+          <OpenForecast f={f} />
         </FeedbackProvider>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -64,5 +64,28 @@ describe("Predicciones: resolver con deshacer", () => {
       vi.advanceTimersByTime(UNDO_MS + 10);
     });
     expect(resolveCalls(fetchMock)).toHaveLength(0);
+  });
+});
+
+describe("Predicciones de Práctica vencidas", () => {
+  const practice = {
+    ...forecast,
+    id: "p1",
+    question: "[polymarket:7] ¿Pasará X?",
+    source: "llm:comite",
+    market_status: "proposed",
+  } as unknown as Forecast;
+
+  it("no piden que las marque el usuario: dicen en qué fase está Polymarket", () => {
+    renderRow(practice);
+    expect(screen.queryByText("ya debería saberse")).toBeNull();
+    expect(screen.getByText("resultado propuesto, en revisión")).toBeTruthy();
+  });
+
+  it("el filtro «ya deberían saberse» solo cuenta las del usuario", () => {
+    expect(overdueForUser(forecast)).toBe(true);
+    expect(overdueForUser(practice)).toBe(false);
+    expect(marketStatusLabel(undefined)).toMatch(/esperando/);
+    expect(marketStatusLabel("disputed")).toMatch(/impugnado/);
   });
 });

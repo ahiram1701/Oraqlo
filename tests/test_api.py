@@ -667,3 +667,33 @@ def test_historial_admite_mas_de_50_y_valida_el_limite(env):
     assert len(client.get("/api/runs?limit=100").json()) == 60
     assert client.get("/api/runs?limit=0").status_code == 422
     assert client.get("/api/runs?limit=999999").status_code == 422
+
+
+def test_practica_sin_conexion_no_falla_y_registro_muestra_fase(env, monkeypatch):
+    from oraqlo.forecaster.base import Distribution, Forecast
+    from oraqlo.polymarket import PolymarketClient, PolymarketError
+    from oraqlo.services.core import PRACTICE_STATUS_KEY
+
+    client, service, *_ = env
+
+    def offline(self, *a, **k):
+        raise PolymarketError("getaddrinfo failed", offline=True)
+
+    monkeypatch.setattr(PolymarketClient, "_get", offline)
+    result = service.practice(research=False)
+    assert result["offline"] is True and result["errors"] == []
+
+    service.store.ledger.record(
+        Forecast(
+            id="p1",
+            question="[polymarket:42] ¿X?",
+            distribution=Distribution(outcomes={"Yes": 0.5, "No": 0.5}),
+            horizon=timedelta(days=1),
+            assumptions=[],
+            source="llm:m",
+            created_at=datetime.now(UTC) - timedelta(days=3),
+        )
+    )
+    service.store.settings.set(PRACTICE_STATUS_KEY, {"42": "disputed"})
+    item = next(f for f in client.get("/api/ledger").json()["open"] if f["id"] == "p1")
+    assert item["market_status"] == "disputed"

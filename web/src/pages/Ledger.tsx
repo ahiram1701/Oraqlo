@@ -83,6 +83,18 @@ export function dueTime(f: Forecast): number {
   return f.created_at ? new Date(f.created_at).getTime() + f.horizon_days * 864e5 : Number.MAX_SAFE_INTEGER;
 }
 
+/** Ya debería saberse y le toca al usuario marcarla (la Práctica la resuelve Polymarket). */
+export function overdueForUser(f: Forecast, now = Date.now()): boolean {
+  return dueTime(f) <= now && forecastKind(f.source, f.question) !== "practica";
+}
+
+/** Qué le falta a Polymarket para resolver una de Práctica ya vencida. */
+export function marketStatusLabel(status: string | null | undefined): string {
+  if (status === "proposed") return "resultado propuesto, en revisión";
+  if (status === "disputed") return "resultado impugnado: puede tardar días";
+  return "esperando a que Polymarket la resuelva";
+}
+
 const topProb = (f: Forecast) => Math.max(0, ...Object.values(f.outcomes ?? {}));
 const created = (f: Forecast) => (f.created_at ? new Date(f.created_at).getTime() : 0);
 
@@ -162,7 +174,7 @@ export default function Ledger() {
 
   const open = useMemo(() => {
     const filtered = allOpen.filter((f) => {
-      const overdue = dueTime(f) <= now;
+      const overdue = overdueForUser(f, now);
       return (
         kindOk(f) &&
         includesText(f.question, query) &&
@@ -340,7 +352,9 @@ export function OpenForecast({ f }: { f: Forecast }) {
   const outcomes = sortedOutcomes(f.outcomes);
   const top = outcomes[0];
   const due = f.created_at ? new Date(new Date(f.created_at).getTime() + f.horizon_days * 864e5) : null;
-  const overdue = due ? due < new Date() : false;
+  const practice = forecastKind(f.source, f.question) === "practica";
+  const pastDue = due ? due < new Date() : false;
+  const overdue = pastDue && !practice;
 
   if (pendingOutcome)
     return (
@@ -360,6 +374,7 @@ export function OpenForecast({ f }: { f: Forecast }) {
           <span aria-hidden>·</span>
           <span>se sabrá el {due?.toLocaleDateString("es", { day: "numeric", month: "short" }) ?? "—"}</span>
           {overdue && <Badge tone="warn">ya debería saberse</Badge>}
+          {pastDue && practice && <Badge>{marketStatusLabel(f.market_status)}</Badge>}
           {f.watch?.enabled && <Badge>{f.watch.versions > 1 ? `vigilada · ${f.watch.versions} versiones` : "vigilada"}</Badge>}
         </p>
       </button>

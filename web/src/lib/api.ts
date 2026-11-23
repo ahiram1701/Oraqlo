@@ -16,6 +16,8 @@ export interface Forecast {
   numeric?: { unit: string; bins: Record<string, [number | null, number | null]> } | null;
   /** Vigilancia automática (solo en la versión vigente de cada previsión). */
   watch?: WatchView | null;
+  /** Práctica vencida: fase de la resolución en Polymarket (pendiente, proposed, disputed). */
+  market_status?: string | null;
 }
 
 /** Lo que Oraqlo vigila por su cuenta de una previsión u objetivo. */
