@@ -507,13 +507,14 @@ class PracticeEngine:
                     status = market.uma_status if market else None
                     self.market_status[mid] = status or "pendiente"
                 continue
-            if market.voided:
+            winner = market.winner
+            if winner is None:  # anulado (p. ej. 0.5/0.5): nunca tendrá ganador
                 for f in forecasts:
                     self.ledger.discard(f.id)
                 progress(f"anulado en Polymarket, se descarta: '{market.question}'")
                 continue
             for f in forecasts:
-                r = self.ledger.resolve(f.id, market.winner)
+                r = self.ledger.resolve(f.id, winner)
                 resolved.append(r)
                 progress(
                     f"resuelto [{f.source}] '{market.question}' → "

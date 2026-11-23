@@ -14,6 +14,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -121,7 +122,9 @@ class PolymarketClient:
         self.host = host.rstrip("/")
         self.timeout_s = timeout_s
 
-    def _get(self, path: str, params: dict | list[tuple[str, object]] | None = None):
+    def _get(
+        self, path: str, params: Mapping[str, object] | Sequence[tuple[str, object]] | None = None
+    ):
         url = f"{self.host}{path}"
         if params:
             url += "?" + urllib.parse.urlencode(params)
