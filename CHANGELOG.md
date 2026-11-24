@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.1](https://github.com/ahiram1701/Oraqlo/compare/v0.18.0...v0.18.1) (2026-11-23)
+
+
+### Correcciones
+
+* la Práctica descarta mercados anulados y explica las que esperan a Polymarket ([#87](https://github.com/ahiram1701/Oraqlo/issues/87)) ([a2fe86e](https://github.com/ahiram1701/Oraqlo/commit/a2fe86eae00354e0bc16b56655cd4a21bb4fc04e))
+
 ## [0.18.0](https://github.com/ahiram1701/Oraqlo/compare/v0.17.0...v0.18.0) (2026-11-21)
 
 
