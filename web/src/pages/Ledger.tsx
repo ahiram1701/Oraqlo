@@ -92,6 +92,7 @@ export function overdueForUser(f: Forecast, now = Date.now()): boolean {
 export function marketStatusLabel(status: string | null | undefined): string {
   if (status === "proposed") return "resultado propuesto, en revisión";
   if (status === "disputed") return "resultado impugnado: puede tardar días";
+  if (status === "abierto") return "Polymarket aún la cotiza: sus reglas la resuelven después de esta fecha";
   return "esperando a que Polymarket la resuelva";
 }
 

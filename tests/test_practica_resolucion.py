@@ -24,7 +24,7 @@ def _forecast(mid: str, source: str = "llm:m", days_ago: float = 2, horizon: flo
     )
 
 
-def _market(mid: str, prices=(0.6, 0.4), resolved=False, uma=None) -> Market:
+def _market(mid: str, prices=(0.6, 0.4), resolved=False, uma=None, closed=None) -> Market:
     outcomes = {"Yes": prices[0], "No": prices[1]}
     winner = None
     if resolved and max(prices) >= 0.99:
@@ -34,7 +34,7 @@ def _market(mid: str, prices=(0.6, 0.4), resolved=False, uma=None) -> Market:
         question=f"¿{mid}?",
         outcomes=outcomes,
         end_date=None,
-        closed=resolved,
+        closed=resolved if closed is None else closed,
         resolved=resolved,
         winner=winner,
         raw={"umaResolutionStatus": uma or ("resolved" if resolved else None)},
@@ -82,7 +82,8 @@ def test_lotes_resuelven_los_cerrados_y_dan_la_fase_de_los_vencidos():
             "1": _market("1", prices=(0.0, 1.0), resolved=True),
             "2": _market("2", uma="proposed"),
             "3": _market("3", uma="disputed"),
-            "4": _market("4"),
+            "4": _market("4"),  # vencido pero Polymarket aún lo cotiza
+            "6": _market("6", closed=True),  # cerrado, sin propuesta en UMA
         }
     )
     engine, _ = _engine(
@@ -92,10 +93,16 @@ def test_lotes_resuelven_los_cerrados_y_dan_la_fase_de_los_vencidos():
         _forecast("3"),
         _forecast("4"),
         _forecast("5", days_ago=0, horizon=3),  # aún no vence: no se pregunta su fase
+        _forecast("6"),
     )
     resolved = engine.resolve_due()
     assert [r.actual_outcome for r in resolved] == ["No"]
-    assert engine.market_status == {"2": "proposed", "3": "disputed", "4": "pendiente"}
+    assert engine.market_status == {
+        "2": "proposed",
+        "3": "disputed",
+        "4": "abierto",
+        "6": "pendiente",
+    }
     # Dos peticiones (cerrados y fase de vencidos), no una por mercado.
     assert [closed for _, closed in client.calls] == [True, False]
 

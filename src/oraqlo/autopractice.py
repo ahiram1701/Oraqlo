@@ -480,6 +480,19 @@ class PracticeEngine:
                 progress(f"mercado {mid}: no consultable ({e})")
         return found
 
+    @staticmethod
+    def _due_status(market: Market | None) -> str:
+        """Qué le falta a un mercado vencido sin resolver: su fase en UMA; «abierto» si
+        Polymarket aún lo cotiza (hay mercados «antes del día X» cuyas reglas solo se
+        cumplen días después de su fecha de cierre); si no, «pendiente» de propuesta."""
+        if market is None:
+            return "pendiente"
+        if market.uma_status:
+            return market.uma_status
+        if not market.closed:
+            return "abierto"
+        return "pendiente"
+
     def resolve_due(
         self, on_progress: Callable[[str], None] | None = None
     ) -> list[ResolvedForecast]:
@@ -504,8 +517,7 @@ class PracticeEngine:
             market = markets.get(mid)
             if market is None or not market.resolved:
                 if mid in due:
-                    status = market.uma_status if market else None
-                    self.market_status[mid] = status or "pendiente"
+                    self.market_status[mid] = self._due_status(market)
                 continue
             winner = market.winner
             if winner is None:  # anulado (p. ej. 0.5/0.5): nunca tendrá ganador

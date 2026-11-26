@@ -87,5 +87,6 @@ describe("Predicciones de Práctica vencidas", () => {
     expect(overdueForUser(practice)).toBe(false);
     expect(marketStatusLabel(undefined)).toMatch(/esperando/);
     expect(marketStatusLabel("disputed")).toMatch(/impugnado/);
+    expect(marketStatusLabel("abierto")).toMatch(/aún la cotiza/);
   });
 });
