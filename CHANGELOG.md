@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.2](https://github.com/ahiram1701/Oraqlo/compare/v0.18.1...v0.18.2) (2026-11-26)
+
+
+### Correcciones
+
+* la Práctica distingue los mercados vencidos que Polymarket aún cotiza ([#89](https://github.com/ahiram1701/Oraqlo/issues/89)) ([c8d6434](https://github.com/ahiram1701/Oraqlo/commit/c8d6434047afc4d7ce38b5c5c0e2d668693add7b))
+
 ## [0.18.1](https://github.com/ahiram1701/Oraqlo/compare/v0.18.0...v0.18.1) (2026-11-23)
 
 
