@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.2](https://github.com/ahiram1701/Oraqlo/compare/v0.19.1...v0.19.2) (2026-11-27)
+
+
+### Correcciones
+
+* la próxima pasada cuenta desde la última, sea manual o automática ([#102](https://github.com/ahiram1701/Oraqlo/issues/102)) ([e76a988](https://github.com/ahiram1701/Oraqlo/commit/e76a988fbe1f67f289ff2efd780a7be1db5feca4))
+
 ## [0.19.1](https://github.com/ahiram1701/Oraqlo/compare/v0.19.0...v0.19.1) (2026-11-27)
 
 
