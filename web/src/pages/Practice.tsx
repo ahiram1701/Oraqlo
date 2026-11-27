@@ -46,7 +46,10 @@ export default function Practice() {
         {isLoading && <Skeleton className="h-32" />}
         {s && (
           <>
-            <p className="mb-1 text-base font-medium">{duelHeadline(summary)}</p>
+            {/* aria-live: al terminar una pasada, el lector de pantalla anuncia el nuevo marcador. */}
+            <p className="mb-1 text-base font-medium" aria-live="polite">
+              {duelHeadline(summary)}
+            </p>
             {decidedNote(summary) && <p className="mb-3 text-xs text-muted">{decidedNote(summary)}</p>}
             <div className="grid grid-cols-2 gap-3">
               <Stat label="Oraqlo" skill={o} brier={summary?.oraqlo_brier} better={o != null && m != null && o > m + 0.005} />
@@ -105,7 +108,12 @@ export default function Practice() {
             <p className="text-xs text-muted">
               Última pasada: {fmtDate(s.last_run)} {s.next_run && <>· próxima: {fmtDate(s.next_run)}</>}
             </p>
-            <Button variant="secondary" disabled={s.running || run.isPending} onClick={() => run.mutate()}>
+            <Button
+              variant="secondary"
+              disabled={s.running || run.isPending}
+              aria-busy={s.running || run.isPending}
+              onClick={() => run.mutate()}
+            >
               {s.running ? "Pasada en curso…" : "Ejecutar una pasada ahora"}
             </Button>
           </div>
@@ -169,12 +177,16 @@ function Stat({
   better: boolean;
 }) {
   return (
-    <div className={cx("rounded-xl border p-3", better ? "border-good/40 bg-good/5" : "border-line bg-surface-2")}>
+    <div
+      role="group"
+      aria-label={`${label}: ${skill == null ? "sin duelos resueltos" : skillWords(skill)}${better ? ", va ganando" : ""}`}
+      className={cx("rounded-xl border p-3", better ? "border-good/40 bg-good/5" : "border-line bg-surface-2")}
+    >
       <p className="text-xs text-muted">{label}</p>
       <p className={cx("mt-1 text-3xl font-semibold tracking-tight tabular-nums", better && "text-good")}>{fmtSkill(skill)}</p>
       <p className="text-xs text-muted">{skill == null ? "sin duelos resueltos" : skillWords(skill)}</p>
       {brier != null && <p className="text-xs text-muted">Error (Brier) {fmtBrier(brier)}</p>}
-      {better && <p className="text-xs text-good">va ganando</p>}
+      {better && <p className="text-xs font-medium text-good">▲ va ganando</p>}
     </div>
   );
 }
