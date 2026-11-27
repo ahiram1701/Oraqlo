@@ -7,6 +7,8 @@ memoria y disco no diverjan aunque escriban varios hilos (jobs, scheduler).
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Iterator
 from datetime import datetime, timedelta
 
 from oraqlo.forecaster.base import Distribution, Forecast
@@ -67,8 +69,21 @@ class SqliteLedger(CalibrationLedger):
                     )
                 )
 
+    @contextlib.contextmanager
+    def _tx(self) -> Iterator:
+        """Transacción en la base y, si falla, la memoria vuelve a como estaba: sin esto,
+        un error al escribir dejaba la memoria cambiada y el disco no."""
+        with self.db.lock:  # reentrante: tx() lo vuelve a tomar
+            open_before, resolved_before = dict(self._open), list(self._resolved)
+            try:
+                with self.db.tx() as conn:
+                    yield conn
+            except BaseException:  # incluido un COMMIT que falla
+                self._open, self._resolved = open_before, resolved_before
+                raise
+
     def record(self, forecast: Forecast) -> None:
-        with self.db.tx() as conn:
+        with self._tx() as conn:
             super().record(forecast)
             conn.execute(
                 """INSERT INTO forecasts (id, question, source, outcomes, horizon_days,
@@ -83,7 +98,7 @@ class SqliteLedger(CalibrationLedger):
             )
 
     def resolve(self, forecast_id: str, actual_outcome: str) -> ResolvedForecast:
-        with self.db.tx() as conn:
+        with self._tx() as conn:
             resolved = super().resolve(forecast_id, actual_outcome)
             conn.execute(
                 """UPDATE forecasts SET status = 'resolved', actual_outcome = ?, brier = ?,
@@ -99,13 +114,13 @@ class SqliteLedger(CalibrationLedger):
         return resolved
 
     def discard(self, forecast_id: str) -> Forecast:
-        with self.db.tx() as conn:
+        with self._tx() as conn:
             forecast = super().discard(forecast_id)
             conn.execute("DELETE FROM forecasts WHERE id = ? AND status = 'open'", (forecast_id,))
         return forecast
 
     def delete_resolved(self, forecast_id: str) -> ResolvedForecast:
-        with self.db.tx() as conn:
+        with self._tx() as conn:
             resolved = super().delete_resolved(forecast_id)
             conn.execute(
                 "DELETE FROM forecasts WHERE id = ? AND status = 'resolved'", (forecast_id,)

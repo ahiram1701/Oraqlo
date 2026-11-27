@@ -147,7 +147,10 @@ class PolymarketSource:
             raise MarketError(str(e)) from e
         quotes = []
         for m in markets:
-            volume = float(m.raw.get("volumeNum") or m.raw.get("volume") or 0.0)
+            try:
+                volume = float(m.raw.get("volumeNum") or m.raw.get("volume") or 0.0)
+            except (TypeError, ValueError):  # un volumen ilegible no tumba la búsqueda
+                volume = 0.0
             if max(volume, m.volume_24h) < MIN_POLYMARKET_VOLUME:
                 continue
             slug = m.raw.get("slug")

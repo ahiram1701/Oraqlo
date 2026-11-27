@@ -12,7 +12,9 @@ CLI: python -m oraqlo.autopractice [--markets 2] [--no-research] [--loop --inter
 
 from __future__ import annotations
 
+import logging
 import re
+import sqlite3
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -56,6 +58,7 @@ from oraqlo.polymarket import Market, PolymarketClient, PolymarketError
 from oraqlo.research import Researcher, ResearchError
 
 _TAG_RE = re.compile(r"^\[polymarket:(\d+)\]")
+log = logging.getLogger(__name__)
 
 _FORECAST_PROMPT = (
     "Eres el Oráculo de Oraqlo: probabilidades calibradas, nunca certezas. "
@@ -100,6 +103,22 @@ def market_tag(market_id: str) -> str:
 def extract_market_id(question: str) -> str | None:
     match = _TAG_RE.match(question)
     return match.group(1) if match else None
+
+
+def practice_source(ledger: CalibrationLedger, fallback: str) -> str:
+    """La fuente con que la Práctica registra hoy a Oraqlo: la de su previsión más reciente
+    (`llm:comite` con comité, `llm:<modelo>` sin él). Sin historial, `fallback`."""
+    latest: Forecast | None = None
+    for f in [*ledger.open_forecasts, *(r.forecast for r in ledger.resolved_forecasts)]:
+        if (
+            extract_market_id(f.question)
+            and f.source != MARKET_SOURCE
+            and not is_member(f.source)
+            and f.created_at
+            and (latest is None or latest.created_at is None or f.created_at > latest.created_at)
+        ):
+            latest = f
+    return latest.source if latest else fallback
 
 
 def calibration_advice(
@@ -245,6 +264,8 @@ class PracticeEngine:
         self.oraqlo_source = f"llm:{self.source_model}"
         # Fase en Polymarket de los mercados vencidos sin resolver (la llena resolve_due).
         self.market_status: dict[str, str] = {}
+        # Lo que falló sin parar la pasada (un mercado, una resolución); run_once lo recoge.
+        self.errors: list[str] = []
 
     # ── Predicción ────────────────────────────────────────────────────────
 
@@ -436,9 +457,16 @@ class PracticeEngine:
                     progress(
                         f"  investigado: {len(brief.facts)} hechos de {len(brief.sources)} fuentes"
                     )
-                except (ResearchError, Exception) as e:  # la práctica no se detiene por esto
+                except Exception as e:  # la práctica no se detiene por esto
+                    if not isinstance(e, ResearchError):
+                        log.exception("investigación de práctica: error inesperado")
                     progress(f"  investigación no disponible ({e}); prediciendo sin ella")
-            forecast, members = self._forecast_market(market, advice, context, recal, progress)
+            try:
+                forecast, members = self._forecast_market(market, advice, context, recal, progress)
+            except PracticeError as e:  # un mercado que falla no se lleva a los demás
+                self.errors.append(f"{market.question}: {e}")
+                progress(f"  no se pudo predecir ({e}); sigo con el siguiente")
+                continue
             self.ledger.record(forecast)
             self.ledger.record(self._benchmark_forecast(market))
             for member in members:
@@ -498,7 +526,8 @@ class PracticeEngine:
     ) -> list[ResolvedForecast]:
         """Cierra las previsiones de mercados ya resueltos en Polymarket y descarta las de
         mercados anulados. De los vencidos que siguen sin resolver deja su fase en UMA en
-        `self.market_status` ({id: "pendiente" | "proposed" | "disputed"})."""
+        `self.market_status` ({id: "abierto" | "pendiente" | "proposed" | "disputed"}).
+        Si una previsión no se puede cerrar, se anota en `self.errors` y se sigue."""
         progress = on_progress or (lambda msg: None)
         now = datetime.now(UTC)
         by_market: dict[str, list[Forecast]] = {}
@@ -522,11 +551,19 @@ class PracticeEngine:
             winner = market.winner
             if winner is None:  # anulado (p. ej. 0.5/0.5): nunca tendrá ganador
                 for f in forecasts:
-                    self.ledger.discard(f.id)
+                    try:
+                        self.ledger.discard(f.id)
+                    except (KeyError, sqlite3.Error) as e:
+                        self.errors.append(f"no se pudo descartar {f.id}: {e}")
                 progress(f"anulado en Polymarket, se descarta: '{market.question}'")
                 continue
             for f in forecasts:
-                r = self.ledger.resolve(f.id, winner)
+                try:
+                    r = self.ledger.resolve(f.id, winner)
+                except (KeyError, ValueError, sqlite3.Error) as e:
+                    self.errors.append(f"no se pudo resolver {f.id}: {e}")
+                    progress(f"  no se pudo resolver [{f.source}] ({e}); sigo con las demás")
+                    continue
                 resolved.append(r)
                 progress(
                     f"resuelto [{f.source}] '{market.question}' → "
@@ -540,6 +577,7 @@ class PracticeEngine:
         self, research: bool = True, on_progress: Callable[[str], None] | None = None
     ) -> PracticeReport:
         report = PracticeReport()
+        self.errors = []
         try:
             report.resolved = self.resolve_due(on_progress)
             report.market_status = dict(self.market_status)
@@ -553,55 +591,11 @@ class PracticeEngine:
         except (PolymarketError, PracticeError) as e:
             report.errors.append(str(e))
             report.offline |= getattr(e, "offline", False)
+        report.errors.extend(self.errors)
         report.advice = calibration_advice(self.ledger, self.oraqlo_source)
         report.reliability_oraqlo = self.ledger.reliability(self.oraqlo_source)
         report.reliability_market = self.ledger.reliability(MARKET_SOURCE)
         return report
-
-
-def main(argv: list[str] | None = None) -> int:
-    """CLI headless (`oraqlo practice`): una pasada o un bucle, sobre la base de Oraqlo.
-
-    Usa el rol `practica` de oraqlo.toml y el mismo ledger SQLite que la app web.
-    Con el servidor en marcha no hace falta: la práctica autónoma corre en él.
-    """
-    import argparse
-    import time as _time
-
-    from oraqlo.services.core import OraqloService
-
-    parser = argparse.ArgumentParser(
-        prog="oraqlo practice",
-        description="Práctica autónoma de Oraqlo con Polymarket (solo lectura).",
-    )
-    parser.add_argument("--markets", type=int, default=None, help="mercados nuevos por pasada")
-    parser.add_argument("--no-research", action="store_true", help="predecir sin investigación web")
-    parser.add_argument("--loop", action="store_true", help="repetir indefinidamente")
-    parser.add_argument("--interval-min", type=float, default=60.0, help="minutos entre pasadas")
-    args = parser.parse_args(argv)
-
-    service = OraqloService()
-    if args.markets is not None:
-        service.config.practice.markets = args.markets
-    log = lambda kind, data: print(data.get("msg", "")) if kind == "log" else None
-
-    while True:
-        print(f"── pasada de práctica · {datetime.now().strftime('%Y-%m-%d %H:%M')} ──")
-        result = service.practice(research=not args.no_research, emit=log)
-        print(f"predichas: {len(result['predicted'])} · resueltas: {len(result['resolved'])}")
-        if result["reliability_oraqlo"] is not None:
-            market = result["reliability_market"]
-            bench = f" · mercado {market:.3f}" if market is not None else ""
-            print(f"Brier Oraqlo {result['reliability_oraqlo']:.3f}{bench}")
-        for error in result["errors"]:
-            print(f"error: {error}")
-        if not args.loop:
-            return 0
-        _time.sleep(args.interval_min * 60)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
 
 
 # ── duelos: Oraqlo frente al mercado, pregunta a pregunta ─────────────────
@@ -701,3 +695,61 @@ def duels(ledger: CalibrationLedger) -> dict:
             "market_skill": _skill(mean("market_brier"), mean("chance_brier")),
         },
     }
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI headless (`oraqlo practice`): una pasada o un bucle, sobre la base de Oraqlo.
+
+    Usa el rol `practica` de oraqlo.toml y el mismo ledger SQLite que la app web.
+    Con el servidor en marcha no hace falta: la práctica autónoma corre en él.
+    """
+    import argparse
+    import time as _time
+
+    from oraqlo.services.core import OraqloService, PracticeFailed
+
+    parser = argparse.ArgumentParser(
+        prog="oraqlo practice",
+        description="Práctica autónoma de Oraqlo con Polymarket (solo lectura).",
+    )
+    parser.add_argument("--markets", type=int, default=None, help="mercados nuevos por pasada")
+    parser.add_argument("--no-research", action="store_true", help="predecir sin investigación web")
+    parser.add_argument("--loop", action="store_true", help="repetir indefinidamente")
+    parser.add_argument("--interval-min", type=float, default=60.0, help="minutos entre pasadas")
+    args = parser.parse_args(argv)
+    if args.interval_min <= 0:
+        parser.error("--interval-min debe ser mayor que 0")
+    if args.markets is not None and args.markets < 1:
+        parser.error("--markets debe ser al menos 1")
+
+    service = OraqloService()
+    if args.markets is not None:
+        service.config.practice.markets = args.markets
+    show = lambda kind, data: print(data.get("msg", "")) if kind == "log" else None
+
+    while True:
+        print(f"── pasada de práctica · {datetime.now().strftime('%Y-%m-%d %H:%M')} ──")
+        try:
+            result = service.practice(research=not args.no_research, emit=show)
+        except Exception as e:  # una pasada fallida no detiene el bucle
+            if not isinstance(e, PracticeFailed):
+                log.exception("pasada de práctica")
+            print(f"error: {e}")
+            if not args.loop:
+                return 1
+            _time.sleep(args.interval_min * 60)
+            continue
+        print(f"predichas: {len(result['predicted'])} · resueltas: {len(result['resolved'])}")
+        if result["reliability_oraqlo"] is not None:
+            market = result["reliability_market"]
+            bench = f" · mercado {market:.3f}" if market is not None else ""
+            print(f"Brier Oraqlo {result['reliability_oraqlo']:.3f}{bench}")
+        for error in result["errors"]:
+            print(f"error: {error}")
+        if not args.loop:
+            return 0
+        _time.sleep(args.interval_min * 60)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
