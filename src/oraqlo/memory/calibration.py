@@ -85,10 +85,13 @@ class CalibrationLedger:
     def __init__(self) -> None:
         self._open: dict[str, Forecast] = {}
         self._resolved: list[ResolvedForecast] = []
+        # Sube con cada cambio: quien calcula algo caro sobre el ledger lo cachea por versión.
+        self.version = 0
 
     def record(self, forecast: Forecast) -> None:
         forecast.distribution.validate()
         self._open[forecast.id] = forecast
+        self.version += 1
 
     def resolve(self, forecast_id: str, actual_outcome: str) -> ResolvedForecast:
         """Cierra la predicción `forecast_id` con el resultado real observado."""
@@ -109,6 +112,7 @@ class CalibrationLedger:
             brier=multiclass_brier(forecast.distribution.outcomes, actual_outcome),
         )
         self._resolved.append(resolved)
+        self.version += 1
         return resolved
 
     def discard(self, forecast_id: str) -> Forecast:
@@ -122,6 +126,7 @@ class CalibrationLedger:
             raise KeyError(
                 f"No hay predicción abierta con id '{forecast_id}'. Abiertas: {sorted(self._open)}"
             )
+        self.version += 1
         return forecast
 
     def delete_resolved(self, forecast_id: str) -> ResolvedForecast:
@@ -129,6 +134,7 @@ class CalibrationLedger:
         la fiabilidad de su fuente se recalcula sin ella."""
         for i, resolved in enumerate(self._resolved):
             if resolved.forecast.id == forecast_id:
+                self.version += 1
                 return self._resolved.pop(i)
         raise KeyError(f"No hay predicción resuelta con id '{forecast_id}'.")
 

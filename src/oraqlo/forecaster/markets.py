@@ -33,6 +33,7 @@ from typing import Protocol
 
 from oraqlo.llm.base import LLMProvider
 from oraqlo.llm.structured import JsonChatError, chat_json
+from oraqlo.net import get_json
 
 VOICE_PREFIX = "mercado:"
 METACULUS_TOKEN_ENV = "METACULUS_TOKEN"
@@ -111,10 +112,8 @@ class MarketSource(Protocol):
 
 
 def _get_json(url: str, headers: dict[str, str] | None = None, timeout_s: float = 20.0):
-    request = urllib.request.Request(url, headers={"User-Agent": "oraqlo", **(headers or {})})
     try:
-        with urllib.request.urlopen(request, timeout=timeout_s) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        return get_json(url, {"User-Agent": "oraqlo", **(headers or {})}, timeout_s=timeout_s)
     except urllib.error.HTTPError as e:
         raise MarketError(f"HTTP {e.code} en {urllib.parse.urlparse(url).hostname}") from e
     except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as e:

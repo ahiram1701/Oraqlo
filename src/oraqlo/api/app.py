@@ -1345,13 +1345,28 @@ def create_app(
 
     # ── práctica ──────────────────────────────────────────────────────────
 
-    def practice_state() -> dict:
+    practice_cache: dict[str, object] = {}
+
+    def practice_scores() -> tuple[str | None, dict]:
+        """(consejo, duelos): recorren todo el ledger y la página los pide cada 30 s, así
+        que se recalculan solo cuando el ledger o el modelo de práctica cambian."""
         from oraqlo.autopractice import calibration_advice, duels, practice_source
-        from oraqlo.llm.websearch import OllamaWebClient
 
         ledger = service.store.ledger
-        # Con comité, la Práctica registra a Oraqlo como `llm:comite`, no con el modelo del rol.
-        source = practice_source(ledger, f"llm:{service.config.role('practica').model}")
+        fallback = f"llm:{service.config.role('practica').model}"
+        key = (id(ledger), ledger.version, fallback)
+        if practice_cache.get("key") != key:
+            # Con comité, la Práctica registra a Oraqlo como `llm:comite`, no con el modelo del rol.
+            source = practice_source(ledger, fallback)
+            practice_cache.update(
+                key=key, value=(calibration_advice(ledger, source), duels(ledger))
+            )
+        return practice_cache["value"]  # type: ignore[return-value]
+
+    def practice_state() -> dict:
+        from oraqlo.llm.websearch import OllamaWebClient
+
+        advice, duel_list = practice_scores()
         last = scheduler.last_run("practice")
         return {
             "auto": practice_enabled(),
@@ -1366,10 +1381,10 @@ def create_app(
             "running": runner.active("practice") > 0,
             # Sin la clave de Ollama, Práctica predice sin investigar (y acierta menos).
             "research": OllamaWebClient().is_available(),
-            "advice": calibration_advice(ledger, source),
+            "advice": advice,
             "recent": runner.list(limit=20, kind="practice"),
             # Pregunta a pregunta: quién se acercó más, Oraqlo o el mercado.
-            "duels": duels(ledger),
+            "duels": duel_list,
         }
 
     @app.get("/api/practice")

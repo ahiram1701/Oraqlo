@@ -18,6 +18,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from oraqlo.net import get_json
+
 GAMMA_HOST = "https://gamma-api.polymarket.com"
 
 
@@ -133,10 +135,8 @@ class PolymarketClient:
         url = f"{self.host}{path}"
         if params:
             url += "?" + urllib.parse.urlencode(params)
-        request = urllib.request.Request(url, headers={"User-Agent": "oraqlo-practice"})
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_s) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+            return get_json(url, {"User-Agent": "oraqlo-practice"}, timeout_s=self.timeout_s)
         except urllib.error.HTTPError as e:
             raise PolymarketError(f"HTTP {e.code} de Polymarket en {path}") from e
         except json.JSONDecodeError as e:
@@ -153,11 +153,13 @@ class PolymarketClient:
         max_days_to_close: int = 30,
         min_days_to_close: int = 1,
         max_pages: int = 8,
+        exclude: set[str] | frozenset[str] = frozenset(),
     ) -> list[Market]:
         """Mercados abiertos ordenados por volumen, que cierran dentro de la ventana.
 
         Ventana corta = feedback rápido para el bucle de aprendizaje; volumen
-        mínimo = preguntas serias con precio informativo.
+        mínimo = preguntas serias con precio informativo. Los ids de `exclude` (los ya
+        predichos) no cuentan para `limit`: así no hace falta pedir más páginas de la cuenta.
         """
         now = datetime.now(UTC)
         markets: list[Market] = []
@@ -180,6 +182,8 @@ class PolymarketClient:
                 try:
                     market = _parse_market(item)
                 except PolymarketError:
+                    continue
+                if market.id in exclude:
                     continue
                 if not market.outcomes or market.closed or market.end_date is None:
                     continue
