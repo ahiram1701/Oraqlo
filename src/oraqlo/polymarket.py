@@ -88,9 +88,14 @@ def _parse_market(data: dict) -> Market:
     try:
         labels = json.loads(data.get("outcomes") or "[]")
         prices = [float(p) for p in json.loads(data.get("outcomePrices") or "[]")]
+        volume_24h = float(data.get("volume24hr") or 0.0)
     except (json.JSONDecodeError, TypeError, ValueError) as e:
         raise PolymarketError(f"Mercado {data.get('id')}: outcomes/prices ilegibles: {e}") from e
-    outcomes = {str(label): price for label, price in zip(labels, prices, strict=False)}
+    if len(labels) != len(prices):  # emparejarlos a medias inventaría probabilidades
+        raise PolymarketError(
+            f"Mercado {data.get('id')}: {len(labels)} resultados y {len(prices)} precios."
+        )
+    outcomes = {str(label): price for label, price in zip(labels, prices, strict=True)}
 
     end_date = None
     if data.get("endDate"):
@@ -112,7 +117,7 @@ def _parse_market(data: dict) -> Market:
         closed=bool(data.get("closed")),
         resolved=resolved,
         winner=winner,
-        volume_24h=float(data.get("volume24hr") or 0.0),
+        volume_24h=volume_24h,
         raw=data,
     )
 

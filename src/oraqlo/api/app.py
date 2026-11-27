@@ -1346,11 +1346,12 @@ def create_app(
     # ── práctica ──────────────────────────────────────────────────────────
 
     def practice_state() -> dict:
-        from oraqlo.autopractice import calibration_advice, duels
+        from oraqlo.autopractice import calibration_advice, duels, practice_source
         from oraqlo.llm.websearch import OllamaWebClient
 
         ledger = service.store.ledger
-        source = f"llm:{service.config.role('practica').model}"
+        # Con comité, la Práctica registra a Oraqlo como `llm:comite`, no con el modelo del rol.
+        source = practice_source(ledger, f"llm:{service.config.role('practica').model}")
         last = scheduler.last_run("practice")
         return {
             "auto": practice_enabled(),
