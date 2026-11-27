@@ -53,6 +53,7 @@ class SqliteLedger(CalibrationLedger):
         with self.db.lock:
             self._open = {}
             self._resolved = []
+            self.version = getattr(self, "version", 0) + 1
             for row in self.db.query(
                 "SELECT * FROM forecasts WHERE status = 'open' ORDER BY rowid"
             ):
@@ -80,6 +81,7 @@ class SqliteLedger(CalibrationLedger):
                     yield conn
             except BaseException:  # incluido un COMMIT que falla
                 self._open, self._resolved = open_before, resolved_before
+                self.version += 1
                 raise
 
     def record(self, forecast: Forecast) -> None:

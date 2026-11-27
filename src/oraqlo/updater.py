@@ -42,6 +42,7 @@ from pathlib import Path
 from packaging.version import InvalidVersion, Version
 
 from oraqlo import __version__
+from oraqlo.net import get_json
 
 log = logging.getLogger(__name__)
 
@@ -182,12 +183,9 @@ def is_newer(candidate: str, current: str | None = None) -> bool:
 
 
 def _get_json(url: str, timeout: float = 15.0) -> object:
-    req = urllib.request.Request(
-        url, headers={"Accept": "application/vnd.github+json", "User-Agent": USER_AGENT}
-    )
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": USER_AGENT}
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        return get_json(url, headers, timeout_s=timeout)
     except urllib.error.HTTPError as e:
         if e.code == 403 and e.headers.get("X-RateLimit-Remaining") == "0":
             raise UpdateError(
@@ -198,6 +196,8 @@ def _get_json(url: str, timeout: float = 15.0) -> object:
         raise UpdateError(f"GitHub respondió {e.code} al consultar releases.") from e
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         raise UpdateError(f"Sin conexión con GitHub: {e}") from e
+    except json.JSONDecodeError as e:
+        raise UpdateError(f"Respuesta ilegible de GitHub: {e}") from e
 
 
 def _release_from(data: dict) -> ReleaseInfo | None:

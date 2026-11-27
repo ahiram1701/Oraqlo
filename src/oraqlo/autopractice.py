@@ -437,8 +437,8 @@ class PracticeEngine:
         candidates = choose_markets(
             [
                 m
-                for m in self.market_client.list_open(limit=PICK_POOL + len(known))
-                if m.id not in known
+                for m in self.market_client.list_open(limit=PICK_POOL, exclude=known)
+                if m.id not in known  # por si el cliente no sabe excluir
             ],
             n,
         )
