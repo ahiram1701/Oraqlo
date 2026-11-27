@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { vi } from "vitest";
 import type { PracticeState } from "../lib/api";
+import { closesNote } from "../components/Duels";
 import Practice from "./Practice";
 
 const state: PracticeState = {
@@ -67,5 +68,18 @@ describe("Práctica", () => {
     const button = await screen.findByRole("button", { name: "Pasada en curso…" });
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("si la próxima pasada ya pasó, no la muestra como futura", async () => {
+    renderPractice({ ...state, next_run_overdue: true });
+    expect(await screen.findByText(/próxima: en cuanto el servidor esté activo/)).toBeInTheDocument();
+  });
+});
+
+describe("closesNote", () => {
+  const now = new Date("2026-11-27T12:00:00Z");
+  it("distingue una fecha futura de una vencida", () => {
+    expect(closesNote("2026-11-30T12:00:00Z", now)).toMatch(/^se sabrá hacia el/);
+    expect(closesNote("2026-11-20T12:00:00Z", now)).toMatch(/^debía saberse el .*aún no lo ha resuelto/);
   });
 });

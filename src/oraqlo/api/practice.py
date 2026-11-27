@@ -6,7 +6,7 @@ comparte con la app a través de los objetos que recibe (servicio, jobs, schedul
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -56,21 +56,27 @@ def practice_router(service: OraqloService, runner: JobRunner, scheduler: Schedu
             cache.update(key=key, value=(calibration_advice(ledger, source), duels(ledger)))
         return cache["value"]  # type: ignore[return-value]
 
+    def latest_run() -> datetime | None:
+        """La pasada más reciente, la lance el planificador, el botón o el CLI."""
+        times = [scheduler.last_run("practice")]
+        finished = service.store.settings.get("practice_last_run")
+        if finished:
+            times.append(datetime.fromisoformat(finished))
+        return max((t for t in times if t), default=None)
+
     def practice_state() -> dict:
         from oraqlo.llm.websearch import OllamaWebClient
 
         advice, duel_list = practice_scores()
-        last = scheduler.last_run("practice")
+        last = latest_run()
+        upcoming = scheduler.next_run("practice") if practice_enabled() else None
         return {
             "auto": practice_enabled(),
             "interval_min": practice_interval().total_seconds() / 60,
-            # La misma fuente que «próxima», para que nunca se contradigan.
-            "last_run": last.isoformat()
-            if last
-            else service.store.settings.get("practice_last_run"),
-            "next_run": (last + practice_interval()).isoformat()
-            if last and practice_enabled()
-            else None,
+            "last_run": last.isoformat() if last else None,
+            "next_run": upcoming.isoformat() if upcoming else None,
+            # Ya pasó y no corrió: el servidor estaba apagado o el PC dormido.
+            "next_run_overdue": bool(upcoming and upcoming < datetime.now(UTC)),
             "running": runner.active("practice") > 0,
             # Sin la clave de Ollama, Práctica predice sin investigar (y acierta menos).
             "research": OllamaWebClient().is_available(),
@@ -96,6 +102,9 @@ def practice_router(service: OraqloService, runner: JobRunner, scheduler: Schedu
     def practice_run() -> dict:
         if runner.active("practice"):
             raise HTTPException(409, "Ya hay una pasada de práctica en curso.")
-        return {"job_id": runner.submit("practice", {})}
+        job_id = runner.submit("practice", {})
+        # Cuenta como la última pasada: la automática no se repite justo después.
+        scheduler.mark("practice", datetime.now(UTC))
+        return {"job_id": job_id}
 
     return router

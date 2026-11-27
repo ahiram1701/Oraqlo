@@ -1,6 +1,13 @@
 // Práctica, pregunta a pregunta: quién se acercó más, Oraqlo o el mercado.
 import { useMemo } from "react";
-import { fmtDate, pct, type Duel, type DuelSummary } from "../lib/api";
+import { parseDate, pct, type Duel, type DuelSummary } from "../lib/api";
+
+/** Cuándo se sabrá el resultado; si la fecha ya pasó, el mercado aún no lo ha resuelto. */
+export function closesNote(closesAt: string, now = new Date()): string {
+  const when = parseDate(closesAt);
+  const day = when.toLocaleDateString("es", { day: "numeric", month: "short" });
+  return when < now ? `debía saberse el ${day} (el mercado aún no lo ha resuelto)` : `se sabrá hacia el ${day}`;
+}
 import { useStoredState } from "../lib/useStoredState";
 import { ChipGroup, FilteredEmpty, SortSelect, countLabel, type Option } from "./listControls";
 import { Badge, Card, Empty, SectionTitle, cx } from "./ui";
@@ -82,7 +89,7 @@ function DuelRow({ d }: { d: Duel }) {
         ) : (
           <>
             Probabilidad de «<b className="text-fg">{d.label}</b>»
-            {d.closes_at && <> · se sabrá hacia el {fmtDate(d.closes_at)}</>}:
+            {d.closes_at && <> · {closesNote(d.closes_at)}</>}:
           </>
         )}
       </p>

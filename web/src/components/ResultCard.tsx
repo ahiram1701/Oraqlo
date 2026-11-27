@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
-import { pct } from "../lib/api";
+import { parseDate, pct } from "../lib/api";
 import { Icon } from "./icons";
 import { BreakPoints, LeversRanked, Premortem, RivalNote, VoicesNote, WatchNote } from "./Insights";
 import { ProbBars } from "./ProbBars";
@@ -14,7 +14,7 @@ function topOutcome(outcomes: Record<string, number>): [string, number] | null {
 export function resolvesOn(forecast: any): string | null {
   const days = Number(forecast?.horizon_days);
   if (!Number.isFinite(days) || days <= 0) return null;
-  const start = forecast?.created_at ? new Date(forecast.created_at) : new Date();
+  const start = forecast?.created_at ? parseDate(forecast.created_at) : new Date();
   if (Number.isNaN(start.getTime())) return null;
   const end = new Date(start.getTime() + days * 86_400_000);
   return end.toLocaleDateString("es", { day: "numeric", month: "long", year: "numeric" });

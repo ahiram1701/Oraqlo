@@ -104,3 +104,37 @@ def test_practica_sin_resultados_y_con_errores_es_un_fallo(tmp_path, monkeypatch
     monkeypatch.setattr(autopractice.PracticeEngine, "run_once", lambda self, **kw: failing)
     with pytest.raises(PracticeFailed, match="Polymarket no responde"):
         service.practice(research=False)
+
+
+def test_planificador_no_inventa_ejecuciones(tmp_path):
+    """Armar el temporizador o fallar no cuenta como «última ejecución»."""
+    store = Store(tmp_path / "o.db")
+    sched = Scheduler(store.settings)
+    state = {"fail": True}
+
+    def action():
+        if state["fail"]:
+            raise OSError("caído")
+
+    sched.add(PeriodicTask("t", lambda: timedelta(hours=2), lambda: True, action))
+    t0 = datetime(2026, 11, 16, 12, tzinfo=UTC)
+    assert sched.tick(t0) == []  # solo se arma
+    assert sched.last_run("t") is None
+    assert sched.next_run("t") == t0 + timedelta(hours=2)
+    assert sched.tick(t0 + timedelta(hours=2)) == []  # falla
+    assert sched.last_run("t") == t0 + timedelta(hours=2)  # sí corrió (y falló)
+    assert sched.next_run("t") == t0 + timedelta(hours=2) + RETRY_AFTER
+    state["fail"] = False
+    assert sched.tick(t0 + timedelta(hours=2) + RETRY_AFTER) == ["t"]
+    assert sched.next_run("t") == t0 + timedelta(hours=4) + RETRY_AFTER
+
+
+def test_marcar_a_mano_reinicia_el_temporizador(tmp_path):
+    store = Store(tmp_path / "o.db")
+    sched = Scheduler(store.settings)
+    sched.add(PeriodicTask("t", lambda: timedelta(hours=1), lambda: True, lambda: None))
+    t0 = datetime(2026, 11, 16, 12, tzinfo=UTC)
+    sched.tick(t0)
+    sched.mark("t", t0 + timedelta(minutes=50))
+    assert sched.tick(t0 + timedelta(minutes=61)) == []  # la manual reinició la cuenta
+    assert sched.tick(t0 + timedelta(minutes=111)) == ["t"]

@@ -106,7 +106,10 @@ export default function Practice() {
               </select>
             </label>
             <p className="text-xs text-muted">
-              Última pasada: {fmtDate(s.last_run)} {s.next_run && <>· próxima: {fmtDate(s.next_run)}</>}
+              Última pasada: {s.last_run ? fmtDate(s.last_run) : "todavía ninguna"}{" "}
+              {s.next_run && (
+                <>· próxima: {s.next_run_overdue ? "en cuanto el servidor esté activo" : fmtDate(s.next_run)}</>
+              )}
             </p>
             <Button
               variant="secondary"

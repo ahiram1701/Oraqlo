@@ -12,7 +12,7 @@ export interface JobState<R = any> {
 
 const EVENT_TYPES = ["log", "phase", "forecast", "turn", "verdict", "revision", "fact", "questions", "answers"];
 const TERMINAL: string[] = ["done", "failed", "cancelled"];
-const REFRESH = ["ledger", "goals", "runs", "calibration", "practice", "jobs"];
+const REFRESH = ["ledger", "goals", "runs", "calibration", "evaluate", "practice", "jobs"];
 
 /**
  * Sigue un job por SSE. Ante cortes de red, EventSource reconecta solo y el
