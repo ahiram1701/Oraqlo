@@ -48,7 +48,7 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python }}
       - run: uv sync --locked --all-extras
-      - run: uv run pytest -q
+      - run: uv run pytest -q --cov --cov-report=term:skip-covered
       - run: uv run oraqlo version
       - name: Dependencias de la app de escritorio (ventana, bandeja, avisos)
         if: runner.os == 'Windows'
@@ -69,6 +69,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npm run typecheck
+      - run: npm run lint
       - run: npm test
       - run: npx vite build
 

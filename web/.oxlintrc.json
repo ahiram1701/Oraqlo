@@ -1,0 +1,27 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "react", "react-hooks", "jsx-a11y", "vitest"],
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    "react-hooks/rules-of-hooks": "error",
+    // Aviso, no error: varias dependencias faltan a propósito (efectos de «al montar»).
+    "react-hooks/exhaustive-deps": "warn",
+    "react/react-in-jsx-scope": "off",
+    // Reglas del React Compiler: la app no lo usa; Date.now() y refs en render son a propósito.
+    "react/purity": "off",
+    "react/refs": "off",
+    "react/set-state-in-effect": "off",
+    // Los chips son radios ARIA con tabindex itinerante (el patrón de WAI-ARIA): el grupo
+    // no necesita foco propio y prefer-tag-over-role/interactive-supports-focus dan falsos
+    // positivos. control-has-associated-label no ve el texto dentro de los <span>.
+    "jsx-a11y/prefer-tag-over-role": "off",
+    "jsx-a11y/interactive-supports-focus": "off",
+    "jsx-a11y/control-has-associated-label": "off",
+    // El foco automático solo está en diálogos que se abren a petición del usuario.
+    "jsx-a11y/no-autofocus": "off",
+    "vitest/require-mock-type-parameters": "off"
+  },
+  "ignorePatterns": ["dist", "dev-dist", "node_modules"]
+}

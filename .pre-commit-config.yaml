@@ -11,6 +11,14 @@ repos:
         entry: uv run ruff format
         language: system
         types: [python]
+      # Más lento: al hacer push, no en cada commit.
+      - id: pyright
+        name: pyright
+        entry: uv run pyright
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.0.0
     hooks:

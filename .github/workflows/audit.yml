@@ -1,0 +1,40 @@
+name: Auditoría de dependencias
+
+# Semanal y cuando cambian los lockfiles: una vulnerabilidad nueva en una dependencia
+# no espera a que alguien toque el código. No bloquea los PRs normales.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  pull_request:
+    paths:
+      - uv.lock
+      - web/package-lock.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - name: Exportar las dependencias bloqueadas
+        run: uv export --locked --all-extras --no-dev --no-emit-project --no-hashes -o requirements-audit.txt
+      - run: uvx pip-audit --strict -r requirements-audit.txt
+
+  web:
+    name: Web (npm audit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # Solo lo que llega al navegador; las herramientas de build no se envían.
+      - run: npm audit --omit=dev --audit-level=high

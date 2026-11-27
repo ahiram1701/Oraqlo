@@ -37,6 +37,7 @@ dev = [
     "pyright>=1.1.390",
     "pre-commit>=4",
     "httpx>=0.28.1",
+    "pytest-cov>=6",
 ]
 
 # --- versión: derivada del tag git vX.Y.Z (lo crea release-please) ---
@@ -63,6 +64,14 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+source = ["oraqlo"]
+omit = ["*/oraqlo/api/static/*"]
+
+[tool.coverage.report]
+skip_empty = true
+fail_under = 80  # hoy ~86%: que no baje sin darse cuenta
 
 # --- lint / formato ---
 [tool.ruff]

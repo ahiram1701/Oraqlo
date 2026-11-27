@@ -61,6 +61,8 @@ export function LinkButton({
   className,
   ...props
 }: AnchorHTMLAttributes<HTMLAnchorElement> & { variant?: Variant }) {
+  // El texto llega en `children`, dentro de props.
+  // oxlint-disable-next-line jsx-a11y/anchor-has-content
   return <a className={buttonClass(variant, className)} {...props} />;
 }
 
@@ -293,7 +295,11 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
     <FeedbackContext.Provider value={{ confirm, toast }}>
       {children}
       {ask && (
+        // Clic en el fondo = cancelar; con teclado se cancela con Escape (ver arriba).
+        // oxlint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center" onClick={() => close(false)}>
+          {/* Solo evita que el clic llegue al fondo; no es una acción. */}
+          {/* oxlint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */}
           <div
             ref={dialog}
             role="alertdialog"
