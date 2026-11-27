@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from starlette.requests import Request
 
-LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
+LOCAL_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 @dataclass(frozen=True)
