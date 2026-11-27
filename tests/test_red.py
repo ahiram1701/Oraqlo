@@ -108,7 +108,7 @@ def test_list_open_no_cuenta_los_excluidos(monkeypatch):
     assert [m.id for m in found] == ["2", "3"]
 
 
-def test_api_practica_cachea_hasta_que_cambia_el_ledger(env, monkeypatch):
+def test_api_practica_cachea_hasta_que_cambia_el_ledger(env, monkeypatch):  # noqa: F811
     from oraqlo import autopractice
 
     client, service, *_ = env
