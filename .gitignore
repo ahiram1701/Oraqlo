@@ -37,3 +37,9 @@ src/oraqlo/_version.py
 web/node_modules/
 src/oraqlo/api/static/
 web/*.tsbuildinfo
+
+# cobertura de pytest-cov
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
