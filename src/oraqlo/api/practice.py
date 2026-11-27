@@ -38,7 +38,16 @@ def practice_router(service: OraqloService, runner: JobRunner, scheduler: Schedu
         if runner.active("practice") == 0:
             runner.submit("practice", {})
 
-    scheduler.add(PeriodicTask("practice", practice_interval, practice_enabled, submit_practice))
+    def finished_at() -> datetime | None:
+        """Fin de la última pasada que salió bien (botón, CLI o planificador)."""
+        value = service.store.settings.get("practice_last_run")
+        return datetime.fromisoformat(value) if value else None
+
+    scheduler.add(
+        PeriodicTask(
+            "practice", practice_interval, practice_enabled, submit_practice, last_done=finished_at
+        )
+    )
 
     cache: dict[str, object] = {}
 
@@ -56,19 +65,11 @@ def practice_router(service: OraqloService, runner: JobRunner, scheduler: Schedu
             cache.update(key=key, value=(calibration_advice(ledger, source), duels(ledger)))
         return cache["value"]  # type: ignore[return-value]
 
-    def latest_run() -> datetime | None:
-        """La pasada más reciente, la lance el planificador, el botón o el CLI."""
-        times = [scheduler.last_run("practice")]
-        finished = service.store.settings.get("practice_last_run")
-        if finished:
-            times.append(datetime.fromisoformat(finished))
-        return max((t for t in times if t), default=None)
-
     def practice_state() -> dict:
         from oraqlo.llm.websearch import OllamaWebClient
 
         advice, duel_list = practice_scores()
-        last = latest_run()
+        last = scheduler.last_run("practice")
         upcoming = scheduler.next_run("practice") if practice_enabled() else None
         return {
             "auto": practice_enabled(),

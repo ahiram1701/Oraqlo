@@ -27,6 +27,8 @@ class PeriodicTask:
     enabled: Callable[[], bool]
     action: Callable[[], None]
     run_on_start: bool = False  # si nunca corrió, ¿corre ya o espera un intervalo?
+    # Cuándo corrió por fuera del planificador (botón, CLI): también reinicia la cuenta.
+    last_done: Callable[[], datetime | None] | None = None
 
 
 class Scheduler:
@@ -66,9 +68,20 @@ class Scheduler:
         value = self.settings.get(key)
         return datetime.fromisoformat(value) if value else None
 
+    def _outside(self, name: str) -> datetime | None:
+        task = self.tasks.get(name)
+        if task is None or task.last_done is None:
+            return None
+        try:
+            return task.last_done()
+        except Exception:  # un ajuste corrupto no puede tumbar el planificador
+            log.exception("No se pudo leer la última ejecución externa de %s", name)
+            return None
+
     def last_run(self, name: str) -> datetime | None:
-        """Cuándo se lanzó de verdad por última vez (nunca una hora inventada)."""
-        return self._get_time(self._key(name))
+        """Cuándo corrió de verdad por última vez, la lanzara el planificador o no."""
+        times = [self._get_time(self._key(name)), self._outside(name)]
+        return max((t for t in times if t), default=None)
 
     def mark(self, name: str, when: datetime) -> None:
         """Registra una ejecución (también las manuales): reinicia el temporizador."""
@@ -82,7 +95,9 @@ class Scheduler:
         if task is None:
             return None
         retry = self._get_time(self._retry_key(name))
-        if retry is not None:
+        mine, outside = self._get_time(self._key(name)), self._outside(name)
+        # Un reintento solo vale si nada ha corrido bien después del fallo.
+        if retry is not None and not (outside and mine and outside > mine):
             return retry
         base = self.last_run(name) or self._get_time(self._armed_key(name))
         return base + task.interval() if base else None

@@ -138,3 +138,41 @@ def test_marcar_a_mano_reinicia_el_temporizador(tmp_path):
     sched.mark("t", t0 + timedelta(minutes=50))
     assert sched.tick(t0 + timedelta(minutes=61)) == []  # la manual reinició la cuenta
     assert sched.tick(t0 + timedelta(minutes=111)) == ["t"]
+
+
+def test_una_ejecucion_externa_reinicia_la_cuenta(tmp_path):
+    """Una pasada lanzada a mano o desde el CLI cuenta: la próxima es esa + intervalo."""
+    store = Store(tmp_path / "o.db")
+    sched = Scheduler(store.settings)
+    t0 = datetime(2026, 11, 26, 20, 20, tzinfo=UTC)
+    outside = {"at": None}
+    sched.add(
+        PeriodicTask(
+            "t", lambda: timedelta(hours=12), lambda: True, lambda: None,
+            last_done=lambda: outside["at"],
+        )
+    )  # fmt: skip
+    sched.mark("t", t0)
+    outside["at"] = t0 + timedelta(hours=4, minutes=3)  # 0:03
+    assert sched.last_run("t") == outside["at"]
+    assert sched.next_run("t") == outside["at"] + timedelta(hours=12)
+    assert sched.tick(t0 + timedelta(hours=12, minutes=1)) == []  # las 8:21: aún no
+    assert sched.tick(outside["at"] + timedelta(hours=12)) == ["t"]
+
+
+def test_un_reintento_viejo_no_adelanta_tras_una_ejecucion_externa(tmp_path):
+    store = Store(tmp_path / "o.db")
+    sched = Scheduler(store.settings)
+    t0 = datetime(2026, 11, 26, 12, tzinfo=UTC)
+    outside = {"at": None}
+
+    def fail():
+        raise OSError("caído")
+
+    sched.add(
+        PeriodicTask("t", lambda: timedelta(hours=2), lambda: True, fail,
+                     last_done=lambda: outside["at"], run_on_start=True)
+    )  # fmt: skip
+    sched.tick(t0)  # falla: reintento en 15 min
+    outside["at"] = t0 + timedelta(minutes=5)  # pero una manual salió bien
+    assert sched.next_run("t") == outside["at"] + timedelta(hours=2)

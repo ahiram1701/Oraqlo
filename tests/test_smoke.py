@@ -814,13 +814,24 @@ def test_practice_resuelve_ambas_con_el_ganador():
     assert briers["polymarket:mercado"] == pytest.approx(2 * 0.35**2)
 
 
+def _practice(fid, outcomes, source="llm:fake", mid=None):
+    """Previsión de Práctica: la pregunta lleva la etiqueta (numérica) del mercado."""
+    from dataclasses import replace
+
+    from oraqlo.autopractice import market_tag
+
+    f = _forecast(fid, outcomes, source=source)
+    mid = mid or str(int.from_bytes(fid.encode()) % 10**9)
+    return replace(f, question=f"{market_tag(mid)} {f.question}")
+
+
 def test_calibration_advice_detecta_sobreconfianza():
     from oraqlo.autopractice import calibration_advice
 
     ledger = CalibrationLedger()
     # 10 resueltas confiadas (80%) que aciertan solo 3 de cada 10.
     for i, actual in enumerate(["si", "no", "no", "si", "no", "no", "si", "no", "no", "no"]):
-        ledger.record(_forecast(f"c{i}", {"si": 0.8, "no": 0.2}, source="llm:fake"))
+        ledger.record(_practice(f"c{i}", {"si": 0.8, "no": 0.2}))
         ledger.resolve(f"c{i}", actual)
     advice = calibration_advice(ledger, "llm:fake")
     assert advice is not None
@@ -831,9 +842,31 @@ def test_calibration_advice_detecta_sobreconfianza():
     # Con pocas resueltas no hay consejo (evita sobreajustar al ruido).
     small = CalibrationLedger()
     for i in range(9):
-        small.record(_forecast(f"s{i}", {"si": 0.8, "no": 0.2}, source="llm:fake"))
+        small.record(_practice(f"s{i}", {"si": 0.8, "no": 0.2}))
         small.resolve(f"s{i}", "no")
     assert calibration_advice(small, "llm:fake") is None
+
+
+def test_calibration_advice_ignora_analisis_y_compara_por_parejas():
+    from oraqlo.autopractice import MARKET_SOURCE, calibration_advice
+
+    ledger = CalibrationLedger()
+    for i in range(10):  # análisis propios, sin mercado: no cuentan
+        ledger.record(_forecast(f"a{i}", {"si": 0.9, "no": 0.1}, source="llm:fake"))
+        ledger.resolve(f"a{i}", "no")
+    for i in range(10):
+        ledger.record(_practice(f"p{i}", {"si": 0.6, "no": 0.4}, mid=f"{900 + i}"))
+        ledger.resolve(f"p{i}", "si")
+    for i in range(4):  # el mercado solo resolvió 4 de esas preguntas
+        ledger.record(
+            _practice(f"k{i}", {"si": 0.7, "no": 0.3}, source=MARKET_SOURCE, mid=f"{900 + i}")
+        )
+        ledger.resolve(f"k{i}", "si")
+    advice = calibration_advice(ledger, "llm:fake")
+    assert advice is not None
+    assert "tus 10 predicciones de práctica" in advice and "últimas" not in advice
+    assert "En las 4 que también resolvió el mercado" in advice
+    assert "vas peor que él" in advice  # 0.6 frente a 0.7 en las mismas preguntas
 
 
 def test_practice_advice_llega_al_prompt():
@@ -842,7 +875,7 @@ def test_practice_advice_llega_al_prompt():
     ledger = CalibrationLedger()
     for i in range(10):
         actual = "no"
-        ledger.record(_forecast(f"h{i}", {"si": 0.9, "no": 0.1}, source="llm:fake"))
+        ledger.record(_practice(f"h{i}", {"si": 0.9, "no": 0.1}))
         ledger.resolve(f"h{i}", actual)
     provider = FakeProvider(['{"outcomes": {"Yes": 0.5, "No": 0.5}, "assumptions": []}'])
     engine = PracticeEngine(FakeMarketClient([_mk("88")]), provider, "fake", ledger)

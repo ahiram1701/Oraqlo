@@ -255,7 +255,10 @@ def create_app(
         from oraqlo.goaltrack import GoalTracker as _Tracker
 
         notified = set(service.store.settings.get("push.notified_milestones", []))
-        for goal, m in _Tracker(service.store.goals, service.store.ledger).overdue_milestones():
+        overdue = _Tracker(service.store.goals, service.store.ledger).overdue_milestones()
+        # Solo se recuerdan los que siguen vencidos: la lista no crece para siempre.
+        notified &= {f"{goal.id}:{m.text}:{m.target_date}" for goal, m in overdue}
+        for goal, m in overdue:
             key = f"{goal.id}:{m.text}:{m.target_date}"
             if key in notified:
                 continue
@@ -299,7 +302,7 @@ def create_app(
     practice_routes = practice_router(service, runner, scheduler)
 
     def submit_watch() -> None:
-        """Mira cada hora si alguna vigilancia toca; el intervalo de cada una y el
+        """Mira cada poco si alguna vigilancia toca; el intervalo de cada una y el
         presupuesto diario los respeta `watch_due`."""
         if runner.active("watch") == 0 and service.watch_due():
             runner.submit("watch", {})
@@ -307,7 +310,9 @@ def create_app(
     scheduler.add(
         PeriodicTask(
             "watch",
-            lambda: timedelta(hours=1),
+            # Cada 15 min (mirar es barato: no llama a nadie si nada toca). Con una
+            # hora, una vigilancia de 1,5 h acababa corriendo cada 2 h.
+            lambda: timedelta(minutes=15),
             lambda: bool(service.watches.roots()),
             submit_watch,
         )
@@ -1261,6 +1266,8 @@ def create_app(
         goal_or_404(goal_id)
         try:
             tracker().edit(goal_id, goal=body.goal, deadline=body.deadline)
+            if body.deadline is not None:
+                service.sync_goal_watch(goal_id)
         except GoalTrackError as e:
             raise HTTPException(422, str(e)) from e
         return goal_json(service.store.goals.get(goal_id))

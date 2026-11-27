@@ -139,31 +139,45 @@ def calibration_advice(
     decided = decided_markets(
         [*ledger.open_forecasts, *(r.forecast for r in ledger.resolved_forecasts)]
     )
+    # Solo la práctica (preguntas de mercado, con resultado objetivo): los análisis
+    # propios no tienen con quién compararse y descuadraban el número con el marcador.
     resolved = [
         r
         for r in ledger.resolved_forecasts
-        if r.forecast.source == source and counts_for_score(r.forecast, decided)
+        if r.forecast.source == source
+        and market_id_of(r.forecast.question) is not None
+        and counts_for_score(r.forecast, decided)
     ]
     if len(resolved) < min_resolved:
         return None
 
     mean_brier = sum(r.brier for r in resolved) / len(resolved)
     parts = [
-        f"En tus últimas {len(resolved)} predicciones resueltas tu Brier medio es "
+        f"En tus {len(resolved)} predicciones de práctica resueltas tu Brier medio es "
         f"{mean_brier:.3f} (0 = perfecto)."
     ]
 
-    mids = {market_id_of(r.forecast.question) for r in resolved} - {None}
-    bench = [
-        r.brier
+    # Por parejas: Oraqlo y el mercado en exactamente las mismas preguntas.
+    bench = {
+        market_id_of(r.forecast.question): r.brier
         for r in ledger.resolved_forecasts
-        if r.forecast.source == benchmark_source and market_id_of(r.forecast.question) in mids
+        if r.forecast.source == benchmark_source
+    }
+    pairs = [
+        (r.brier, bench[mid])
+        for r in resolved
+        if (mid := market_id_of(r.forecast.question)) in bench
     ]
-    if bench:
-        market = sum(bench) / len(bench)
-        comparison = "mejor" if mean_brier < market else "peor"
+    if pairs:
+        mine = sum(o for o, _m in pairs) / len(pairs)
+        market = sum(m for _o, m in pairs) / len(pairs)
+        if abs(mine - market) < TIE:
+            verdict = "vais casi empatados"
+        else:
+            verdict = f"vas {'mejor' if mine < market else 'peor'} que él"
         parts.append(
-            f"El mercado, en esas mismas preguntas, tiene Brier {market:.3f}: vas {comparison} que él."
+            f"En las {len(pairs)} que también resolvió el mercado: tú {mine:.3f} y el mercado "
+            f"{market:.3f}; {verdict}."
         )
     if recalibrated:
         return " ".join(parts)

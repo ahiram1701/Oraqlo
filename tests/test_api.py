@@ -318,7 +318,9 @@ def test_ultima_pasada_toma_la_mas_reciente_y_avisa_si_la_proxima_paso(env):
     service.store.settings.set("practice_last_run", cli.isoformat())
     state = client.get("/api/practice").json()
     assert datetime.fromisoformat(state["last_run"]) == cli
-    assert state["next_run_overdue"] is True  # tocaba hace 4 h y el servidor no estaba
+    # La próxima cuenta desde la más reciente, aunque no la lanzara el planificador.
+    assert datetime.fromisoformat(state["next_run"]) == cli + timedelta(hours=1)
+    assert state["next_run_overdue"] is True  # tocaba hace 30 min y no corrió
 
 
 # ── casos y estáticos ────────────────────────────────────────────────────

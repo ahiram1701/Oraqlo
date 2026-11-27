@@ -247,7 +247,8 @@ def assess_news(
 
 def focus_question(watch: Watch) -> str:
     """La pregunta con lo que hay que vigilar, para orientar las búsquedas."""
-    since = (watch.last_check or watch.created_at)[:10]
+    # En la fecha local del usuario (las horas se guardan en UTC).
+    since = datetime.fromisoformat(watch.last_check or watch.created_at).astimezone().date()
     looks = "; ".join(s.look_for or s.text for s in watch.signals)
     text = f"{watch.question}\nBusca novedades publicadas desde el {since}."
     if looks:

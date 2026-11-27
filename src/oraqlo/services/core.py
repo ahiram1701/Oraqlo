@@ -16,7 +16,7 @@ import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, ClassVar
 
 from oraqlo.agent import OraqloAgent
@@ -384,16 +384,28 @@ class OraqloService:
         self.watches.save(w)
         return w.view()
 
+    def sync_goal_watch(self, goal_id: str) -> None:
+        """Tras cambiar la fecha límite, la vigilancia del objetivo sigue hasta la nueva
+        (si no, se paraba en silencio en la antigua)."""
+        deadline = date.fromisoformat(self.store.goals.get(goal_id).deadline)
+        end = datetime.combine(deadline + timedelta(days=1), time.min, tzinfo=UTC)
+        for w in self.watches.all():
+            if w.kind == "goal" and w.goal_id == goal_id:
+                start = datetime.fromisoformat(w.created_at)
+                w.horizon_days = max(0.0, (end - start).total_seconds() / 86400)
+                self.watches.save(w)
+
     def _watch_interval(self) -> timedelta:
         return timedelta(hours=float(self.options()["watch_interval_hours"]))
 
     def _checks_today(self) -> int:
-        today = datetime.now(UTC).date().isoformat()
+        # El día del usuario (hora local), no el de UTC: el presupuesto es «diario» para él.
+        today = date.today().isoformat()
         state = self.store.settings.get("watch.checks", {}) or {}
         return int(state.get(today, 0))
 
     def _count_check(self) -> None:
-        today = datetime.now(UTC).date().isoformat()
+        today = date.today().isoformat()
         state = self.store.settings.get("watch.checks", {}) or {}
         self.store.settings.set("watch.checks", {today: int(state.get(today, 0)) + 1})
 
