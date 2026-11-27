@@ -905,13 +905,17 @@ def create_app(
             "updates": "Actualizaciones",
             "milestones": "Avisos de hitos",
             "cleanup": "Limpieza",
+            "watch": "Vigilancias",
+            "update-apply": "Instalar actualización",
         }
         for task, err in scheduler.errors().items():
             checks.append(
                 {
                     "name": names.get(task, task),
                     "ok": False,
-                    "detail": f"Falló la última vez ({err['at'][:16].replace('T', ' ')}): {err['error']}",
+                    "detail": f"Falló la última vez: {err['error']}",
+                    # En UTC: la interfaz lo muestra en la hora local del usuario.
+                    "at": err["at"],
                     "fix": "Se reintenta sola en unos minutos.",
                     "optional": False,
                 }

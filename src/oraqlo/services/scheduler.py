@@ -56,21 +56,48 @@ class Scheduler:
                 found[name] = value
         return found
 
-    def last_run(self, name: str) -> datetime | None:
-        value = self.settings.get(self._key(name))
+    def _armed_key(self, name: str) -> str:
+        return f"scheduler.armed.{name}"
+
+    def _retry_key(self, name: str) -> str:
+        return f"scheduler.retry_at.{name}"
+
+    def _get_time(self, key: str) -> datetime | None:
+        value = self.settings.get(key)
         return datetime.fromisoformat(value) if value else None
+
+    def last_run(self, name: str) -> datetime | None:
+        """Cuándo se lanzó de verdad por última vez (nunca una hora inventada)."""
+        return self._get_time(self._key(name))
+
+    def mark(self, name: str, when: datetime) -> None:
+        """Registra una ejecución (también las manuales): reinicia el temporizador."""
+        self.settings.set(self._key(name), when.isoformat())
+        if self.settings.get(self._retry_key(name)):
+            self.settings.set(self._retry_key(name), None)
+
+    def next_run(self, name: str) -> datetime | None:
+        """Cuándo le toca: un reintento pendiente o la última ejecución + intervalo."""
+        task = self.tasks.get(name)
+        if task is None:
+            return None
+        retry = self._get_time(self._retry_key(name))
+        if retry is not None:
+            return retry
+        base = self.last_run(name) or self._get_time(self._armed_key(name))
+        return base + task.interval() if base else None
 
     def due(self, task: PeriodicTask, now: datetime) -> bool:
         if not task.enabled() or task.name in self._running:
             return False
-        last = self.last_run(task.name)
-        if last is None:
+        if self.last_run(task.name) is None and self._get_time(self._armed_key(task.name)) is None:
             if task.run_on_start:
                 return True
             # Primera vez: arma el temporizador sin ejecutar (abrir la app no cuesta llamadas).
-            self.settings.set(self._key(task.name), now.isoformat())
+            self.settings.set(self._armed_key(task.name), now.isoformat())
             return False
-        return now - last >= task.interval()
+        when = self.next_run(task.name)
+        return when is not None and now >= when
 
     def tick(self, now: datetime | None = None) -> list[str]:
         """Ejecuta las tareas vencidas. Devuelve sus nombres (útil en tests)."""
@@ -82,7 +109,7 @@ class Scheduler:
                     continue
                 self._running.add(task.name)
                 # Se marca antes de ejecutar: una tarea lenta no se lanza dos veces.
-                self.settings.set(self._key(task.name), now.isoformat())
+                self.mark(task.name, now)
                 task.action()
                 ran.append(task.name)
                 if self.settings.get(self._error_key(task.name)):
@@ -91,9 +118,8 @@ class Scheduler:
                 log.exception("La tarea periódica %s falló", task.name)
                 # Reintento en RETRY_AFTER (no un día entero si es el backup diario)
                 # y el error queda guardado para mostrarlo en Diagnóstico.
-                interval = task.interval()
-                retry_at = now - interval + min(RETRY_AFTER, interval)
-                self.settings.set(self._key(task.name), retry_at.isoformat())
+                retry_at = now + min(RETRY_AFTER, task.interval())
+                self.settings.set(self._retry_key(task.name), retry_at.isoformat())
                 self.settings.set(
                     self._error_key(task.name), {"at": now.isoformat(), "error": str(e)[:300]}
                 )

@@ -11,6 +11,7 @@ import {
   displayQuestion,
   fmtDate,
   forecastKind,
+  parseDate,
   pct,
   sourceLabel,
   type Forecast,
@@ -80,7 +81,7 @@ export function cancelResolution(id: string) {
 
 /** Cuándo se sabrá (ms): creación + horizonte. Sin fecha, al final. */
 export function dueTime(f: Forecast): number {
-  return f.created_at ? new Date(f.created_at).getTime() + f.horizon_days * 864e5 : Number.MAX_SAFE_INTEGER;
+  return f.created_at ? parseDate(f.created_at).getTime() + f.horizon_days * 864e5 : Number.MAX_SAFE_INTEGER;
 }
 
 /** Ya debería saberse y le toca al usuario marcarla (la Práctica la resuelve Polymarket). */
@@ -97,7 +98,7 @@ export function marketStatusLabel(status: string | null | undefined): string {
 }
 
 const topProb = (f: Forecast) => Math.max(0, ...Object.values(f.outcomes ?? {}));
-const created = (f: Forecast) => (f.created_at ? new Date(f.created_at).getTime() : 0);
+const created = (f: Forecast) => (f.created_at ? parseDate(f.created_at).getTime() : 0);
 
 /** «tuyas»: todo menos la Práctica, que se resuelve sola con el mercado. */
 type KindFilter = "tuyas" | "todas" | ForecastKind;
@@ -142,7 +143,7 @@ export function sortOpen(list: Forecast[], by: OpenSort): Forecast[] {
 
 export function sortResolved(list: ResolvedForecast[], by: ResolvedSort): ResolvedForecast[] {
   const out = [...list];
-  const resolved = (r: ResolvedForecast) => new Date(r.resolved_at).getTime();
+  const resolved = (r: ResolvedForecast) => parseDate(r.resolved_at).getTime();
   if (by === "resueltas") out.sort((a, b) => resolved(b) - resolved(a));
   if (by === "mejor") out.sort((a, b) => a.brier - b.brier);
   if (by === "peor") out.sort((a, b) => b.brier - a.brier);
@@ -320,6 +321,7 @@ export function OpenForecast({ f }: { f: Forecast }) {
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["ledger"] });
     qc.invalidateQueries({ queryKey: ["calibration"] });
+    qc.invalidateQueries({ queryKey: ["evaluate"] });
   };
   const discard = useMutation({ mutationFn: () => api.del(`/ledger/open/${f.id}`), onSuccess: refresh });
   useEffect(() => {
@@ -352,7 +354,7 @@ export function OpenForecast({ f }: { f: Forecast }) {
 
   const outcomes = sortedOutcomes(f.outcomes);
   const top = outcomes[0];
-  const due = f.created_at ? new Date(new Date(f.created_at).getTime() + f.horizon_days * 864e5) : null;
+  const due = f.created_at ? new Date(parseDate(f.created_at).getTime() + f.horizon_days * 864e5) : null;
   const practice = forecastKind(f.source, f.question) === "practica";
   const pastDue = due ? due < new Date() : false;
   const overdue = pastDue && !practice;
@@ -484,6 +486,7 @@ function ResolvedRow({ r }: { r: ResolvedForecast }) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["ledger"] });
       qc.invalidateQueries({ queryKey: ["calibration"] });
+      qc.invalidateQueries({ queryKey: ["evaluate"] });
     },
   });
   // Clases literales: Tailwind no detecta nombres construidos dinámicamente.

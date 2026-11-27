@@ -226,6 +226,8 @@ export interface PracticeState {
   interval_min: number;
   last_run: string | null;
   next_run: string | null;
+  /** La próxima ya pasó sin correr: el servidor estaba apagado o el PC dormido. */
+  next_run_overdue?: boolean;
   running: boolean;
   /** ¿Investiga en internet antes de predecir? (necesita la clave de Ollama) */
   research?: boolean;
@@ -333,6 +335,8 @@ export interface Check {
   fix: string | null;
   /** Función opcional: si falla se avisa, pero no es un error. */
   optional?: boolean;
+  /** Cuándo falló (ISO, UTC), para las tareas periódicas. */
+  at?: string;
 }
 
 export type UpdateMode = ConfigView["updates_mode"];

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
-import { api, type Check, type ConfigView, type Health, type UpdateMode } from "../lib/api";
+import { api, fmtDate, type Check, type ConfigView, type Health, type UpdateMode } from "../lib/api";
 import { LOCAL_ONLY_NOTE, useSetup } from "../lib/setup";
 import { Badge, Button, Card, ErrorNote, SectionTitle, cx, inputClass, useFeedback } from "./ui";
 
@@ -135,6 +135,13 @@ export function UpdatesCard() {
         )}
       </div>
       {(check.data ?? apply.data) && <p className="mt-2 text-sm text-muted">{(apply.data ?? check.data)?.detail}</p>}
+      {/* Lo que hizo la comprobación automática, aunque nadie pulsara el botón. */}
+      {!check.data && !apply.data && health.data?.update?.last_result?.status === "error" && (
+        <p className="mt-2 text-sm text-bad">Falló la última comprobación: {health.data.update.last_result.detail}</p>
+      )}
+      {health.data?.update?.last_check && (
+        <p className="mt-2 text-xs text-muted">Última comprobación: {fmtDate(health.data.update.last_check)}</p>
+      )}
       {restarting && <p className="mt-2 text-sm text-accent">{restarting}</p>}
       <ErrorNote error={check.error ?? apply.error ?? rollback.error ?? mode.error} />
     </Card>
@@ -159,6 +166,7 @@ export function DoctorCard() {
               </span>
               <span>
                 <span className="font-medium">{c.name}:</span> {c.detail}
+                {c.at && <span className="text-muted"> ({fmtDate(c.at)})</span>}
                 {c.fix && <span className="block text-muted">{c.fix}</span>}
               </span>
             </li>

@@ -293,6 +293,34 @@ def test_scheduler_arma_y_dispara_practica(env, monkeypatch):
     assert ran(t0 + timedelta(hours=5)) == []
 
 
+def test_pasada_manual_cuenta_como_ultima(env, monkeypatch):
+    client, _service, app, _ = env
+    monkeypatch.setattr(app.state.runner, "submit", lambda kind, params=None: "job-1")
+    monkeypatch.setattr(app.state.runner, "active", lambda kind=None: 0)
+    client.put("/api/practice", json={"auto": True, "interval_min": 60})
+    scheduler = app.state.scheduler
+    scheduler.mark("practice", datetime(2026, 11, 26, 20, 20, tzinfo=UTC))
+    before = datetime.now(UTC)
+    assert client.post("/api/practice/run").status_code == 202
+    state = client.get("/api/practice").json()
+    last = datetime.fromisoformat(state["last_run"])
+    assert last >= before
+    assert datetime.fromisoformat(state["next_run"]) == last + timedelta(hours=1)
+    assert state["next_run_overdue"] is False
+
+
+def test_ultima_pasada_toma_la_mas_reciente_y_avisa_si_la_proxima_paso(env):
+    client, service, app, _ = env
+    client.put("/api/practice", json={"auto": True, "interval_min": 60})
+    old = datetime.now(UTC) - timedelta(hours=5)
+    app.state.scheduler.mark("practice", old)
+    cli = datetime.now(UTC) - timedelta(hours=1, minutes=30)  # `oraqlo practice` desde el CLI
+    service.store.settings.set("practice_last_run", cli.isoformat())
+    state = client.get("/api/practice").json()
+    assert datetime.fromisoformat(state["last_run"]) == cli
+    assert state["next_run_overdue"] is True  # tocaba hace 4 h y el servidor no estaba
+
+
 # ── casos y estáticos ────────────────────────────────────────────────────
 
 
