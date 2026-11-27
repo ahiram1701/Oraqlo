@@ -6,14 +6,16 @@ import os
 os.environ["ORAQLO_DESKTOP_NOTIFY"] = "0"
 
 # El servidor solo acepta Host 127.0.0.1/localhost o *.ts.net (defensa contra DNS
-# rebinding). TestClient usa "testserver" por defecto: que hable como el navegador
-# del propio PC.
+# rebinding). TestClient usa "testserver" como Host y "testclient" como cliente por
+# defecto: que hable como el navegador del propio PC (el código de producción no sabe
+# nada de los tests).
 import fastapi.testclient as _tc
 
 _original_init = _tc.TestClient.__init__
 
 
 def _local_init(self, app, base_url="http://127.0.0.1", *args, **kwargs):
+    kwargs.setdefault("client", ("127.0.0.1", 50000))
     _original_init(self, app, base_url, *args, **kwargs)
 
 
