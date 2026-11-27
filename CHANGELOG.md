@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.1](https://github.com/ahiram1701/Oraqlo/compare/v0.19.0...v0.19.1) (2026-11-27)
+
+
+### Correcciones
+
+* «Última pasada» refleja las pasadas manuales ([#100](https://github.com/ahiram1701/Oraqlo/issues/100)) ([ca503fd](https://github.com/ahiram1701/Oraqlo/commit/ca503fd7497146a69d07e5976f83c2c1354b64a6))
+
 ## [0.19.0](https://github.com/ahiram1701/Oraqlo/compare/v0.18.2...v0.19.0) (2026-11-27)
 
 
