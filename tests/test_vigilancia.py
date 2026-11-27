@@ -255,3 +255,44 @@ def test_lo_imprevisto_puntua_en_todas_las_versiones(vigia):
     latest = service.watches.get(first).latest
     ids = {r["id"] for r in service.resolve(latest, "se suspendió la bolsa")}
     assert {first, latest} <= ids
+
+
+def test_ampliar_la_fecha_de_un_objetivo_alarga_su_vigilancia(env):  # noqa: F811
+    from oraqlo.goaltrack import TrackedGoal
+
+    client, service, *_ = env
+    now = datetime.now(UTC)
+    service.store.goals.add(
+        TrackedGoal(
+            id="g9",
+            goal="Aprender alemán",
+            created_at=now.isoformat(),
+            deadline=(now + timedelta(days=10)).date().isoformat(),
+            summary="plan",
+            steps=[],
+            milestones=[],
+            initial_p=0.3,
+        )
+    )
+    service.watches.save(
+        Watch(
+            root="f9",
+            question="Aprender alemán",
+            horizon_days=10,
+            created_at=now.isoformat(),
+            chain=["f9"],
+            kind="goal",
+            goal_id="g9",
+        )
+    )
+    later = now + timedelta(days=20)
+    assert not service.watches.get("f9").due(later, timedelta(hours=1))  # se paraba aquí
+    new = (now + timedelta(days=60)).date().isoformat()
+    assert client.patch("/api/goals/g9", json={"deadline": new}).status_code == 200
+    assert service.watches.get("f9").due(later, timedelta(hours=1))
+
+
+def test_la_tarea_de_vigilancia_no_redondea_el_intervalo(env):  # noqa: F811
+    """Con 1,5 h, cada vigilancia corre a las 1,5 h (+15 min como mucho), no a las 2 h."""
+    _client, _service, app, _ = env
+    assert app.state.scheduler.tasks["watch"].interval() <= timedelta(minutes=15)
