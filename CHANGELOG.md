@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.19.0](https://github.com/ahiram1701/Oraqlo/compare/v0.18.2...v0.19.0) (2026-11-27)
+
+
+### Novedades
+
+* la Práctica se entiende también con lector de pantalla ([#97](https://github.com/ahiram1701/Oraqlo/issues/97)) ([295df84](https://github.com/ahiram1701/Oraqlo/commit/295df84001b529762090188f010884f5c2d0ebe8))
+
+
+### Correcciones
+
+* el servidor ya no trata a «testclient» como un cliente local ([#94](https://github.com/ahiram1701/Oraqlo/issues/94)) ([d78f0e0](https://github.com/ahiram1701/Oraqlo/commit/d78f0e0499b4f2a372f1413e565729c940e0ef9e))
+* la Práctica aguanta fallos aislados y usa la fuente correcta para el consejo ([#91](https://github.com/ahiram1701/Oraqlo/issues/91)) ([bf555c2](https://github.com/ahiram1701/Oraqlo/commit/bf555c265c91a04a4f3745690a87f9065b63ff90))
+
+
+### Rendimiento
+
+* reintentos de red, list_open que excluye y caché de /api/practice ([#93](https://github.com/ahiram1701/Oraqlo/issues/93)) ([366dd9a](https://github.com/ahiram1701/Oraqlo/commit/366dd9a189aae00b3a85b7cc2aa50ed50c436353))
+
 ## [0.18.2](https://github.com/ahiram1701/Oraqlo/compare/v0.18.1...v0.18.2) (2026-11-26)
 
 
